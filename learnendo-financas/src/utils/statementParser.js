@@ -1,26 +1,9 @@
 ﻿/**
  * statementParser.js
  *
- * Parses bank statement files (CSV and OFX/QFX) into a normalised list of
- * raw transaction rows, ready for classification by transactionClassifier.js.
- *
- * Supported formats:
- *   âœ… CSV  â€“ generic delimited text files exported by most Brazilian banks
- *   âœ… OFX  â€“ Open Financial Exchange (also .qfx, .ofx from Bradesco, ItaÃº, BB, etc.)
- *   âŒ PDF  â€“ not supported; binary parsing is unreliable
- *
- * Each parsed row:
- *   {
- *     date:        string     -- ISO "YYYY-MM-DD"
- *     description: string     -- raw description from the file
- *     amount:      number     -- absolute value (always positive)
- *     direction:   'credit' | 'debit' | 'unknown'
- *     balance:     number | null
- *     rawLine:     string     -- original line (for debugging)
- *   }
+ * Parses statement files into normalized raw rows for classification.
+ * Supported: CSV, OFX/QFX, PDF (text PDFs).
  */
-
-// â”€â”€ Error class â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ParseError extends Error {
   constructor(message) {
@@ -29,607 +12,734 @@ class ParseError extends Error {
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//  AMOUNT NORMALISATION
-//  This is the most critical piece. Brazilian banks use:
-//    â€¢ dot as thousands separator  and  comma as decimal separator: 1.234,56
-//    â€¢ plain integer/decimal (no separator): 1234.56 or 1234,56
-//    â€¢ signed values: -45,90 or (45,90) for negative
-//    â€¢ currency prefix: R$ 1.234,56
-//  US format (comma = thousands, dot = decimal): 1,234.56
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const MAX_REASON_LOGS = 40
+const MAX_SANITY_AMOUNT = 10_000_000
+
+// ---------------------------------------------------------------------------
+// Amount normalization
+// ---------------------------------------------------------------------------
 
 /**
- * Normalises a raw amount string to a signed JS number.
- *
- * Handles:
- *   "123,45"        â†’ 123.45    (BR comma-decimal, no thousands)
- *   "1.234,56"      â†’ 1234.56   (BR dot-thousands + comma-decimal)
- *   "-45,90"        â†’ -45.90    (negative BR)
- *   "R$ 2.150,00"   â†’ 2150.00   (BR with currency prefix)
- *   "2150.00"       â†’ 2150.00   (US/plain)
- *   "2,150.00"      â†’ 2150.00   (US with thousands comma)
- *   "(1.234,56)"    â†’ -1234.56  (accounting negative parens)
- *   ""              â†’ NaN
- *
- * Returns a SIGNED float (negative = debit in signed-value CSVs).
+ * Convert BR/US formatted amount text into signed number.
  */
 export function normaliseBRAmount(raw) {
   if (raw === null || raw === undefined) return NaN
+
   let s = String(raw).trim()
   if (!s) return NaN
 
-  // Accounting negative â€” parentheses notation: (1.234,56)
-  const isParenNeg = s.startsWith('(') && s.endsWith(')')
-  if (isParenNeg) s = '-' + s.slice(1, -1)
+  const isParenNegative = s.startsWith('(') && s.endsWith(')')
+  if (isParenNegative) s = `-${s.slice(1, -1)}`
 
-  // Preserve leading minus
-  const isNeg = s.startsWith('-')
-  if (isNeg) s = s.slice(1).trim()
+  const isNegative = s.startsWith('-')
+  if (isNegative) s = s.slice(1).trim()
 
-  // Strip currency symbols and non-numeric noise EXCEPT . , 
-  // Handles: R$, BRL, US$, $, â‚¬, spaces
-  s = s.replace(/[R$USâ‚¬Â£Â¥BRL\s]+/gi, '').trim()
+  // Keep only digits, separators, and remove currency/noise.
+  s = s
+    .replace(/[R$€£¥]|BRL|USD|US\$/gi, '')
+    .replace(/\s+/g, '')
+    .replace(/[^\d.,]/g, '')
 
-  // After stripping, s should be something like: 1.234,56 | 1234.56 | 1,234.56 | 1234,56 | 1234
+  if (!s || s === '.' || s === ',') return NaN
 
-  let numeric
+  const lastComma = s.lastIndexOf(',')
+  const lastDot = s.lastIndexOf('.')
+  let normalized = s
 
-  if (s === '' || s === '.' || s === ',') return NaN
-
-  // Count dots and commas
-  const dotCount   = (s.match(/\./g) || []).length
-  const commaCount = (s.match(/,/g)  || []).length
-
-  if (dotCount === 0 && commaCount === 0) {
-    // Plain integer: "1234"
-    numeric = parseFloat(s)
-
-  } else if (dotCount > 0 && commaCount === 0) {
-    // Could be:
-    //   US decimal "1234.56"  â€” exactly 1 dot with â‰¤2 digits after
-    //   BR thousands "1.234"  â€” exactly 1 dot with exactly 3 digits after and no decimal part
-    //   Multiple dots "1.234.567" â€” all are thousands separators
-    const afterDot = s.split('.').pop()
-    if (dotCount === 1 && afterDot.length !== 3) {
-      // US decimal: 1234.56 or edge case like .5
-      numeric = parseFloat(s)
-    } else {
-      // BR thousands-only (no decimal): 1.234 or 1.234.567
-      numeric = parseFloat(s.replace(/\./g, ''))
-    }
-
-  } else if (dotCount === 0 && commaCount > 0) {
-    // Could be:
-    //   BR decimal "1234,56" â€” exactly 1 comma
-    //   US thousands "1,234,567" â€” multiple commas (no decimal)
-    const afterComma = s.split(',').pop()
-    if (commaCount === 1 && afterComma.length !== 3) {
-      // BR decimal: 1234,56
-      numeric = parseFloat(s.replace(',', '.'))
-    } else {
-      // US thousands: 1,234 or 1,234,567
-      numeric = parseFloat(s.replace(/,/g, ''))
-    }
-
-  } else {
-    // Both dots AND commas present.
-    // Determine which is decimal separator by position:
-    // The decimal separator always comes LAST.
-    const lastDot   = s.lastIndexOf('.')
-    const lastComma = s.lastIndexOf(',')
-
+  if (lastComma >= 0 && lastDot >= 0) {
     if (lastComma > lastDot) {
-      // Comma is last â†’ comma is decimal, dots are thousands: 1.234,56
-      numeric = parseFloat(s.replace(/\./g, '').replace(',', '.'))
+      // BR: 1.234,56
+      normalized = s.replace(/\./g, '').replace(',', '.')
     } else {
-      // Dot is last â†’ dot is decimal, commas are thousands: 1,234.56
-      numeric = parseFloat(s.replace(/,/g, ''))
+      // US: 1,234.56
+      normalized = s.replace(/,/g, '')
     }
+  } else if (lastComma >= 0) {
+    const tail = s.slice(lastComma + 1)
+    normalized = tail.length === 3 ? s.replace(/,/g, '') : s.replace(',', '.')
+  } else if (lastDot >= 0) {
+    const tail = s.slice(lastDot + 1)
+    normalized = tail.length === 3 ? s.replace(/\./g, '') : s
   }
 
-  if (isNaN(numeric)) return NaN
+  const value = Number.parseFloat(normalized)
+  if (!Number.isFinite(value)) return NaN
 
-  // Sanity cap: amounts > 100 million in a single transaction are almost certainly
-  // a parsing error (e.g. balance being read as transaction amount).
-  // We log a warning but still return the value â€” caller decides what to do.
-  if (numeric > 100_000_000) {
-    console.warn(`[Parser] âš ï¸ Suspiciously large amount: ${numeric} (raw: "${raw}") â€” possible balance-column mis-read`)
+  const result = isNegative ? -Math.abs(value) : value
+  if (Math.abs(result) > 100_000_000) {
+    console.warn(`[Parser] suspicious amount: raw="${raw}" normalized=${result}`)
   }
 
-  const result = isNeg ? -numeric : numeric
-  console.log(`[Parser] ðŸ’° normaliseBRAmount("${raw}") â†’ ${result}`)
   return result
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//  DATE PARSING
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ---------------------------------------------------------------------------
+// Date parsing
+// ---------------------------------------------------------------------------
 
-/**
- * Parse a date string to ISO YYYY-MM-DD.
- * Supported input formats:
- *   DD/MM/YYYY  DD-MM-YYYY  DD.MM.YYYY  (Brazilian)
- *   YYYY-MM-DD  YYYYMMDD              (ISO / OFX)
- * MM/DD/YYYY is intentionally NOT auto-detected to avoid ambiguity.
- */
-function parseDateToISO(str) {
-  if (!str) return null
-  const s = String(str).trim()
+function parseDateToISO(raw) {
+  if (!raw) return null
+
+  const s = String(raw).trim()
+  if (!s) return null
 
   // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
-  const brMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/)
-  if (brMatch) {
-    const [, d, m, y] = brMatch
-    const ds = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-    return isNaN(new Date(ds).getTime()) ? null : ds
+  const br = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/)
+  if (br) {
+    const day = br[1].padStart(2, '0')
+    const month = br[2].padStart(2, '0')
+    const year = br[3].length === 2 ? `20${br[3]}` : br[3]
+    const iso = `${year}-${month}-${day}`
+    return Number.isNaN(new Date(`${iso}T00:00:00`).getTime()) ? null : iso
   }
 
-  // YYYYMMDD[HHMMSS...] â€” OFX compact
-  const compactMatch = s.match(/^(\d{4})(\d{2})(\d{2})/)
-  if (compactMatch) {
-    const [, y, m, d] = compactMatch
-    const ds = `${y}-${m}-${d}`
-    return isNaN(new Date(ds).getTime()) ? null : ds
-  }
-
-  // YYYY-MM-DD â€” already ISO
+  // YYYY-MM-DD
   const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (isoMatch) {
-    return isNaN(new Date(s).getTime()) ? null : s
+    return Number.isNaN(new Date(`${s}T00:00:00`).getTime()) ? null : s
+  }
+
+  // YYYYMMDD from OFX
+  const compact = s.match(/^(\d{4})(\d{2})(\d{2})/)
+  if (compact) {
+    const iso = `${compact[1]}-${compact[2]}-${compact[3]}`
+    return Number.isNaN(new Date(`${iso}T00:00:00`).getTime()) ? null : iso
   }
 
   return null
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//  OFX PARSER
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function inferDirectionFromText(text) {
+  const s = stripAccents(String(text || '').toLowerCase())
+  if (!s) return 'unknown'
+  if (/\bcredito\b|\bentrada\b|\brecebido\b|\bestorno\b/.test(s)) return 'credit'
+  if (/\bdebito\b|\bsaida\b|\bpagamento\b|\bcompra\b|\bjuros\b|\bencargo\b/.test(s)) return 'debit'
+  return 'unknown'
+}
+
+// ---------------------------------------------------------------------------
+// OFX parser
+// ---------------------------------------------------------------------------
 
 function parseOFX(text) {
-  console.log('[Parser] ðŸ¦ OFX/QFX format detected')
+  console.log('[Parser] format=OFX')
 
   const rows = []
-
-  // Strategy 1: XML-style with closing tags <STMTTRN>...<\/STMTTRN>
-  const xmlBlocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || []
-
-  if (xmlBlocks.length > 0) {
-    console.log(`[Parser] OFX: found ${xmlBlocks.length} XML-style STMTTRN blocks`)
-    xmlBlocks.forEach((b) => processOFXBlock(b, rows))
-  } else {
-    // Strategy 2: SGML-style (no closing tags, one field per line)
-    // Split on <STMTTRN> and treat each chunk as a block
-    const sgmlParts = text.split(/<STMTTRN>/gi)
-    const sgmlBlocks = sgmlParts.slice(1).map((chunk) => {
-      // Each block ends at the next top-level tag (e.g. <STMTTRN> again or </STMTTRNLIST>)
-      const endMatch = chunk.match(/^([\s\S]*?)(?=<\/?[A-Z]{4,}(?:\s|>))/i)
-      return '<STMTTRN>' + (endMatch ? endMatch[1] : chunk)
-    })
-    console.log(`[Parser] OFX: found ${sgmlBlocks.length} SGML-style STMTTRN blocks`)
-    if (sgmlBlocks.length === 0) {
-      throw new ParseError('Nenhuma transaÃ§Ã£o encontrada no arquivo OFX. Verifique se Ã© um extrato vÃ¡lido.')
+  const blocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || []
+  if (blocks.length === 0) {
+    // SGML fallback
+    const parts = text.split(/<STMTTRN>/gi).slice(1)
+    for (const part of parts) {
+      const end = part.search(/<\/?[A-Z]{4,}(?:\s|>)/)
+      const body = end >= 0 ? part.slice(0, end) : part
+      blocks.push(`<STMTTRN>${body}`)
     }
-    sgmlBlocks.forEach((b) => processOFXBlock(b, rows))
   }
 
-  console.log(`[Parser] âœ… OFX parsed: ${rows.length} valid transactions`)
+  if (blocks.length === 0) {
+    throw new ParseError('Nenhuma transacao encontrada no arquivo OFX.')
+  }
+
+  for (const block of blocks) {
+    const dateRaw = ofxField(block, 'DTPOSTED') || ofxField(block, 'DTUSER') || ''
+    const amountRaw = ofxField(block, 'TRNAMT') || ''
+    const memo = ofxField(block, 'MEMO') || ''
+    const name = ofxField(block, 'NAME') || ''
+    const typeRaw = ofxField(block, 'TRNTYPE') || ''
+    const balanceRaw = ofxField(block, 'BALAMT')
+
+    const date = parseDateToISO(dateRaw)
+    const signed = normaliseBRAmount(amountRaw)
+    if (!date || !Number.isFinite(signed) || signed === 0) continue
+
+    const balance = normaliseBRAmount(balanceRaw)
+
+    rows.push({
+      date,
+      description: [memo, name, typeRaw].filter(Boolean).join(' - ') || 'Sem descricao',
+      amount: Math.abs(signed),
+      direction: signed < 0 ? 'debit' : 'credit',
+      balance: Number.isFinite(balance) ? balance : null,
+      rawLine: block.replace(/\s+/g, ' ').slice(0, 180),
+    })
+  }
+
+  if (rows.length === 0) {
+    throw new ParseError('Arquivo OFX lido, mas nenhuma transacao valida foi identificada.')
+  }
+
   return rows
 }
 
-function getOFXField(block, field) {
-  const re = new RegExp(`<${field}>([^<\\r\\n]+)`, 'i')
-  const m  = block.match(re)
+function ofxField(block, field) {
+  const re = new RegExp(`<${field}>([^<\r\n]+)`, 'i')
+  const m = block.match(re)
   return m ? m[1].trim() : null
 }
 
-function processOFXBlock(block, rows) {
-  try {
-    const trnType = getOFXField(block, 'TRNTYPE') || 'DEBIT'
-    const dateStr = getOFXField(block, 'DTPOSTED') || getOFXField(block, 'DTUSER') || ''
-    const amtStr  = getOFXField(block, 'TRNAMT')  || '0'
-    const memo    = getOFXField(block, 'MEMO')    || ''
-    const name    = getOFXField(block, 'NAME')    || ''
-    const fitid   = getOFXField(block, 'FITID')   || ''
-    const balStr  = getOFXField(block, 'BALAMT')  || null
-
-    const isoDate = parseDateToISO(dateStr)
-    if (!isoDate) {
-      console.warn('[Parser] âš ï¸ OFX: skipping block â€” invalid date:', dateStr)
-      return
-    }
-
-    const signedAmt = normaliseBRAmount(amtStr)
-    if (isNaN(signedAmt)) {
-      console.warn('[Parser] âš ï¸ OFX: skipping block â€” invalid amount:', amtStr)
-      return
-    }
-
-    const amount    = Math.abs(signedAmt)
-    const direction = signedAmt >= 0 ? 'credit' : 'debit'
-    const desc      = [memo, name].filter(Boolean).join(' Â· ') || trnType || fitid || 'Sem descriÃ§Ã£o'
-
-    const balRaw = balStr ? normaliseBRAmount(balStr) : null
-    console.log(`[Parser] OFX row: ${isoDate} | ${direction} | R$${amount} | "${desc}"`)
-
-    rows.push({
-      date:        isoDate,
-      description: desc,
-      amount,
-      direction,
-      balance:     (balRaw !== null && !isNaN(balRaw)) ? balRaw : null,
-      rawLine:     block.replace(/\s+/g, ' ').slice(0, 160),
-    })
-  } catch (err) {
-    console.warn('[Parser] âš ï¸ OFX: could not process block:', err.message)
-  }
-}
-
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//  CSV PARSER
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ---------------------------------------------------------------------------
+// CSV parser
+// ---------------------------------------------------------------------------
 
 function parseCSV(text) {
-  console.log('[Parser] ðŸ“„ CSV format detected')
+  console.log('[Parser] format=CSV/TXT')
 
-  const lines = text
+  const normalizedText = String(text || '').replace(/\u0000/g, '')
+  const lines = normalizedText
     .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
+    .map((line) => line.replace(/\r/g, '').trim())
+    .filter((line) => line.length > 0)
 
   if (lines.length < 2) {
-    throw new ParseError('O arquivo CSV parece vazio ou sem dados suficientes.')
+    throw new ParseError('Arquivo CSV parece vazio ou sem linhas suficientes.')
   }
 
-  // â”€â”€ 1. Detect separator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const delimiter = detectBestSeparator(lines)
+  console.log(`[Parser] delimiter="${delimiter === '\t' ? 'TAB' : delimiter}"`)
 
-  const sep = detectCSVSeparator(lines[0])
-  console.log(`[Parser] CSV separator detected: "${sep === '\t' ? 'TAB' : sep}"`)
+  const table = lines.map((line) => splitDelimitedLine(line, delimiter))
+  const headerIdx = findHeaderRowIndex(table)
+  const firstDataIdx = findLikelyFirstDataIndex(table, headerIdx)
+  const headers = headerIdx >= 0 ? table[headerIdx].map((c) => stripAccents(c.toLowerCase().trim())) : null
+  const dataRows = table.slice(firstDataIdx)
 
-  const parsed = lines.map((l) => splitCSVLine(l, sep))
-
-  // â”€â”€ 2. Find header row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // Skip top metadata lines (bank name, period header, etc.) until a row
-  // that looks like a data header is found.
-
-  let headerIdx = -1
-  for (let i = 0; i < Math.min(parsed.length, 25); i++) {
-    const rowLower = parsed[i].map((c) => stripAccents(c.toLowerCase()))
-    const hasDate  = rowLower.some((c) => /\bdata\b|date|\bdt\b/.test(c))
-    const hasAmt   = rowLower.some((c) => /\bvalor\b|value|amount|\bvlr\b|debito|credito|saida|entrada/.test(c))
-    if (hasDate && hasAmt) {
-      headerIdx = i
-      console.log(`[Parser] CSV header row found at line ${i}: [${parsed[i].join(' | ')}]`)
-      break
-    }
+  const columns = detectColumns(headers, dataRows)
+  console.log('[Parser] columns:', columns)
+  if (headers) {
+    console.log('[Parser] headers:', headers)
   }
 
-  // No conventional header â€” try to parse from first row as data
-  const headers  = headerIdx >= 0 ? parsed[headerIdx].map((h) => stripAccents(h.toLowerCase().trim())) : null
-  const dataRows = parsed.slice(headerIdx >= 0 ? headerIdx + 1 : 0)
-
-  // â”€â”€ 3. Detect column mapping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-  const colMap = detectCSVColumns(headers, dataRows)
-  console.log('[Parser] CSV column map:', JSON.stringify(colMap))
-
-  // â”€â”€ 4. Extract rows â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const diagnostics = {
+    rowsTotal: dataRows.length,
+    rowsAccepted: 0,
+    rowsSkipped: 0,
+    reasons: {},
+    anyDateDetected: false,
+    anyAmountDetected: false,
+  }
 
   const rows = []
-  dataRows.forEach((cells, idx) => {
-    try {
-      const row = extractCSVRow(cells, colMap, idx + 1)
-      if (row) {
-        rows.push({ ...row, rawLine: cells.join(sep).slice(0, 160) })
-      }
-    } catch (err) {
-      console.warn(`[Parser] âš ï¸ CSV row ${idx + 1} error:`, err.message, '| cells:', cells)
-    }
-  })
-
-  if (rows.length === 0) {
-    throw new ParseError('Nenhuma transaÃ§Ã£o vÃ¡lida encontrada no CSV. Verifique o formato e tente novamente.')
+  for (let i = 0; i < dataRows.length; i += 1) {
+    const cells = dataRows[i]
+    const parsed = parseCSVDataRow(cells, columns, i + 1, diagnostics)
+    if (parsed) rows.push(parsed)
   }
 
-  console.log(`[Parser] âœ… CSV parsed: ${rows.length} valid rows from ${dataRows.length} data lines`)
+  console.log('[Parser] first parsed rows:', rows.slice(0, 5))
+  console.log('[Parser] skip reasons:', diagnostics.reasons)
+
+  if (rows.length === 0) {
+    if (!diagnostics.anyDateDetected) {
+      throw new ParseError('Arquivo CSV lido, mas as datas nao foram identificadas.')
+    }
+    if (!diagnostics.anyAmountDetected) {
+      throw new ParseError('Arquivo CSV lido, mas nenhuma coluna de valor foi reconhecida.')
+    }
+    throw new ParseError('Arquivo CSV lido, mas nenhuma transacao valida foi formada. Verifique datas, valores e delimitador.')
+  }
+
   return rows
 }
 
-// â”€â”€ CSV helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function detectBestSeparator(lines) {
+  const sample = lines.slice(0, 60)
+  const candidates = [',', ';', '\t', '|']
 
-function stripAccents(s) {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-}
+  let best = ';'
+  let bestScore = -Infinity
 
-function detectCSVSeparator(line) {
-  // Prefer semicolon (most common in Brazilian bank exports), then comma, tab, pipe
-  const candidates = [';', ',', '\t', '|']
-  let best = ','
-  let bestCount = 0
-  for (const c of candidates) {
-    const count = (line.match(new RegExp('\\' + (c === '\t' ? 't' : c === '|' ? '\\|' : c), 'g')) || []).length
-    if (count > bestCount) { bestCount = count; best = c }
+  for (const sep of candidates) {
+    const widths = []
+    for (const line of sample) {
+      const cells = splitDelimitedLine(line, sep)
+      widths.push(cells.length)
+    }
+
+    const useful = widths.filter((n) => n > 1).length
+    const mode = modeOf(widths)
+    const stable = widths.filter((n) => n === mode).length
+    const score = useful * 10 + stable + mode
+
+    console.log(`[Parser] delimiter test sep="${sep === '\t' ? 'TAB' : sep}" useful=${useful}/${sample.length} mode=${mode} stable=${stable} score=${score}`)
+
+    if (score > bestScore) {
+      bestScore = score
+      best = sep
+    }
   }
+
   return best
 }
 
-function splitCSVLine(line, sep) {
-  // RFC-4180 aware: handle quoted fields with embedded separators
-  const result = []
+function splitDelimitedLine(line, sep) {
+  const out = []
   let field = ''
-  let inQuote = false
-  for (let i = 0; i < line.length; i++) {
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i += 1) {
     const ch = line[i]
     if (ch === '"') {
-      if (inQuote && line[i + 1] === '"') { field += '"'; i++ } // escaped quote
-      else inQuote = !inQuote
-    } else if (ch === sep && !inQuote) {
-      result.push(field.trim())
+      if (inQuotes && line[i + 1] === '"') {
+        field += '"'
+        i += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (ch === sep && !inQuotes) {
+      out.push(field.trim())
       field = ''
     } else {
       field += ch
     }
   }
-  result.push(field.trim())
-  return result
+
+  out.push(field.trim())
+  return out
 }
 
-/**
- * CRITICAL: detectCSVColumns
- *
- * The key insight: for Brazilian bank CSVs we must distinguish between:
- *   1. Single signed amount column  ("Valor" â€” BR: negative = debit)
- *   2. Split debit + credit columns ("DÃ©bito" and "CrÃ©dito" separately)
- *   3. Balance/saldo column â€” must NEVER be used as amount
- *
- * Priority when both `valor` and `debito/credito` exist: prefer split columns.
- * The balance column is identified last and excluded from amount.
- */
-function detectCSVColumns(headers, dataRows) {
-  const col = {
-    dateIdx:       -1,
-    descIdx:       -1,
-    amountIdx:     -1,  // single signed amount column
-    debitIdx:      -1,  // separate debit column
-    creditIdx:     -1,  // separate credit column
-    directionIdx:  -1,  // D/C or Tipo column
-    balanceIdx:    -1,  // saldo â€” must not be used as amount
+function findHeaderRowIndex(table) {
+  const maxScan = Math.min(table.length, 40)
+  let bestIdx = -1
+  let bestScore = 0
+
+  for (let i = 0; i < maxScan; i += 1) {
+    const row = table[i].map((c) => stripAccents(c.toLowerCase()))
+    const hasDate = row.some((c) => /\bdata\b|\bdate\b|\bdt\b/.test(c))
+    const hasValue = row.some((c) => /\bvalor\b|\bamount\b|\bvalue\b|\bvlr\b|\bdebito\b|\bcredito\b|\bsaida\b|\bentrada\b/.test(c))
+    const hasDesc = row.some((c) => /\bdescricao\b|\bhistorico\b|\bmemo\b|\bdetalhe\b/.test(c))
+    const score = (hasDate ? 2 : 0) + (hasValue ? 2 : 0) + (hasDesc ? 1 : 0)
+
+    if (score > bestScore && row.length > 1) {
+      bestScore = score
+      bestIdx = i
+    }
+  }
+
+  return bestScore >= 3 ? bestIdx : -1
+}
+
+function findLikelyFirstDataIndex(table, headerIdx) {
+  if (headerIdx >= 0) return headerIdx + 1
+
+  for (let i = 0; i < Math.min(table.length, 80); i += 1) {
+    const row = table[i]
+    const hasDate = row.some((cell) => parseDateToISO(cell) !== null)
+    const hasAmount = row.some((cell) => {
+      const n = normaliseBRAmount(cell)
+      return Number.isFinite(n) && n !== 0
+    })
+    if (hasDate && hasAmount) return i
+  }
+
+  return 0
+}
+
+function detectColumns(headers, dataRows) {
+  const columns = {
+    dateIdx: -1,
+    descIdx: -1,
+    amountIdx: -1,
+    debitIdx: -1,
+    creditIdx: -1,
+    directionIdx: -1,
+    balanceIdx: -1,
   }
 
   if (headers && headers.length > 0) {
-    // Strip accents and lowercase for matching
-    const h = headers.map(stripAccents)
-
-    // Balance column â€” identify FIRST so it can be excluded from amount search
-    col.balanceIdx   = h.findIndex((c) => /\bsaldo\b|balance|\bsal\b/.test(c))
-
-    // Date
-    col.dateIdx      = h.findIndex((c) => /\bdata\b|\bdate\b|\bdt\b/.test(c))
-
-    // Description / histÃ³rico
-    col.descIdx      = h.findIndex((c) =>
-      /\bdescr|\bmemo\b|\bhistorico\b|\bhist\b|\bdetalhe\b|\bnarrativa\b|\blancamento\b|\bcomplemento\b/.test(c)
-    )
-
-    // Separate debit column (DÃ©bito / SaÃ­da / Valor DÃ©bito)
-    col.debitIdx     = h.findIndex((c, i) => i !== col.balanceIdx &&
-      /\bdebito\b|\bdebit\b|\bsaida\b|\bsaidas\b|\bvlr.?deb\b/.test(c)
-    )
-
-    // Separate credit column (CrÃ©dito / Entrada / Valor CrÃ©dito)
-    col.creditIdx    = h.findIndex((c, i) => i !== col.balanceIdx &&
-      /\bcredito\b|\bcredit\b|\bentrada\b|\bentradas\b|\bvlr.?cred\b/.test(c)
-    )
-
-    // Direction indicator column (D/C, Tipo, Natureza)
-    col.directionIdx = h.findIndex((c) =>
-      /^\s*d\s*[\/|]\s*c\s*$|^tipo$|natureza$|^dc$/.test(c)
-    )
-
-    // Single amount column â€” only if we DON'T have a split debit/credit pair
-    // Exclude balance column from this search
-    if (col.debitIdx < 0 || col.creditIdx < 0) {
-      col.amountIdx = h.findIndex((c, i) =>
-        i !== col.balanceIdx &&
-        i !== col.debitIdx   &&
-        i !== col.creditIdx  &&
-        /\bvalor\b|\bvalue\b|\bamount\b|\bvlr\b|\bvl\.?\b/.test(c)
-      )
+    columns.balanceIdx = headers.findIndex((h) => /\bsaldo\b|\bbalance\b/.test(h))
+    columns.dateIdx = headers.findIndex((h) => /\bdata\b|\bdate\b|\bdt\b/.test(h))
+    columns.descIdx = headers.findIndex((h) => /\bdescricao\b|\bhistorico\b|\bmemo\b|\bdetalhe\b|\blancamento\b/.test(h))
+    columns.debitIdx = headers.findIndex((h, i) => i !== columns.balanceIdx && /\bdebito\b|\bdebit\b|\bsaida\b/.test(h))
+    columns.creditIdx = headers.findIndex((h, i) => i !== columns.balanceIdx && /\bcredito\b|\bcredit\b|\bentrada\b/.test(h))
+    columns.directionIdx = headers.findIndex((h) => /^d\s*\/\s*c$|^dc$|\btipo\b|\bnatureza\b/.test(h))
+    if (columns.debitIdx < 0 || columns.creditIdx < 0) {
+      columns.amountIdx = headers.findIndex((h, i) => i !== columns.balanceIdx && /\bvalor\b|\bamount\b|\bvalue\b|\bvlr\b|\bvl\.?\b/.test(h))
     }
+  }
 
-    console.log('[Parser] CSV header analysis:', h)
-    console.log('[Parser] CSV colMap from headers:', JSON.stringify(col))
+  const sample = dataRows.slice(0, 120)
+  const scoreDate = {}
+  const scoreAmount = {}
+  const scoreText = {}
 
-  } else {
-    // Headerless: guess from first data row content
-    const sample = dataRows[0] || []
-    sample.forEach((cell, i) => {
-      if (col.dateIdx < 0 && parseDateToISO(cell) !== null) {
-        col.dateIdx = i
-      } else if (cell.length > 3 && /[A-Za-z\u00C0-\u00FF]/.test(cell)) {
-        if (col.descIdx < 0) col.descIdx = i
-      } else {
-        const n = normaliseBRAmount(cell)
-        if (!isNaN(n) && Math.abs(n) > 0) {
-          if (col.amountIdx < 0) col.amountIdx = i
-        }
+  for (const row of sample) {
+    row.forEach((cell, idx) => {
+      if (parseDateToISO(cell)) scoreDate[idx] = (scoreDate[idx] || 0) + 1
+      const n = normaliseBRAmount(cell)
+      if (Number.isFinite(n) && n !== 0 && Math.abs(n) < MAX_SANITY_AMOUNT) {
+        scoreAmount[idx] = (scoreAmount[idx] || 0) + 1
+      }
+      if (/[A-Za-z\u00C0-\u00FF]/.test(cell)) {
+        scoreText[idx] = (scoreText[idx] || 0) + 1
       }
     })
-    console.log('[Parser] CSV headerless guesses:', JSON.stringify(col))
   }
 
-  // â”€â”€ Safety defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // If critical columns were not found, apply conservative defaults
-  // (never default amountIdx to the last column â€” that is typically saldo)
+  if (columns.dateIdx < 0) columns.dateIdx = maxKey(scoreDate)
+  if (columns.descIdx < 0) columns.descIdx = maxKey(scoreText, [columns.dateIdx])
 
-  if (col.dateIdx < 0) col.dateIdx = 0
-  if (col.descIdx < 0) col.descIdx = (col.dateIdx === 0) ? 1 : 0
-
-  // If no amount column found AND no split debit/credit found:
-  // Try to find ANY numeric column that is not balance
-  if (col.amountIdx < 0 && col.debitIdx < 0 && col.creditIdx < 0) {
-    console.warn('[Parser] âš ï¸ No amount column identified from headers â€” scanning data rows for numeric column')
-    const sample = dataRows.slice(0, 5)
-    const numericCols = {}
-    sample.forEach((cells) => {
-      cells.forEach((cell, i) => {
-        if (i === col.dateIdx || i === col.descIdx || i === col.balanceIdx) return
-        const n = normaliseBRAmount(cell)
-        if (!isNaN(n) && n !== 0) numericCols[i] = (numericCols[i] || 0) + 1
-      })
-    })
-    const candidates = Object.entries(numericCols).sort((a, b) => b[1] - a[1])
-    if (candidates.length > 0) {
-      // Prefer a column that is NOT the last one (last is often saldo)
-      const nonLast = candidates.filter(([idx]) => Number(idx) < (dataRows[0]?.length ?? 0) - 1)
-      col.amountIdx = Number((nonLast.length > 0 ? nonLast : candidates)[0][0])
-      console.log('[Parser] âš ï¸ Fallback amountIdx chosen:', col.amountIdx)
-    }
+  if (columns.amountIdx < 0 && columns.debitIdx < 0 && columns.creditIdx < 0) {
+    columns.amountIdx = maxKey(scoreAmount, [columns.dateIdx, columns.descIdx, columns.balanceIdx])
   }
 
-  return col
+  return columns
 }
 
-function extractCSVRow(cells, colMap, rowNum) {
-  const dateStr = colMap.dateIdx >= 0 ? (cells[colMap.dateIdx] || '') : ''
-  const isoDate = parseDateToISO(dateStr)
-
-  if (!isoDate) {
-    // Skip rows that don't start with a date (sub-totals, headers, empty lines)
+function parseCSVDataRow(cells, columns, rowNum, diagnostics) {
+  const fail = (reason) => {
+    diagnostics.rowsSkipped += 1
+    diagnostics.reasons[reason] = (diagnostics.reasons[reason] || 0) + 1
+    if (diagnostics.rowsSkipped <= MAX_REASON_LOGS) {
+      console.log(`[Parser] skip row ${rowNum}: ${reason}`, cells)
+    }
     return null
   }
 
-  const desc = colMap.descIdx >= 0 ? (cells[colMap.descIdx] || '').trim() : `LanÃ§amento ${rowNum}`
-  if (!desc) return null
+  const dateCell = findDateCell(cells, columns.dateIdx)
+  if (!dateCell.iso) return fail('date_not_found')
+  diagnostics.anyDateDetected = true
 
-  let amount, direction
+  let amount = null
+  let direction = 'unknown'
+  let amountCellIdx = -1
 
-  // â”€â”€ Case A: split DÃ©bito / CrÃ©dito columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  if (colMap.debitIdx >= 0 && colMap.creditIdx >= 0) {
-    const debitRaw  = cells[colMap.debitIdx]  || ''
-    const creditRaw = cells[colMap.creditIdx] || ''
+  // Prefer split debit/credit columns when available.
+  if (columns.debitIdx >= 0 || columns.creditIdx >= 0) {
+    const debitRaw = columns.debitIdx >= 0 ? cells[columns.debitIdx] : ''
+    const creditRaw = columns.creditIdx >= 0 ? cells[columns.creditIdx] : ''
+    const debit = normaliseBRAmount(debitRaw)
+    const credit = normaliseBRAmount(creditRaw)
 
-    console.log(`[Parser] CSV row ${rowNum}: split cols | debit="${debitRaw}" credit="${creditRaw}"`)
-
-    const debitVal  = normaliseBRAmount(debitRaw)
-    const creditVal = normaliseBRAmount(creditRaw)
-
-    if (!isNaN(creditVal) && Math.abs(creditVal) > 0) {
-      amount    = Math.abs(creditVal)
+    if (Number.isFinite(credit) && Math.abs(credit) > 0) {
+      amount = Math.abs(credit)
       direction = 'credit'
-    } else if (!isNaN(debitVal) && Math.abs(debitVal) > 0) {
-      amount    = Math.abs(debitVal)
+      amountCellIdx = columns.creditIdx
+    } else if (Number.isFinite(debit) && Math.abs(debit) > 0) {
+      amount = Math.abs(debit)
       direction = 'debit'
-    } else {
-      console.log(`[Parser] CSV row ${rowNum}: both debit/credit empty or zero â€” skipping`)
-      return null
+      amountCellIdx = columns.debitIdx
     }
-
-  // â”€â”€ Case B: single signed amount column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  } else if (colMap.amountIdx >= 0) {
-    const rawCell = cells[colMap.amountIdx] || ''
-    const signed  = normaliseBRAmount(rawCell)
-
-    console.log(`[Parser] CSV row ${rowNum}: single amount col[${colMap.amountIdx}]="${rawCell}" â†’ ${signed}`)
-
-    if (isNaN(signed) || signed === 0) return null
-
-    // Check if there's a D/C direction column
-    if (colMap.directionIdx >= 0) {
-      const dc = stripAccents((cells[colMap.directionIdx] || '').toLowerCase().trim())
-      direction = /^c|cred|entrada/.test(dc) ? 'credit' : 'debit'
-      amount    = Math.abs(signed)
-    } else {
-      // Use sign of amount
-      amount    = Math.abs(signed)
-      direction = signed < 0 ? 'debit' : signed > 0 ? 'credit' : 'unknown'
-    }
-
-  } else {
-    console.warn(`[Parser] CSV row ${rowNum}: no amount column â€” skipping`)
-    return null
   }
 
-  // Sanity check: reject absurd amounts (likely saldo mis-read)
-  if (amount > 10_000_000) {
-    console.warn(`[Parser] âš ï¸ CSV row ${rowNum}: amount ${amount} exceeds sanity limit â€” skipping (possible saldo columns mis-read)`)
-    return null
+  if (amount === null && columns.amountIdx >= 0) {
+    const signed = normaliseBRAmount(cells[columns.amountIdx])
+    if (Number.isFinite(signed) && signed !== 0) {
+      amount = Math.abs(signed)
+      direction = signed < 0 ? 'debit' : 'credit'
+      amountCellIdx = columns.amountIdx
+    }
   }
 
-  const balRaw = (colMap.balanceIdx >= 0) ? normaliseBRAmount(cells[colMap.balanceIdx] || '') : null
+  // Salvage mode: scan row for any plausible amount if mapped columns fail.
+  if (amount === null) {
+    for (let i = 0; i < cells.length; i += 1) {
+      if (i === columns.dateIdx || i === columns.descIdx || i === columns.balanceIdx) continue
+      const n = normaliseBRAmount(cells[i])
+      if (Number.isFinite(n) && n !== 0 && Math.abs(n) < MAX_SANITY_AMOUNT) {
+        amount = Math.abs(n)
+        direction = n < 0 ? 'debit' : 'credit'
+        amountCellIdx = i
+        break
+      }
+    }
+  }
 
-  console.log(`[Parser] âœ… CSV row ${rowNum}: ${isoDate} | ${direction} | R$${amount} | "${desc}"`)
+  if (amount === null || !Number.isFinite(amount) || amount <= 0) {
+    return fail('amount_not_found')
+  }
+  diagnostics.anyAmountDetected = true
+
+  if (amount > MAX_SANITY_AMOUNT) {
+    return fail('amount_sanity_rejected')
+  }
+
+  if (columns.directionIdx >= 0) {
+    const dc = stripAccents((cells[columns.directionIdx] || '').toLowerCase())
+    if (/^c|\bcred/.test(dc)) direction = 'credit'
+    if (/^d|\bdeb/.test(dc)) direction = 'debit'
+  }
+
+  const desc = buildDescription(cells, columns, amountCellIdx, dateCell.index)
+  if (!desc) return fail('description_not_found')
+
+  if (direction === 'unknown') {
+    direction = inferDirectionFromText(desc)
+    if (direction === 'unknown') direction = 'debit'
+  }
+
+  diagnostics.rowsAccepted += 1
 
   return {
-    date:        isoDate,
+    date: dateCell.iso,
     description: desc,
     amount,
     direction,
-    balance:     (balRaw !== null && !isNaN(balRaw)) ? balRaw : null,
+    balance: null,
+    rawLine: cells.join(' | ').slice(0, 180),
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//  PUBLIC API
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-/**
- * Detects format and dispatches to OFX or CSV parser.
- * @param   {string} text       raw UTF-8 (or Latin-1) file content
- * @param   {string} fileName   original filename (for extension detection)
- * @returns {Array}             array of normalised rows
- * @throws  {ParseError}
- */
-export function parseStatement(text, fileName) {
-  const ext  = (fileName || '').toLowerCase().split('.').pop()
-  const head = text.slice(0, 800).toLowerCase()
-
-  console.log(`[Parser] â”€â”€ parseStatement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€`)
-  console.log(`[Parser] File: "${fileName}" | ext: ".${ext}"`)
-  console.log(`[Parser] First 200 chars: ${text.slice(0, 200).replace(/\n/g, 'â†µ')}`)
-
-  // PDF â€” explicitly unsupported
-  if (ext === 'pdf' || head.startsWith('%pdf')) {
-    throw new ParseError(
-      'Arquivos PDF nÃ£o sÃ£o suportados.\n' +
-      'Exporte o extrato como CSV ou OFX no internet banking e tente novamente.'
-    )
+function findDateCell(cells, preferredIdx) {
+  if (preferredIdx >= 0 && preferredIdx < cells.length) {
+    const iso = parseDateToISO(cells[preferredIdx])
+    if (iso) return { iso, index: preferredIdx }
   }
 
-  // OFX / QFX â€” detected by extension or content signature
+  for (let i = 0; i < cells.length; i += 1) {
+    const iso = parseDateToISO(cells[i])
+    if (iso) return { iso, index: i }
+  }
+
+  return { iso: null, index: -1 }
+}
+
+function buildDescription(cells, columns, amountIdx, dateIdx) {
+  if (columns.descIdx >= 0 && cells[columns.descIdx]) {
+    return String(cells[columns.descIdx]).trim()
+  }
+
+  const pieces = cells
+    .map((cell, idx) => ({ cell, idx }))
+    .filter(({ cell, idx }) => {
+      if (!cell) return false
+      if (idx === amountIdx || idx === dateIdx || idx === columns.balanceIdx) return false
+      if (parseDateToISO(cell)) return false
+      const n = normaliseBRAmount(cell)
+      if (Number.isFinite(n) && n !== 0) return false
+      return /[A-Za-z\u00C0-\u00FF]/.test(cell)
+    })
+    .map(({ cell }) => String(cell).trim())
+    .filter(Boolean)
+
+  return pieces.join(' - ').trim()
+}
+
+function stripAccents(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
+function modeOf(values) {
+  const freq = {}
+  let best = values[0] || 0
+  let bestCount = 0
+  for (const v of values) {
+    freq[v] = (freq[v] || 0) + 1
+    if (freq[v] > bestCount) {
+      best = v
+      bestCount = freq[v]
+    }
+  }
+  return Number(best) || 0
+}
+
+function maxKey(scoreMap, exclude = []) {
+  let bestKey = -1
+  let bestVal = -1
+  const blocked = new Set(exclude.filter((n) => Number.isInteger(n) && n >= 0))
+  for (const [key, value] of Object.entries(scoreMap)) {
+    const idx = Number(key)
+    if (blocked.has(idx)) continue
+    if (value > bestVal) {
+      bestVal = value
+      bestKey = idx
+    }
+  }
+  return bestKey
+}
+
+// ---------------------------------------------------------------------------
+// PDF parser (basic text PDFs)
+// ---------------------------------------------------------------------------
+
+let pdfWorkerConfigured = false
+
+async function parsePDF(file) {
+  console.log('[Parser] format=PDF')
+
+  const { getDocument, GlobalWorkerOptions } = await import('pdfjs-dist')
+  if (!pdfWorkerConfigured) {
+    GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
+    pdfWorkerConfigured = true
+  }
+
+  const buffer = await file.arrayBuffer()
+  const pdf = await getDocument({ data: new Uint8Array(buffer) }).promise
+
+  const lines = []
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+    const page = await pdf.getPage(pageNum)
+    const content = await page.getTextContent()
+    const grouped = groupPdfTextToLines(content.items || [])
+    lines.push(...grouped)
+  }
+
+  console.log('[Parser] PDF line preview:', lines.slice(0, 30))
+
+  if (lines.length === 0) {
+    throw new ParseError('PDF sem texto selecionavel. Talvez seja necessario OCR ou outro formato.')
+  }
+
+  const kind = detectPdfKind(lines)
+  console.log(`[Parser] PDF kind: ${kind}`)
+
+  const rows = parsePdfTransactionLines(lines, kind)
+  if (rows.length === 0) {
+    throw new ParseError('PDF lido, mas não foi possível reconhecer o formato.')
+  }
+
+  console.log('[Parser] PDF first parsed rows:', rows.slice(0, 5))
+  return rows
+}
+
+function groupPdfTextToLines(items) {
+  const sorted = [...items]
+    .map((item) => ({
+      text: String(item.str || '').trim(),
+      x: item.transform?.[4] || 0,
+      y: item.transform?.[5] || 0,
+    }))
+    .filter((item) => item.text)
+    .sort((a, b) => {
+      if (Math.abs(b.y - a.y) > 1.5) return b.y - a.y
+      return a.x - b.x
+    })
+
+  const lines = []
+  let current = []
+  let currentY = null
+
+  for (const token of sorted) {
+    if (currentY === null || Math.abs(token.y - currentY) <= 2) {
+      current.push(token)
+      currentY = currentY === null ? token.y : currentY
+    } else {
+      lines.push(current.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim())
+      current = [token]
+      currentY = token.y
+    }
+  }
+
+  if (current.length > 0) {
+    lines.push(current.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim())
+  }
+
+  return lines.filter(Boolean)
+}
+
+function detectPdfKind(lines) {
+  const head = stripAccents(lines.slice(0, 120).join(' ').toLowerCase())
+  if (/\bfatura\b|\bcartao\b|\bfechamento\b|\bvencimento\b/.test(head)) return 'invoice'
+  if (/\bextrato\b|\bsaldo\b|\bconta corrente\b|\bmovimentacao\b/.test(head)) return 'statement'
+  return 'unknown'
+}
+
+function parsePdfTransactionLines(lines, kind) {
+  const rows = []
+
+  const datePattern = /(\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?)/
+  const amountPattern = /(?:[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2}))/g
+
+  for (const line of lines) {
+    const dateMatch = line.match(datePattern)
+    if (!dateMatch) continue
+
+    const isoDate = parseDateToISO(dateMatch[1])
+    if (!isoDate) continue
+
+    const amounts = line.match(amountPattern)
+    if (!amounts || amounts.length === 0) continue
+
+    const rawAmount = amounts[amounts.length - 1]
+    const signed = normaliseBRAmount(rawAmount)
+    if (!Number.isFinite(signed) || signed === 0) continue
+
+    let description = line
+      .replace(dateMatch[1], '')
+      .replace(rawAmount, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (!description) description = 'Lancamento importado de PDF'
+
+    let direction = signed < 0 ? 'debit' : signed > 0 ? 'credit' : 'unknown'
+    if (direction === 'unknown' || direction === 'credit') {
+      const hinted = inferDirectionFromText(description)
+      if (hinted !== 'unknown') direction = hinted
+      else if (kind === 'invoice') direction = 'debit'
+    }
+
+    rows.push({
+      date: isoDate,
+      description,
+      amount: Math.abs(signed),
+      direction,
+      balance: null,
+      rawLine: line.slice(0, 180),
+    })
+  }
+
+  return rows
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export function parseStatement(text, fileName) {
+  const ext = (fileName || '').toLowerCase().split('.').pop()
+  const head = String(text || '').slice(0, 1000).toLowerCase()
+
   if (ext === 'ofx' || ext === 'qfx' || head.includes('<ofx>') || head.includes('<stmttrn>') || head.includes('ofxheader')) {
     return parseOFX(text)
   }
 
-  // CSV / TXT / TSV â€” everything else
+  if (ext === 'pdf' || head.startsWith('%pdf')) {
+    throw new ParseError('PDF enviado, mas o fluxo de texto deve usar parseStatementFile(file).')
+  }
+
   return parseCSV(text)
 }
 
+export async function parseStatementFile(file) {
+  const ext = (file?.name || '').toLowerCase().split('.').pop()
+
+  if (ext === 'pdf') {
+    return parsePDF(file)
+  }
+
+  const { text } = await readStatementFile(file)
+  return parseStatement(text, file.name)
+}
+
 /**
- * Read a File as UTF-8 text, with ISO-8859-1 fallback for older Brazilian bank exports.
- * @param   {File} file
- * @returns {Promise<{ text: string, encoding: string }>}
+ * Reads as UTF-8, strips BOM, and retries as ISO-8859-1 when decoding is noisy.
  */
 export async function readStatementFile(file) {
-  const readAs = (f, enc) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload  = (e) => resolve(e.target.result)
-      reader.onerror = () => reject(new Error('Erro ao ler o arquivo.'))
-      reader.readAsText(f, enc)
-    })
+  const readAsText = (enc) => new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => resolve(String(e.target?.result || ''))
+    reader.onerror = () => reject(new Error('Erro ao ler arquivo.'))
+    reader.readAsText(file, enc)
+  })
 
   try {
-    const utf8 = await readAs(file, 'UTF-8')
-    // U+FFFD replacement char indicates failed UTF-8 decode
-    if (utf8.includes('\uFFFD')) {
-      console.log('[Parser] UTF-8 decode had replacement chars â€” retrying as ISO-8859-1')
-      const latin = await readAs(file, 'ISO-8859-1')
+    let utf8 = await readAsText('UTF-8')
+    utf8 = utf8.replace(/^\uFEFF/, '')
+
+    const replacementCount = (utf8.match(/\uFFFD/g) || []).length
+    if (replacementCount > 3) {
+      let latin = await readAsText('ISO-8859-1')
+      latin = latin.replace(/^\uFEFF/, '')
+      console.log('[Parser] encoding fallback: ISO-8859-1')
       return { text: latin, encoding: 'ISO-8859-1' }
     }
+
     return { text: utf8, encoding: 'UTF-8' }
   } catch (err) {
-    throw new Error('NÃ£o foi possÃ­vel ler o arquivo: ' + err.message)
+    throw new Error(`Nao foi possivel ler o arquivo: ${err.message}`)
   }
 }
 

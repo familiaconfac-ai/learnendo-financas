@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useAccounts } from '../../hooks/useAccounts'
 import { addTransaction } from '../../services/transactionService'
-import { parseStatement, readStatementFile } from '../../utils/statementParser'
+import { parseStatementFile } from '../../utils/statementParser'
 import { classifyBatch } from '../../utils/transactionClassifier'
 import { formatCurrency } from '../../utils/formatCurrency'
 import Card, { CardHeader } from '../../components/ui/Card'
@@ -66,8 +66,7 @@ export default function Importacao() {
     setStep('parsing')
 
     try {
-      const { text } = await readStatementFile(file)
-      const raw      = parseStatement(text, file.name)
+      const raw = await parseStatementFile(file)
 
       const classified = classifyBatch(raw).map((row, idx) => ({
         ...row,
@@ -187,12 +186,12 @@ export default function Importacao() {
         >
           <span className="dropzone-icon">📁</span>
           <p className="dropzone-title">Arraste o extrato ou clique para selecionar</p>
-          <p className="dropzone-sub">Formatos suportados: <strong>CSV</strong> e <strong>OFX / QFX</strong></p>
+          <p className="dropzone-sub">Formatos suportados: <strong>CSV</strong>, <strong>OFX / QFX</strong> e <strong>PDF</strong></p>
           <label className="dropzone-btn">
             Selecionar arquivo
             <input
               type="file"
-              accept=".csv,.ofx,.qfx,.txt"
+              accept=".csv,.ofx,.qfx,.txt,.pdf"
               style={{ display: 'none' }}
               onChange={handleFileInput}
             />
@@ -214,6 +213,13 @@ export default function Importacao() {
               <div>
                 <strong>Planilha CSV</strong>
                 <p>Baixe o extrato como CSV. As colunas são detectadas automaticamente.</p>
+              </div>
+            </div>
+            <div className="how-item">
+              <span className="how-icon">🧾</span>
+              <div>
+                <strong>PDF (básico)</strong>
+                <p>O app extrai texto do PDF e tenta mapear transações. Layouts desconhecidos mostram erro claro.</p>
               </div>
             </div>
             <div className="how-item">
@@ -314,6 +320,9 @@ export default function Importacao() {
                   <div className="preview-row-desc">{row.description}</div>
                   <div className="preview-row-footer">
                     <span className="preview-date">{isoToBR(row.date)}</span>
+                    <span className="preview-confidence">
+                      Confiança: {row.classification?.confidence ?? 'low'}
+                    </span>
                     {review && <span className="preview-review-tag">⚠ Classificação incerta</span>}
                   </div>
                 </div>
