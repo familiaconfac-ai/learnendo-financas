@@ -15,7 +15,7 @@ import { fetchTransactions } from '../../services/transactionService'
 import { createRecurrenceRule } from '../../services/recurrenceService'
 import { findDuplicateMatches } from '../../utils/transactionDuplicates'
 import { formatCurrency } from '../../utils/formatCurrency'
-import { formatDateBR } from '../../utils/formatDate'
+import { formatDateBR, formatFriendlyDate } from '../../utils/formatDate'
 import { suggestTypeAndCategory } from '../../utils/transactionAutoCategorizer'
 import { resolveNatureAffectsBudget } from '../../constants/transactionNatures'
 import { TRANSACTION_PAYMENT_METHODS, getPaymentMethodLabel } from '../../constants/transactionPaymentMethods'
@@ -100,6 +100,23 @@ const DEBT_LINKABLE_NATURE_IDS = new Set([
   'nature_loan_given',
   'nature_loan_repayment',
   'nature_restitution',
+])
+
+// Natures that involve another person — shows the "Pessoa relacionada" field
+const PERSON_LINKED_NATURE_IDS = new Set([
+  'nature_loan_received',
+  'nature_loan_given',
+  'nature_loan_repayment',
+  'nature_debt_payment',
+  'nature_restitution',
+  'nature_donation_received',
+  'nature_donation_sent',
+  'nature_allowance',
+  'nature_allowance_received',
+  'nature_allowance_sent',
+  'nature_offer_received',
+  'nature_offer_sent',
+  'nature_reimbursement',
 ])
 
 function normalizeStatus(status) {
@@ -676,22 +693,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
             )}
           </span>
           <span className="tx-meta">
-            {originMeta && t.origin !== 'manual' && (
-              <span className="origin-badge" style={{ background: originMeta.bg }}>
-                {originMeta.label}
-              </span>
-            )}
-            {t.type === 'transfer_internal' && (
-              <span className="origin-badge" style={{ background: '#6b7280' }}>interna</span>
-            )}
-            {catName && <span className="tx-cat">{catName}</span>}
-            {subcategoryLabel && <span className="tx-cat">• {subcategoryLabel}</span>}
-            {natureLabel && <span className="tx-cat">• {natureLabel}</span>}
-            {t.paymentMethod && <span className="tx-cat">• {paymentMethodLabel}</span>}
-            {cardLabel && <span className="tx-cat">• {cardLabel}</span>}
-            {contactLabel && <span className="tx-cat">• {contactLabel}</span>}
-            {debtLabel && <span className="tx-cat">• Dívida: {debtLabel}</span>}
-            <span className="tx-date">{formatDateBR(t.date)}</span>
+            <span className="tx-date">
+              {catName ? `${catName} • ` : ''}{formatFriendlyDate(t.date)}
+            </span>
           </span>
         </div>
         <span className={`tx-value tx-value--${t.type}`}>
@@ -1020,25 +1024,29 @@ export default function Lancamentos({ view = 'confirmed' }) {
               </select>
             </div>
           )}
-          <div className="form-group">
-            <label>Pessoa relacionada (opcional)</label>
-            <select name="contactId" value={form.contactId} onChange={handleChange}>
-              <option value="">Nenhuma</option>
-                {availableContacts.map((contact) => (
-                <option key={contact.id} value={contact.id}>{contact.name}</option>
-              ))}
-            </select>
-          </div>
-          <div className="form-group contact-inline-row">
-            <input
-              name="newContactName"
-              type="text"
-              value={form.newContactName}
-              onChange={handleChange}
-              placeholder="Novo contato externo"
-            />
-            <button type="button" className="inline-add-btn" onClick={handleCreateContactFromInput}>Adicionar</button>
-          </div>
+          {PERSON_LINKED_NATURE_IDS.has(form.transactionNatureId) && (
+            <>
+              <div className="form-group">
+                <label>Pessoa relacionada (opcional)</label>
+                <select name="contactId" value={form.contactId} onChange={handleChange}>
+                  <option value="">Nenhuma</option>
+                  {availableContacts.map((contact) => (
+                    <option key={contact.id} value={contact.id}>{contact.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group contact-inline-row">
+                <input
+                  name="newContactName"
+                  type="text"
+                  value={form.newContactName}
+                  onChange={handleChange}
+                  placeholder="Novo contato externo"
+                />
+                <button type="button" className="inline-add-btn" onClick={handleCreateContactFromInput}>Adicionar</button>
+              </div>
+            </>
+          )}
           <div className="form-group">
             <label>Observação</label>
             <textarea name="notes" value={form.notes} onChange={handleChange} rows={2} placeholder="Opcional" />
