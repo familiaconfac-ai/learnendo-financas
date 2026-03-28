@@ -46,6 +46,10 @@ export async function addBudget(uid, data, options = {}) {
     const ref = await addDoc(budgetCol(uid, workspaceId), {
       categoryName:    data.categoryName,
       categoryId:      data.categoryId    || null,
+      parentCategoryName: data.parentCategoryName || null,
+      itemName: data.itemName || null,
+      subcategoryName: data.subcategoryName || null,
+      structureModel: data.structureModel || null,
       type:            data.type          || 'expense',
       plannedAmount:   Number(data.plannedAmount),
       competencyMonth: data.competencyMonth,

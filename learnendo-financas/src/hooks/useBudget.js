@@ -34,13 +34,37 @@ export function useBudget(year, month) {
 
       const { spentByCategoryId, spentByCategoryName } = buildBudgetSpentMap(transactions, 'useBudget')
 
-      const items = rawBudgets.map((b) => ({
-        ...b,
-        spent:
-          spentByCategoryId[`${b.type || 'expense'}::${b.categoryId || '__none__'}`] ||
-          spentByCategoryName[`${b.type || 'expense'}::${normalizedCategoryName(b.categoryName)}`] ||
-          0,
-      }))
+      const hierarchicalGroups = new Set()
+      rawBudgets.forEach((row) => {
+        if ((row.type || 'expense') !== 'expense') return
+        const parentName = row.parentCategoryName || row.categoryName
+        if (!parentName) return
+        const marker = `${row.type || 'expense'}::${normalizedCategoryName(parentName)}`
+        hierarchicalGroups.add(marker)
+      })
+
+      const spentAssignedInGroup = new Set()
+
+      const items = rawBudgets.map((b) => {
+        const typeKey = b.type || 'expense'
+        const byIdKey = `${typeKey}::${b.categoryId || '__none__'}`
+        const categoryBaseName = b.parentCategoryName || b.categoryName
+        const byNameKey = `${typeKey}::${normalizedCategoryName(categoryBaseName)}`
+
+        let spent = spentByCategoryId[byIdKey] || spentByCategoryName[byNameKey] || 0
+
+        // In hierarchical expense mode, multiple rows can share the same category.
+        // Assign spent once per category group to avoid inflating totals.
+        if (typeKey === 'expense' && hierarchicalGroups.has(byNameKey)) {
+          if (spentAssignedInGroup.has(byNameKey)) spent = 0
+          else spentAssignedInGroup.add(byNameKey)
+        }
+
+        return {
+          ...b,
+          spent,
+        }
+      })
 
       console.log('[useBudget] Diagnostics:', {
         budgets: rawBudgets.length,
@@ -83,5 +107,5 @@ export function useBudget(year, month) {
   const totalBudgeted = budgetItems.reduce((s, b) => s + (b.plannedAmount || 0), 0)
   const totalSpent    = budgetItems.reduce((s, b) => s + (b.spent        || 0), 0)
 
-  return { budgetItems, loading, error, reload, add, update, remove, totalBudgeted, totalSpent }
+  return { budgetItems, loading, error, reload, add, update, remove, totalBudgeted, totalSpent, permissions }
 }

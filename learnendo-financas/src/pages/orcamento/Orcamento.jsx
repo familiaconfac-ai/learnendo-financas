@@ -1,274 +1,636 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import MonthSelector from '../../components/ui/MonthSelector'
-import Card, { CardHeader } from '../../components/ui/Card'
-import Button from '../../components/ui/Button'
-import Modal from '../../components/ui/Modal'
 import { useFinance } from '../../context/FinanceContext'
 import { useBudget } from '../../hooks/useBudget'
-import { useCategories } from '../../hooks/useCategories'
 import { formatCurrency } from '../../utils/formatCurrency'
 import './Orcamento.css'
 
-const TYPES = [
-  { value: 'expense',    label: 'Despesa',      cls: 'type-btn-expense' },
-  { value: 'income',     label: 'Receita',      cls: 'type-btn-income' },
-  { value: 'investment', label: 'Investimento', cls: 'type-btn-investment' },
+const INITIAL_INCOME_ITEMS = ['Salário', 'Renda extra']
+
+const PRESET_EXPENSE_CATEGORIES = [
+  {
+    name: 'Moradia',
+    items: ['Aluguel / Financiamento', 'Energia', 'Água', 'Internet', 'Gás', 'Condomínio', 'IPTU'],
+  },
+  {
+    name: 'Alimentação',
+    items: ['Supermercado', 'Padaria', 'Restaurante', 'Delivery'],
+  },
+  {
+    name: 'Transporte',
+    items: ['Combustível', 'Manutenção', 'Seguro', 'IPVA', 'Estacionamento', 'Transporte público', 'Apps (Uber)'],
+  },
+  {
+    name: 'Saúde',
+    items: ['Plano de saúde', 'Consultas', 'Exames', 'Medicamentos'],
+  },
+  {
+    name: 'Educação',
+    items: ['Escola', 'Cursos', 'Material'],
+  },
+  {
+    name: 'Pessoal',
+    items: ['Roupas', 'Beleza', 'Higiene'],
+  },
+  {
+    name: 'Lazer',
+    items: ['Viagens', 'Cinema', 'Assinaturas'],
+  },
+  {
+    name: 'Financeiro',
+    items: ['Juros', 'Tarifas', 'Multas'],
+  },
+  {
+    name: 'Doações',
+    items: ['Igreja', 'Doações'],
+  },
 ]
 
-const TYPE_LABELS = {
-  expense:    'Despesas',
-  income:     'Receitas',
-  investment: 'Investimentos',
+function toAmount(value) {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
 }
 
-const NEW_CAT_PLACEHOLDER = {
-  expense:    'Ex: Alimentação, Casa, Saúde',
-  income:     'Ex: Salário, Prebenda, Renda Extra',
-  investment: 'Ex: Poupança, Ações, Reserva',
+function normalizeKey(value) {
+  return String(value || '').trim().toLowerCase()
 }
 
-const EMPTY_FORM = { type: 'expense', categoryId: '', categoryName: '', newCatName: '', amount: '' }
+function duplicateLabel(baseName, existingNames) {
+  const base = String(baseName || '').trim() || 'Item'
+  const used = new Set(existingNames.map((name) => normalizeKey(name)))
+  let index = 2
+  let candidate = `${base} (${index})`
+  while (used.has(normalizeKey(candidate))) {
+    index += 1
+    candidate = `${base} (${index})`
+  }
+  return candidate
+}
+
+function monthKey(year, month) {
+  return `${year}-${String(month).padStart(2, '0')}`
+}
+
+function buildStructuredModel(budgetItems) {
+  const income = []
+  const expenseByCategory = new Map()
+
+  for (const item of budgetItems) {
+    const type = item.type || 'expense'
+    if (type === 'income') {
+      income.push({
+        id: item.id,
+        name: item.itemName || item.subcategoryName || item.categoryName || 'Receita',
+        amount: String(item.plannedAmount ?? 0),
+      })
+      continue
+    }
+
+    if (type !== 'expense') continue
+
+    const categoryName = item.parentCategoryName || item.categoryName || 'Outros'
+    const itemName = item.itemName || item.subcategoryName || item.categoryName || 'Subcategoria'
+
+    if (!expenseByCategory.has(categoryName)) {
+      expenseByCategory.set(categoryName, { name: categoryName, items: [] })
+    }
+
+    expenseByCategory.get(categoryName).items.push({
+      id: item.id,
+      name: itemName,
+      amount: String(item.plannedAmount ?? 0),
+    })
+  }
+
+  for (const defaultName of INITIAL_INCOME_ITEMS) {
+    const exists = income.some((row) => normalizeKey(row.name) === normalizeKey(defaultName))
+    if (!exists) income.push({ id: null, name: defaultName, amount: '0' })
+  }
+
+  const expenses = PRESET_EXPENSE_CATEGORIES.map((preset) => {
+    const existing = expenseByCategory.get(preset.name)
+    const mergedItems = []
+
+    for (const subName of preset.items) {
+      const match = existing?.items.find((row) => normalizeKey(row.name) === normalizeKey(subName))
+      mergedItems.push(match || { id: null, name: subName, amount: '0' })
+    }
+
+    if (existing) {
+      for (const row of existing.items) {
+        const alreadyIncluded = mergedItems.some((itemRow) => normalizeKey(itemRow.name) === normalizeKey(row.name))
+        if (!alreadyIncluded) mergedItems.push(row)
+      }
+      expenseByCategory.delete(preset.name)
+    }
+
+    return { name: preset.name, items: mergedItems }
+  })
+
+  for (const extraCategory of expenseByCategory.values()) {
+    expenses.push(extraCategory)
+  }
+
+  return { income, expenses }
+}
 
 export default function Orcamento() {
   const { selectedMonth, selectedYear } = useFinance()
-  const { budgetItems, loading, error, add, remove, totalBudgeted, totalSpent } =
-    useBudget(selectedYear, selectedMonth)
-  const { categories, add: addCategory } = useCategories()
-  const [modalOpen, setModalOpen] = useState(false)
-  const [form, setForm] = useState(EMPTY_FORM)
-  const [saving, setSaving] = useState(false)
+  const { budgetItems, loading, error, add, update, remove, permissions } = useBudget(selectedYear, selectedMonth)
+
+  const [model, setModel] = useState({ income: [], expenses: [] })
+  const [collapsed, setCollapsed] = useState({})
+  const [savingKey, setSavingKey] = useState('')
   const [toast, setToast] = useState(null)
 
-  function showToast(msg, type = 'ok') {
-    setToast({ msg, type })
-    setTimeout(() => setToast(null), 3500)
-  }
+  const competencyMonth = monthKey(selectedYear, selectedMonth)
 
-  const filteredCats = categories.filter((c) => c.type === form.type)
-  const isNewCat = form.categoryId === '__new__'
-
-  function openModal() { setForm(EMPTY_FORM); setModalOpen(true) }
-  function closeModal() { setModalOpen(false); setForm(EMPTY_FORM) }
-
-  function handleTypeChange(newType) {
-    setForm((f) => ({ ...f, type: newType, categoryId: '', categoryName: '', newCatName: '' }))
-  }
-
-  function handleCategoryChange(e) {
-    const val = e.target.value
-    if (val === '__new__') {
-      setForm((f) => ({ ...f, categoryId: '__new__', categoryName: '', newCatName: '' }))
-    } else {
-      const cat = categories.find((c) => c.id === val)
-      setForm((f) => ({ ...f, categoryId: val, categoryName: cat?.name ?? '' }))
-    }
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    const amount = parseFloat(form.amount)
-    if (!amount || amount <= 0) return showToast('Informe um valor válido.', 'err')
-
-    let catId = form.categoryId
-    let catName = form.categoryName
-
-    if (isNewCat) {
-      const name = form.newCatName.trim()
-      if (!name) return showToast('Digite o nome da nova categoria.', 'err')
-      catName = name
-    } else if (!catId) {
-      return showToast('Selecione ou crie uma categoria.', 'err')
-    }
-
-    setSaving(true)
-    const competencyMonth = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`
-    try {
-      if (isNewCat) {
-        catId = await addCategory({ name: catName, type: form.type })
+  useEffect(() => {
+    const nextModel = buildStructuredModel(budgetItems)
+    setModel(nextModel)
+    setCollapsed((current) => {
+      const merged = { ...current }
+      for (const category of nextModel.expenses) {
+        if (merged[category.name] === undefined) merged[category.name] = false
       }
-      await add({
-        categoryId:      catId,
-        categoryName:    catName,
-        type:            form.type,
-        plannedAmount:   amount,
-        competencyMonth,
+      return merged
+    })
+  }, [budgetItems])
+
+  const totalIncome = useMemo(
+    () => model.income.reduce((sum, row) => sum + toAmount(row.amount), 0),
+    [model.income],
+  )
+
+  const totalExpenses = useMemo(
+    () => model.expenses.reduce((sum, category) => {
+      return sum + category.items.reduce((catSum, row) => catSum + toAmount(row.amount), 0)
+    }, 0),
+    [model.expenses],
+  )
+
+  const balance = totalIncome - totalExpenses
+
+  function showToast(message, type = 'ok') {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 2800)
+  }
+
+  function setIncomeField(index, field, value) {
+    setModel((current) => {
+      const income = current.income.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, [field]: value } : row,
+      )
+      return { ...current, income }
+    })
+  }
+
+  function setExpenseCategoryName(categoryIndex, nextName) {
+    setModel((current) => {
+      const expenses = current.expenses.map((category, idx) =>
+        idx === categoryIndex ? { ...category, name: nextName } : category,
+      )
+      return { ...current, expenses }
+    })
+  }
+
+  function setExpenseField(categoryIndex, itemIndex, field, value) {
+    setModel((current) => {
+      const expenses = current.expenses.map((category, idx) => {
+        if (idx !== categoryIndex) return category
+        const items = category.items.map((item, itemIdx) =>
+          itemIdx === itemIndex ? { ...item, [field]: value } : item,
+        )
+        return { ...category, items }
       })
-      closeModal()
-      showToast('Item adicionado ao orçamento ✅')
-    } catch (err) {
-      showToast('Erro ao salvar: ' + err.message, 'err')
-    } finally {
-      setSaving(false)
-    }
+      return { ...current, expenses }
+    })
   }
 
-  async function handleDelete(item) {
-    if (!window.confirm(`Remover "${item.categoryName}" do orçamento?`)) return
+  async function persistIncome(index) {
+    if (!permissions?.canEditBudget) return
+    const row = model.income[index]
+    if (!row) return
+
+    const name = row.name.trim() || 'Receita'
+    const amount = toAmount(row.amount)
+    const payload = {
+      type: 'income',
+      categoryId: null,
+      categoryName: name,
+      itemName: name,
+      subcategoryName: null,
+      parentCategoryName: null,
+      plannedAmount: amount,
+      competencyMonth,
+      structureModel: 'hierarchical_v1',
+    }
+
+    const rowKey = `income-${index}`
+    setSavingKey(rowKey)
+
     try {
-      await remove(item.id)
-      showToast('Item removido.')
+      if (row.id) {
+        await update(row.id, payload)
+      } else {
+        await add(payload)
+      }
     } catch (err) {
-      showToast('Erro ao remover: ' + err.message, 'err')
+      showToast(`Erro ao salvar receita: ${err.message}`, 'err')
+    } finally {
+      setSavingKey('')
     }
   }
 
-  const byType = TYPES
-    .map(({ value }) => ({
-      type:  value,
-      label: TYPE_LABELS[value],
-      items: budgetItems.filter((b) => (b.type || 'expense') === value),
+  async function persistExpense(categoryIndex, itemIndex) {
+    if (!permissions?.canEditBudget) return
+    const category = model.expenses[categoryIndex]
+    const row = category?.items[itemIndex]
+    if (!category || !row) return
+
+    const categoryName = category.name.trim() || 'Categoria'
+    const itemName = row.name.trim() || 'Subcategoria'
+    const amount = toAmount(row.amount)
+    const payload = {
+      type: 'expense',
+      categoryId: null,
+      categoryName,
+      parentCategoryName: categoryName,
+      itemName,
+      subcategoryName: itemName,
+      plannedAmount: amount,
+      competencyMonth,
+      structureModel: 'hierarchical_v1',
+    }
+
+    const rowKey = `expense-${categoryIndex}-${itemIndex}`
+    setSavingKey(rowKey)
+
+    try {
+      if (row.id) {
+        await update(row.id, payload)
+      } else {
+        await add(payload)
+      }
+    } catch (err) {
+      showToast(`Erro ao salvar despesa: ${err.message}`, 'err')
+    } finally {
+      setSavingKey('')
+    }
+  }
+
+  async function persistCategoryRename(categoryIndex) {
+    if (!permissions?.canEditBudget) return
+    const category = model.expenses[categoryIndex]
+    if (!category) return
+    const categoryName = category.name.trim() || 'Categoria'
+
+    setSavingKey(`category-${categoryIndex}`)
+
+    try {
+      const updates = category.items
+        .filter((item) => item.id)
+        .map((item) => update(item.id, {
+          categoryName,
+          parentCategoryName: categoryName,
+          itemName: item.name.trim() || 'Subcategoria',
+          subcategoryName: item.name.trim() || 'Subcategoria',
+          plannedAmount: toAmount(item.amount),
+        }))
+
+      await Promise.all(updates)
+      if (updates.length > 0) showToast('Categoria renomeada com sucesso.')
+    } catch (err) {
+      showToast(`Erro ao renomear categoria: ${err.message}`, 'err')
+    } finally {
+      setSavingKey('')
+    }
+  }
+
+  function addIncome() {
+    if (!permissions?.canEditBudget) return
+    setModel((current) => ({
+      ...current,
+      income: [...current.income, { id: null, name: 'Nova receita', amount: '0' }],
     }))
-    .filter((g) => g.items.length > 0)
+  }
+
+  async function duplicateIncome(index) {
+    if (!permissions?.canEditBudget) return
+    const row = model.income[index]
+    if (!row) return
+
+    const names = model.income.map((item) => item.name)
+    const newName = duplicateLabel(row.name, names)
+
+    setSavingKey(`income-dup-${index}`)
+    try {
+      await add({
+        type: 'income',
+        categoryId: null,
+        categoryName: newName,
+        itemName: newName,
+        subcategoryName: null,
+        parentCategoryName: null,
+        plannedAmount: toAmount(row.amount),
+        competencyMonth,
+        structureModel: 'hierarchical_v1',
+      })
+    } catch (err) {
+      showToast(`Erro ao duplicar receita: ${err.message}`, 'err')
+    } finally {
+      setSavingKey('')
+    }
+  }
+
+  async function deleteIncome(index) {
+    if (!permissions?.canEditBudget) return
+    const row = model.income[index]
+    if (!row) return
+
+    setModel((current) => ({
+      ...current,
+      income: current.income.filter((_, rowIndex) => rowIndex !== index),
+    }))
+
+    if (!row.id) return
+
+    setSavingKey(`income-del-${index}`)
+    try {
+      await remove(row.id)
+    } catch (err) {
+      showToast(`Erro ao excluir receita: ${err.message}`, 'err')
+    } finally {
+      setSavingKey('')
+    }
+  }
+
+  function addExpenseItem(categoryIndex) {
+    if (!permissions?.canEditBudget) return
+    setModel((current) => {
+      const expenses = current.expenses.map((category, idx) => {
+        if (idx !== categoryIndex) return category
+        return {
+          ...category,
+          items: [...category.items, { id: null, name: 'Nova subcategoria', amount: '0' }],
+        }
+      })
+      return { ...current, expenses }
+    })
+  }
+
+  async function duplicateExpenseItem(categoryIndex, itemIndex) {
+    if (!permissions?.canEditBudget) return
+    const category = model.expenses[categoryIndex]
+    const row = category?.items[itemIndex]
+    if (!category || !row) return
+
+    const names = category.items.map((item) => item.name)
+    const newName = duplicateLabel(row.name, names)
+
+    setSavingKey(`expense-dup-${categoryIndex}-${itemIndex}`)
+    try {
+      await add({
+        type: 'expense',
+        categoryId: null,
+        categoryName: category.name.trim() || 'Categoria',
+        parentCategoryName: category.name.trim() || 'Categoria',
+        itemName: newName,
+        subcategoryName: newName,
+        plannedAmount: toAmount(row.amount),
+        competencyMonth,
+        structureModel: 'hierarchical_v1',
+      })
+    } catch (err) {
+      showToast(`Erro ao duplicar despesa: ${err.message}`, 'err')
+    } finally {
+      setSavingKey('')
+    }
+  }
+
+  async function deleteExpenseItem(categoryIndex, itemIndex) {
+    if (!permissions?.canEditBudget) return
+    const category = model.expenses[categoryIndex]
+    const row = category?.items[itemIndex]
+    if (!category || !row) return
+
+    setModel((current) => {
+      const expenses = current.expenses.map((cat, idx) => {
+        if (idx !== categoryIndex) return cat
+        return {
+          ...cat,
+          items: cat.items.filter((_, idxItem) => idxItem !== itemIndex),
+        }
+      })
+      return { ...current, expenses }
+    })
+
+    if (!row.id) return
+
+    setSavingKey(`expense-del-${categoryIndex}-${itemIndex}`)
+    try {
+      await remove(row.id)
+    } catch (err) {
+      showToast(`Erro ao excluir despesa: ${err.message}`, 'err')
+    } finally {
+      setSavingKey('')
+    }
+  }
+
+  function toggleCategory(categoryName) {
+    setCollapsed((current) => ({
+      ...current,
+      [categoryName]: !current[categoryName],
+    }))
+  }
 
   return (
     <div className="orcamento-page">
       <MonthSelector />
 
-      <div className="orcamento-content">
-        <div className="orcamento-header-row">
-          <h2 className="section-title">Orçamento</h2>
-          <Button size="sm" onClick={openModal}>+ Adicionar</Button>
-        </div>
+      <div className="budget-layout">
+        <header className="budget-header">
+          <h2>Orçamento</h2>
+          <p>Preencha rapidamente suas receitas e despesas do mês.</p>
+        </header>
 
-        {loading && <p className="orcamento-loading">Carregando orçamento…</p>}
-        {error   && <p className="orcamento-error">Erro: {error}</p>}
-
-        {!loading && !error && budgetItems.length === 0 && (
-          <Card className="orcamento-empty">
-            <p>Nenhuma meta orçada para este mês.</p>
-            <p className="orcamento-empty-hint">Toque em "+ Adicionar" para começar.</p>
-          </Card>
-        )}
-
-        {byType.map((group) => (
-          <div key={group.type}>
-            <p className={`budget-type-heading budget-type-${group.type}`}>{group.label}</p>
-            {group.items.map((item) => (
-              <Card key={item.id} className="budget-cat-card">
-                <div className="budget-cat-header">
-                  <CardHeader
-                    title={item.categoryName}
-                    subtitle={`${formatCurrency(item.spent)} de ${formatCurrency(item.plannedAmount)}`}
-                  />
-                  <button className="budget-del-btn" onClick={() => handleDelete(item)} title="Remover">🗑️</button>
-                </div>
-                <div className="budget-cat-bar-track">
-                  <div
-                    className={`budget-cat-bar-fill bar-${item.type || 'expense'}${item.spent > item.plannedAmount ? ' over' : ''}`}
-                    style={{ width: `${Math.min((item.spent / (item.plannedAmount || 1)) * 100, 100)}%` }}
-                  />
-                </div>
-              </Card>
-            ))}
+        <section className="budget-summary">
+          <div className="summary-box summary-income">
+            <span>Total receitas</span>
+            <strong>{formatCurrency(totalIncome)}</strong>
           </div>
-        ))}
+          <div className="summary-box summary-expense">
+            <span>Total despesas</span>
+            <strong>{formatCurrency(totalExpenses)}</strong>
+          </div>
+          <div className={`summary-box ${balance >= 0 ? 'summary-balance-positive' : 'summary-balance-negative'}`}>
+            <span>Saldo</span>
+            <strong>{formatCurrency(balance)}</strong>
+          </div>
+        </section>
 
-        {budgetItems.length > 0 && (
-          <Card className="budget-totals-card">
-            <div className="budget-total-row">
-              <span>Total orçado</span>
-              <strong>{formatCurrency(totalBudgeted)}</strong>
-            </div>
-            <div className="budget-total-row">
-              <span>Total realizado</span>
-              <strong className={totalSpent > totalBudgeted ? 'text-danger' : 'text-success'}>
-                {formatCurrency(totalSpent)}
-              </strong>
-            </div>
-            <div className="budget-total-row">
-              <span>Saldo</span>
-              <strong className={totalBudgeted - totalSpent >= 0 ? 'text-success' : 'text-danger'}>
-                {formatCurrency(totalBudgeted - totalSpent)}
-              </strong>
-            </div>
-          </Card>
+        {loading && <p className="budget-info">Carregando orçamento...</p>}
+        {error && <p className="budget-error">Erro: {error}</p>}
+
+        {!loading && (
+          <>
+            <section className="budget-block income-block">
+              <div className="budget-block-header">
+                <h3>Receitas</h3>
+                <button type="button" className="add-btn" onClick={addIncome} disabled={!permissions?.canEditBudget}>
+                  + adicionar receita
+                </button>
+              </div>
+
+              <div className="line-list">
+                {model.income.map((row, index) => (
+                  <div key={row.id || `income-${index}`} className="budget-line">
+                    <input
+                      className="name-input"
+                      type="text"
+                      value={row.name}
+                      onChange={(e) => setIncomeField(index, 'name', e.target.value)}
+                      onBlur={() => persistIncome(index)}
+                      maxLength={60}
+                      disabled={!permissions?.canEditBudget}
+                    />
+                    <input
+                      className="amount-input"
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="0.01"
+                      value={row.amount}
+                      onChange={(e) => setIncomeField(index, 'amount', e.target.value)}
+                      onBlur={() => persistIncome(index)}
+                      disabled={!permissions?.canEditBudget}
+                    />
+                    <button
+                      type="button"
+                      className="line-action"
+                      title="Duplicar"
+                      onClick={() => duplicateIncome(index)}
+                      disabled={!permissions?.canEditBudget}
+                    >
+                      Duplicar
+                    </button>
+                    <button
+                      type="button"
+                      className="line-action danger"
+                      title="Excluir"
+                      onClick={() => deleteIncome(index)}
+                      disabled={!permissions?.canEditBudget}
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="budget-block expense-block">
+              <div className="budget-block-header">
+                <h3>Despesas</h3>
+              </div>
+
+              {model.expenses.map((category, categoryIndex) => {
+                const isCollapsed = Boolean(collapsed[category.name])
+                const categoryTotal = category.items.reduce((sum, item) => sum + toAmount(item.amount), 0)
+
+                return (
+                  <article key={`${category.name}-${categoryIndex}`} className="expense-category">
+                    <div className="expense-category-header">
+                      <button
+                        type="button"
+                        className="collapse-btn"
+                        onClick={() => toggleCategory(category.name)}
+                        aria-label={isCollapsed ? 'Expandir categoria' : 'Recolher categoria'}
+                      >
+                        {isCollapsed ? '+' : '-'}
+                      </button>
+                      <input
+                        className="category-name-input"
+                        type="text"
+                        value={category.name}
+                        onChange={(e) => setExpenseCategoryName(categoryIndex, e.target.value)}
+                        onBlur={() => persistCategoryRename(categoryIndex)}
+                        maxLength={60}
+                        disabled={!permissions?.canEditBudget}
+                      />
+                      <strong className="category-total">{formatCurrency(categoryTotal)}</strong>
+                    </div>
+
+                    {!isCollapsed && (
+                      <>
+                        <div className="line-list">
+                          {category.items.map((item, itemIndex) => (
+                            <div key={item.id || `${category.name}-${itemIndex}`} className="budget-line">
+                              <input
+                                className="name-input"
+                                type="text"
+                                value={item.name}
+                                onChange={(e) => setExpenseField(categoryIndex, itemIndex, 'name', e.target.value)}
+                                onBlur={() => persistExpense(categoryIndex, itemIndex)}
+                                maxLength={60}
+                                disabled={!permissions?.canEditBudget}
+                              />
+                              <input
+                                className="amount-input"
+                                type="number"
+                                inputMode="decimal"
+                                min="0"
+                                step="0.01"
+                                value={item.amount}
+                                onChange={(e) => setExpenseField(categoryIndex, itemIndex, 'amount', e.target.value)}
+                                onBlur={() => persistExpense(categoryIndex, itemIndex)}
+                                disabled={!permissions?.canEditBudget}
+                              />
+                              <button
+                                type="button"
+                                className="line-action"
+                                title="Duplicar"
+                                onClick={() => duplicateExpenseItem(categoryIndex, itemIndex)}
+                                disabled={!permissions?.canEditBudget}
+                              >
+                                Duplicar
+                              </button>
+                              <button
+                                type="button"
+                                className="line-action danger"
+                                title="Excluir"
+                                onClick={() => deleteExpenseItem(categoryIndex, itemIndex)}
+                                disabled={!permissions?.canEditBudget}
+                              >
+                                Excluir
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          className="add-inline-btn"
+                          onClick={() => addExpenseItem(categoryIndex)}
+                          disabled={!permissions?.canEditBudget}
+                        >
+                          + adicionar
+                        </button>
+                      </>
+                    )}
+                  </article>
+                )
+              })}
+            </section>
+          </>
         )}
       </div>
 
-      {/* Modal – novo item */}
-      <Modal
-        isOpen={modalOpen}
-        onClose={closeModal}
-        title="Adicionar ao orçamento"
-        footer={
-          <>
-            <Button variant="ghost" fullWidth onClick={closeModal}>Cancelar</Button>
-            <Button variant="primary" fullWidth onClick={handleSubmit} loading={saving}>Salvar</Button>
-          </>
-        }
-      >
-        <form className="budget-form" onSubmit={handleSubmit} noValidate>
+      {savingKey && <div className="saving-indicator">Salvando alterações...</div>}
 
-          {/* Tipo */}
-          <div className="form-group">
-            <label>Tipo</label>
-            <div className="type-btn-group">
-              {TYPES.map((t) => (
-                <button
-                  key={t.value}
-                  type="button"
-                  className={`type-btn ${t.cls}${form.type === t.value ? ' active' : ''}`}
-                  onClick={() => handleTypeChange(t.value)}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Categoria */}
-          <div className="form-group">
-            <label>Categoria</label>
-            <select value={form.categoryId} onChange={handleCategoryChange}>
-              <option value="">Selecionar…</option>
-              {filteredCats.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-              <option value="__new__">+ Nova categoria…</option>
-            </select>
-          </div>
-
-          {/* New category name */}
-          {isNewCat && (
-            <div className="form-group">
-              <label>Nome da nova categoria</label>
-              <input
-                type="text"
-                value={form.newCatName}
-                onChange={(e) => setForm((f) => ({ ...f, newCatName: e.target.value }))}
-                placeholder={NEW_CAT_PLACEHOLDER[form.type]}
-                autoFocus
-                maxLength={60}
-              />
-              <span className="form-hint">
-                Será criada e vinculada ao tipo {TYPES.find((t) => t.value === form.type)?.label}.
-              </span>
-            </div>
-          )}
-
-          {/* Valor */}
-          <div className="form-group">
-            <label>Valor orçado (R$)</label>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="0.01"
-              value={form.amount}
-              onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-              placeholder="0,00"
-              required
-            />
-          </div>
-        </form>
-      </Modal>
-
-      {/* Toast */}
       {toast && (
         <div className={`orcamento-toast${toast.type === 'err' ? ' toast-err' : ''}`}>
-          {toast.msg}
+          {toast.message}
         </div>
       )}
     </div>
   )
-}
+}
