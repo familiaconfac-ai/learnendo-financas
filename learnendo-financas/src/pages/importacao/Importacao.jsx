@@ -64,6 +64,7 @@ export default function Importacao() {
   const [selectedIds, setSelectedIds]    = useState(new Set())
   const [accountId, setAccountId]        = useState('')
   const [parseError, setParseError]      = useState(null)
+  const [parsePreviewLines, setParsePreviewLines] = useState([])
   const [savedCount, setSavedCount]      = useState(0)
   const [skippedCount, setSkippedCount]  = useState(0)
   const [saveError, setSaveError]        = useState(null)
@@ -75,6 +76,7 @@ export default function Importacao() {
 
   async function handleFile(file) {
     setParseError(null)
+    setParsePreviewLines([])
     setFileName(file.name)
     setStep('parsing')
 
@@ -92,6 +94,7 @@ export default function Importacao() {
     } catch (err) {
       console.error('[Importacao] Parse error:', err)
       setParseError(err.message || 'Não foi possível processar o arquivo.')
+      setParsePreviewLines(Array.isArray(err.previewLines) ? err.previewLines : [])
       setStep('idle')
     }
   }
@@ -212,6 +215,7 @@ export default function Importacao() {
     setParsedRows([])
     setSelectedIds(new Set())
     setParseError(null)
+    setParsePreviewLines([])
     setSavedCount(0)
     setSkippedCount(0)
     setSaveError(null)
@@ -237,6 +241,15 @@ export default function Importacao() {
           <div className="parse-error-box">
             <strong>Erro ao ler arquivo:</strong>
             <p>{parseError}</p>
+            {parsePreviewLines.length > 0 && (
+              <>
+                <p className="parse-error-note">PDF lido, mas o layout ainda não foi reconhecido com segurança.</p>
+                <div className="parse-preview-box">
+                  <strong>Prévia do texto extraído</strong>
+                  <pre>{parsePreviewLines.join('\n')}</pre>
+                </div>
+              </>
+            )}
           </div>
         )}
 

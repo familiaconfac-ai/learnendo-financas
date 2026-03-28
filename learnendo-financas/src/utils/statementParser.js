@@ -6,9 +6,10 @@
  */
 
 class ParseError extends Error {
-  constructor(message) {
+  constructor(message, details = {}) {
     super(message)
     this.name = 'ParseError'
+    Object.assign(this, details)
   }
 }
 
@@ -77,7 +78,7 @@ export function normaliseBRAmount(raw) {
 // Date parsing
 // ---------------------------------------------------------------------------
 
-function parseDateToISO(raw) {
+function parseDateToISO(raw, defaultYear = new Date().getFullYear()) {
   if (!raw) return null
 
   const s = String(raw).trim()
@@ -90,6 +91,15 @@ function parseDateToISO(raw) {
     const month = br[2].padStart(2, '0')
     const year = br[3].length === 2 ? `20${br[3]}` : br[3]
     const iso = `${year}-${month}-${day}`
+    return Number.isNaN(new Date(`${iso}T00:00:00`).getTime()) ? null : iso
+  }
+
+  // DD/MM or DD-MM without year -> assume current year
+  const shortBr = s.match(/^(\d{1,2})[\/\-.](\d{1,2})$/)
+  if (shortBr) {
+    const day = shortBr[1].padStart(2, '0')
+    const month = shortBr[2].padStart(2, '0')
+    const iso = `${defaultYear}-${month}-${day}`
     return Number.isNaN(new Date(`${iso}T00:00:00`).getTime()) ? null : iso
   }
 
@@ -569,29 +579,75 @@ async function parsePDF(file) {
   const pdf = await getDocument({ data: new Uint8Array(buffer) }).promise
 
   const lines = []
+  let totalTextLength = 0
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
     const page = await pdf.getPage(pageNum)
     const content = await page.getTextContent()
     const grouped = groupPdfTextToLines(content.items || [])
+    totalTextLength += grouped.join('\n').length
     lines.push(...grouped)
   }
 
-  console.log('[Parser] PDF line preview:', lines.slice(0, 30))
+  const previewLines = lines.slice(0, 30)
+  console.log(`[PDF] pages: ${pdf.numPages}`)
+  console.log(`[PDF] text length: ${totalTextLength}`)
+  console.log('[PDF] preview:')
+  previewLines.forEach((line) => console.log(line))
 
   if (lines.length === 0) {
-    throw new ParseError('PDF sem texto selecionavel. Talvez seja necessario OCR ou outro formato.')
+    throw new ParseError('PDF sem texto selecionavel. Talvez seja necessario OCR ou outro formato.', {
+      previewLines,
+      pdfPages: pdf.numPages,
+      extractedTextLength: totalTextLength,
+    })
   }
 
   const kind = detectPdfKind(lines)
+  const structure = analyzePdfLines(lines)
   console.log(`[Parser] PDF kind: ${kind}`)
+  console.log('[PDF] structure:', structure)
 
   const rows = parsePdfTransactionLines(lines, kind)
   if (rows.length === 0) {
-    throw new ParseError('PDF lido, mas não foi possível reconhecer o formato.')
+    throw new ParseError('PDF lido, mas o layout ainda nao foi reconhecido com seguranca.', {
+      previewLines,
+      pdfPages: pdf.numPages,
+      extractedTextLength: totalTextLength,
+      pdfKind: kind,
+      pdfStructure: structure,
+    })
   }
 
   console.log('[Parser] PDF first parsed rows:', rows.slice(0, 5))
   return rows
+}
+
+function analyzePdfLines(lines) {
+  const datePattern = /\b\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?\b/
+  const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
+
+  let dateLines = 0
+  let amountLines = 0
+  let candidateLines = 0
+  let signedLines = 0
+
+  for (const line of lines) {
+    const hasDate = datePattern.test(line)
+    const amounts = line.match(amountPattern) || []
+    const hasAmount = amounts.length > 0
+    if (hasDate) dateLines += 1
+    if (hasAmount) amountLines += 1
+    if (hasDate && hasAmount) candidateLines += 1
+    if (/[-+]\s*R?\$?\s*\d/.test(line)) signedLines += 1
+  }
+
+  return {
+    lines: lines.length,
+    dateLines,
+    amountLines,
+    candidateLines,
+    signedLines,
+  }
 }
 
 function groupPdfTextToLines(items) {
@@ -639,36 +695,43 @@ function detectPdfKind(lines) {
 function parsePdfTransactionLines(lines, kind) {
   const rows = []
 
-  const datePattern = /(\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?)/
-  const amountPattern = /(?:[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2}))/g
+  const currentYear = new Date().getFullYear()
+  const datePattern = /\b(\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?)\b/
+  const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
+  const skipLinePattern = /\bsaldo\b|\bsaldo anterior\b|\bsaldo final\b|\bsaldo do dia\b|\btotal\b|\bresumo\b|\bpagina\b|\bextrato\b/i
 
   for (const line of lines) {
-    const dateMatch = line.match(datePattern)
+    const compactLine = line.replace(/\s+/g, ' ').trim()
+    if (!compactLine || skipLinePattern.test(compactLine)) continue
+
+    const dateMatch = compactLine.match(datePattern)
     if (!dateMatch) continue
 
-    const isoDate = parseDateToISO(dateMatch[1])
+    const isoDate = parseDateToISO(dateMatch[1], currentYear)
     if (!isoDate) continue
 
-    const amounts = line.match(amountPattern)
+    const amounts = compactLine.match(amountPattern)
     if (!amounts || amounts.length === 0) continue
 
-    const rawAmount = amounts[amounts.length - 1]
+    const rawAmount = choosePdfAmountCandidate(amounts, compactLine)
+    if (!rawAmount) continue
+
     const signed = normaliseBRAmount(rawAmount)
     if (!Number.isFinite(signed) || signed === 0) continue
 
-    let description = line
+    let description = compactLine
       .replace(dateMatch[1], '')
       .replace(rawAmount, '')
       .replace(/\s+/g, ' ')
+      .replace(/^[\-–—:+]+/, '')
+      .replace(/[\-–—:+]+$/, '')
       .trim()
 
     if (!description) description = 'Lancamento importado de PDF'
 
-    let direction = signed < 0 ? 'debit' : signed > 0 ? 'credit' : 'unknown'
-    if (direction === 'unknown' || direction === 'credit') {
-      const hinted = inferDirectionFromText(description)
-      if (hinted !== 'unknown') direction = hinted
-      else if (kind === 'invoice') direction = 'debit'
+    let direction = inferPdfDirection(rawAmount, description, kind)
+    if (direction === 'unknown' && signed < 0) {
+      direction = 'debit'
     }
 
     rows.push({
@@ -682,6 +745,33 @@ function parsePdfTransactionLines(lines, kind) {
   }
 
   return rows
+}
+
+function choosePdfAmountCandidate(amounts, line) {
+  if (!amounts || amounts.length === 0) return null
+
+  const signed = amounts.filter((value) => /^[\s]*[-+]/.test(value))
+  if (signed.length > 0) return signed[signed.length - 1]
+
+  const lineHint = inferDirectionFromText(line)
+  if (amounts.length === 1) return amounts[0]
+
+  if (lineHint !== 'unknown') return amounts[0]
+
+  // Statement PDFs often end the line with running balance. Prefer the first amount.
+  return amounts[0]
+}
+
+function inferPdfDirection(rawAmount, description, kind) {
+  const token = String(rawAmount || '').trim()
+  if (token.startsWith('-')) return 'debit'
+  if (token.startsWith('+')) return 'credit'
+
+  const hinted = inferDirectionFromText(description)
+  if (hinted !== 'unknown') return hinted
+
+  if (kind === 'invoice') return 'debit'
+  return 'unknown'
 }
 
 // ---------------------------------------------------------------------------
