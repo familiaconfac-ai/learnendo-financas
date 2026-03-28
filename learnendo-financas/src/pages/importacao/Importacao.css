@@ -328,5 +328,15 @@
 }
 .import-done-icon  { font-size: 3rem; }
 .import-done-title { font-size: 1.1rem; font-weight: 700; margin: 0; }
+.import-done-note  { font-size: 0.84rem; color: var(--color-text-muted); margin: 0; }
 .import-done-error { font-size: 0.82rem; color: var(--color-danger); margin: 0; }
+
+.import-done-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 0.35rem;
+}
 

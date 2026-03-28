@@ -21,13 +21,14 @@
   gap: 2px;
   color: var(--color-text-muted);
   text-decoration: none;
-  font-size: 0.58rem;
+  font-size: 0.54rem;
   font-weight: 500;
-  padding: 0.4rem 0.1rem;
+  padding: 0.35rem 0.05rem;
   transition: color 0.15s;
   border: none;
   background: none;
   cursor: pointer;
+  min-width: 0;
 }
 .bottom-nav-item:hover {
   color: var(--color-primary);
@@ -47,11 +48,13 @@
 }
 
 .bottom-nav-icon {
-  font-size: 1.25rem;
+  font-size: 1.1rem;
   line-height: 1;
   transition: transform 0.15s;
 }
 .bottom-nav-label {
   line-height: 1;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

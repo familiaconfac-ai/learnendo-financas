@@ -1,7 +1,8 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useAccounts } from '../../hooks/useAccounts'
-import { addTransaction } from '../../services/transactionService'
+import { addTransaction, fetchTransactions } from '../../services/transactionService'
 import { parseStatementFile } from '../../utils/statementParser'
 import { classifyBatch } from '../../utils/transactionClassifier'
 import { formatCurrency } from '../../utils/formatCurrency'
@@ -39,9 +40,20 @@ function accountLabel(a) {
   return type ? `${a.name} (${type})` : a.name
 }
 
+function buildImportSignature(row, accountId) {
+  return [
+    row.date ?? '',
+    row.type ?? '',
+    Number(row.amount || 0).toFixed(2),
+    (row.description ?? '').trim().toLowerCase(),
+    accountId ?? '',
+  ].join('::')
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Importacao() {
+  const navigate                         = useNavigate()
   const { user }                         = useAuth()
   const { accounts, loading: loadingAccounts } = useAccounts()
 
@@ -53,10 +65,11 @@ export default function Importacao() {
   const [accountId, setAccountId]        = useState('')
   const [parseError, setParseError]      = useState(null)
   const [savedCount, setSavedCount]      = useState(0)
+  const [skippedCount, setSkippedCount]  = useState(0)
   const [saveError, setSaveError]        = useState(null)
   const [dragOver, setDragOver]          = useState(false)
   const [fileName, setFileName]          = useState('')
-  const [batchId]                        = useState(() => Date.now().toString(36))
+  const [saveMessage, setSaveMessage]    = useState('')
 
   // ── File handling ─────────────────────────────────────────────────────────
 
@@ -111,41 +124,88 @@ export default function Importacao() {
 
   async function handleConfirmImport() {
     if (!user?.uid) return
-    if (!accountId) { alert('Selecione uma conta antes de continuar.'); return }
+    if (!accountId) {
+      setSaveError('Selecione uma conta antes de continuar.')
+      return
+    }
 
     setSaveError(null)
+    setSaveMessage('')
     setStep('saving')
 
     const toSave = parsedRows.filter((r) => selectedIds.has(r.id))
+    const batchId = Date.now().toString(36)
     let count = 0
+    let skipped = 0
     const failed = []
 
-    for (const row of toSave) {
-      try {
-        await addTransaction(user.uid, {
-          type:                    row.type,
-          description:             row.description,
-          amount:                  row.amount,
-          date:                    row.date,
-          accountId,
-          categoryId:              null,
-          notes:                   '',
-          origin:                  'bank_import',
-          status:                  row.status === 'needs_review' ? 'needs_review' : 'confirmed',
-          balanceImpact:           row.type !== 'transfer_internal',
-          importBatchId:           batchId,
-          classificationConfidence: row.classification?.confidence ?? 'low',
-        })
-        count++
-      } catch (err) {
-        console.error('[Importacao] Save failed for:', row.description, err.message)
-        failed.push(row.description)
-      }
-    }
+    try {
+      const monthKeys = [...new Set(
+        toSave
+          .map((row) => row.date?.slice(0, 7))
+          .filter(Boolean),
+      )]
 
-    setSavedCount(count)
-    if (failed.length > 0) setSaveError(`${failed.length} lançamento(s) não puderam ser salvos.`)
-    setStep('done')
+      const existingByMonth = await Promise.all(
+        monthKeys.map((monthKey) => {
+          const [year, month] = monthKey.split('-').map(Number)
+          return fetchTransactions(user.uid, year, month)
+        }),
+      )
+
+      const knownSignatures = new Set(
+        existingByMonth
+          .flat()
+          .filter((tx) => tx.origin === 'bank_import')
+          .map((tx) => buildImportSignature(tx, tx.accountId)),
+      )
+
+      for (const row of toSave) {
+        const signature = buildImportSignature(row, accountId)
+        if (knownSignatures.has(signature)) {
+          skipped++
+          continue
+        }
+
+        try {
+          await addTransaction(user.uid, {
+            type:                     row.type,
+            description:              row.description,
+            amount:                   row.amount,
+            date:                     row.date,
+            accountId,
+            categoryId:               null,
+            notes:                    '',
+            origin:                   'bank_import',
+            status:                   row.status === 'needs_review' ? 'needs_review' : 'confirmed',
+            balanceImpact:            row.type !== 'transfer_internal',
+            importBatchId:            batchId,
+            classificationConfidence: row.classification?.confidence ?? 'low',
+          })
+          knownSignatures.add(signature)
+          count++
+        } catch (err) {
+          console.error('[Importacao] Save failed for:', row.description, err.message)
+          failed.push(row.description)
+        }
+      }
+
+      setSavedCount(count)
+      setSkippedCount(skipped)
+      if (failed.length > 0) {
+        setSaveError(`${failed.length} lançamento(s) não puderam ser salvos.`)
+      }
+      if (skipped > 0) {
+        setSaveMessage(`${skipped} lançamento(s) duplicado(s) foram ignorados.`)
+      } else if (count > 0) {
+        setSaveMessage('Lançamentos salvos no Firestore com sucesso.')
+      }
+      setStep('done')
+    } catch (err) {
+      console.error('[Importacao] Unexpected save error:', err)
+      setSaveError(err.message || 'Não foi possível concluir a importação.')
+      setStep('done')
+    }
   }
 
   function handleReset() {
@@ -153,7 +213,9 @@ export default function Importacao() {
     setSelectedIds(new Set())
     setParseError(null)
     setSavedCount(0)
+    setSkippedCount(0)
     setSaveError(null)
+    setSaveMessage('')
     setFileName('')
     setStep('idle')
   }
@@ -362,8 +424,18 @@ export default function Importacao() {
         <p className="import-done-title">
           {savedCount} lançamento{savedCount !== 1 ? 's' : ''} importado{savedCount !== 1 ? 's' : ''}!
         </p>
+        {saveMessage && <p className="import-done-note">{saveMessage}</p>}
+        {skippedCount > 0 && (
+          <p className="import-done-note">
+            {skippedCount} lançamento{skippedCount !== 1 ? 's' : ''} já existia{skippedCount !== 1 ? 'm' : ''}.
+          </p>
+        )}
         {saveError && <p className="import-done-error">{saveError}</p>}
-        <button className="btn-primary" onClick={handleReset}>Fazer nova importação</button>
+        <div className="import-done-actions">
+          <button className="btn-primary" onClick={handleReset}>Fazer nova importação</button>
+          <button className="btn-secondary" onClick={() => navigate('/lancamentos')}>Ir para Lançamentos</button>
+          <button className="btn-secondary" onClick={() => navigate('/dashboard')}>Voltar ao Dashboard</button>
+        </div>
       </div>
     )
   }

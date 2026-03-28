@@ -4,6 +4,7 @@ import './BottomNav.css'
 const NAV_ITEMS = [
   { to: '/dashboard',   label: 'Início',    icon: '🏠' },
   { to: '/lancamentos', label: 'Lançar',    icon: '➕' },
+  { to: '/importacao',  label: 'Importar',  icon: '📥' },
   { to: '/orcamento',   label: 'Orçamento', icon: '📊' },
   { to: '/familia',     label: 'Família',   icon: '👨‍👩‍👧‍👦' },
   { to: '/perfil',      label: 'Perfil',    icon: '👤' },
