@@ -22,6 +22,13 @@ function impactsBudget(tx) {
   return tx.balanceImpact !== false
 }
 
+function receiptItemsForBudget(tx) {
+  if (!tx?.receiptDetailEnabled || !Array.isArray(tx.receiptItems) || tx.receiptItems.length === 0) {
+    return []
+  }
+  return tx.receiptItems.filter((item) => Number(item.amount || 0) > 0)
+}
+
 export function calculateMonthlySummary(transactions, debugTag = '') {
   const source = Array.isArray(transactions) ? transactions : []
   const confirmedTransactions = source.filter((t) => t.status === 'confirmed')
@@ -79,6 +86,25 @@ export function buildBudgetSpentMap(transactions, debugTag = '') {
     if (!['income', 'expense', 'investment'].includes(tx.type)) return
     if (!impactsBudget(tx)) return
 
+    const detailedItems = receiptItemsForBudget(tx)
+    if (detailedItems.length > 0) {
+      detailedItems.forEach((item) => {
+        const type = tx.type
+        const amount = Math.abs(toNumber(item.amount))
+        if (!amount) return
+
+        const byIdKey = `${type}::${item.budgetCategoryId || '__none__'}`
+        spentByCategoryId[byIdKey] = (spentByCategoryId[byIdKey] || 0) + amount
+
+        const normalizedBudgetCategoryName = normalizeText(item.budgetCategoryName)
+        if (normalizedBudgetCategoryName) {
+          const byNameKey = `${type}::${normalizedBudgetCategoryName}`
+          spentByCategoryName[byNameKey] = (spentByCategoryName[byNameKey] || 0) + amount
+        }
+      })
+      return
+    }
+
     const type = tx.type
     const amount = Math.abs(toNumber(tx.amount))
     if (!amount) return
@@ -102,6 +128,33 @@ export function buildBudgetSpentMap(transactions, debugTag = '') {
   }
 
   return { spentByCategoryId, spentByCategoryName }
+}
+
+export function buildReceiptDetailAnalysis(transactions, debugTag = '') {
+  const source = Array.isArray(transactions) ? transactions.filter((tx) => tx.status === 'confirmed') : []
+  const byDetailCategory = {}
+  const byImportance = {}
+
+  source.forEach((tx) => {
+    receiptItemsForBudget(tx).forEach((item) => {
+      const amount = Math.abs(toNumber(item.amount))
+      if (!amount) return
+      const categoryKey = item.detailCategoryKey || 'outros'
+      const importanceKey = item.importance || 'essential'
+      byDetailCategory[categoryKey] = (byDetailCategory[categoryKey] || 0) + amount
+      byImportance[importanceKey] = (byImportance[importanceKey] || 0) + amount
+    })
+  })
+
+  if (debugTag) {
+    console.log(`[ReceiptDetailAnalysis:${debugTag}]`, {
+      txCount: source.length,
+      detailCategories: Object.keys(byDetailCategory).length,
+      importanceBuckets: Object.keys(byImportance).length,
+    })
+  }
+
+  return { byDetailCategory, byImportance }
 }
 
 export function normalizedCategoryName(value) {

@@ -107,13 +107,22 @@ export async function addTransaction(uid, data, options = {}) {
       userId:          data.userId || uid,
       categoryId:      isInternalTransfer ? null : (data.categoryId || null),
       categoryName:    isInternalTransfer ? null : (normalizedCategoryName || null),
+      subcategoryId:   isInternalTransfer ? null : (data.subcategoryId || null),
+      subcategoryName: isInternalTransfer ? null : (data.subcategoryName || null),
       transactionNatureId: natureId,
       transactionNatureKey: natureKey,
       transactionNatureLabel: data.transactionNatureLabel || null,
+      paymentMethod:   data.paymentMethod || null,
+      cardId:          data.cardId || null,
+      cardName:        data.cardName || null,
       contactId:       data.contactId || null,
       contactName:     data.contactName || null,
       debtId:          data.debtId || null,
       debtName:        data.debtName || null,
+      receiptDetailEnabled: !!data.receiptDetailEnabled,
+      receiptDetailStatus: data.receiptDetailStatus || null,
+      receiptDetailTotal: Number(data.receiptDetailTotal || 0),
+      receiptItems: Array.isArray(data.receiptItems) ? data.receiptItems : [],
       accountId:       data.accountId   || null,
       toAccountId:     isInternalTransfer ? (data.toAccountId || null) : null,
       notes:           data.notes       || '',
@@ -172,6 +181,11 @@ export async function updateTransaction(uid, txId, data, options = {}) {
         ? (payload.categoryName.trim() || null)
         : null
     }
+    if (payload.subcategoryName !== undefined) {
+      payload.subcategoryName = typeof payload.subcategoryName === 'string'
+        ? (payload.subcategoryName.trim() || null)
+        : null
+    }
     if (payload.status !== undefined) {
       payload.status = normalizeStatus(payload.status)
     }
@@ -183,12 +197,27 @@ export async function updateTransaction(uid, txId, data, options = {}) {
       payload.debtId = null
       payload.debtName = null
     }
+    if (payload.cardId !== undefined && !payload.cardId) {
+      payload.cardId = null
+      payload.cardName = null
+    }
+    if (payload.receiptDetailEnabled !== undefined) {
+      payload.receiptDetailEnabled = !!payload.receiptDetailEnabled
+    }
+    if (payload.receiptItems !== undefined && !Array.isArray(payload.receiptItems)) {
+      payload.receiptItems = []
+    }
+    if (payload.receiptDetailTotal !== undefined) {
+      payload.receiptDetailTotal = Number(payload.receiptDetailTotal || 0)
+    }
     if (payload.affectsBudget !== undefined) {
       payload.balanceImpact = !!payload.affectsBudget
     }
     if (isInternalTransfer) {
       payload.categoryId = null
       payload.categoryName = null
+      payload.subcategoryId = null
+      payload.subcategoryName = null
       payload.balanceImpact = false
     }
     await updateDoc(txDoc(uid, txId, workspaceId), payload)
@@ -256,8 +285,17 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
         transactionNatureKey: raw.transactionNatureKey || normalizeNatureKey(raw.transactionNatureKey, raw.transactionNatureId),
         affectsBudget: typeof raw.affectsBudget === 'boolean' ? raw.affectsBudget : raw.balanceImpact !== false,
         recurringInstanceMonth: raw.recurringInstanceMonth || monthKeyFromDate(raw.date),
+        subcategoryId: raw.subcategoryId || null,
+        subcategoryName: raw.subcategoryName || null,
+        paymentMethod: raw.paymentMethod || null,
+        cardId: raw.cardId || null,
+        cardName: raw.cardName || null,
         debtId: raw.debtId || null,
         debtName: raw.debtName || null,
+        receiptDetailEnabled: !!raw.receiptDetailEnabled,
+        receiptDetailStatus: raw.receiptDetailStatus || null,
+        receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
+        receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
         // Normaliza Timestamps do Firestore para strings ISO
         createdAt: raw.createdAt?.toDate?.().toISOString() ?? raw.createdAt ?? null,
         updatedAt: raw.updatedAt?.toDate?.().toISOString() ?? raw.updatedAt ?? null,
@@ -277,8 +315,17 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
           transactionNatureKey: raw.transactionNatureKey || normalizeNatureKey(raw.transactionNatureKey, raw.transactionNatureId),
           affectsBudget: typeof raw.affectsBudget === 'boolean' ? raw.affectsBudget : raw.balanceImpact !== false,
           recurringInstanceMonth: raw.recurringInstanceMonth || monthKeyFromDate(raw.date),
+          subcategoryId: raw.subcategoryId || null,
+          subcategoryName: raw.subcategoryName || null,
+          paymentMethod: raw.paymentMethod || null,
+          cardId: raw.cardId || null,
+          cardName: raw.cardName || null,
           debtId: raw.debtId || null,
           debtName: raw.debtName || null,
+          receiptDetailEnabled: !!raw.receiptDetailEnabled,
+          receiptDetailStatus: raw.receiptDetailStatus || null,
+          receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
+          receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
           createdAt: raw.createdAt?.toDate?.().toISOString() ?? raw.createdAt ?? null,
           updatedAt: raw.updatedAt?.toDate?.().toISOString() ?? raw.updatedAt ?? null,
         }

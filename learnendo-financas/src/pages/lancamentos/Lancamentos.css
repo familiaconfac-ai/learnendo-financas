@@ -395,6 +395,20 @@
   color: var(--color-primary);
 }
 
+.form-help-block {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  border-radius: 10px;
+  padding: 0.75rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #1e3a8a;
+}
+
+.invoice-help-block {
+  margin-top: -0.2rem;
+}
+
 @media (max-width: 680px) {
   .nature-chip-btn {
     min-height: 36px;

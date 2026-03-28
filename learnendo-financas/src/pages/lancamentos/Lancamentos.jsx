@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import MonthSelector from '../../components/ui/MonthSelector'
 import Modal from '../../components/ui/Modal'
 import Button from '../../components/ui/Button'
+import ReceiptDetailEditor from '../../components/ui/ReceiptDetailEditor'
 import { useFinance } from '../../context/FinanceContext'
 import { useAuth } from '../../context/AuthContext'
 import { useTransactions } from '../../hooks/useTransactions'
@@ -17,6 +18,9 @@ import { formatCurrency } from '../../utils/formatCurrency'
 import { formatDateBR } from '../../utils/formatDate'
 import { suggestTypeAndCategory } from '../../utils/transactionAutoCategorizer'
 import { resolveNatureAffectsBudget } from '../../constants/transactionNatures'
+import { TRANSACTION_PAYMENT_METHODS, getPaymentMethodLabel } from '../../constants/transactionPaymentMethods'
+import { normalizeReceiptItems, summarizeReceiptDetail } from '../../utils/receiptDetailCatalog'
+import { MOCK_CARDS } from '../../utils/mockData'
 import './Lancamentos.css'
 
 // ── Type chip navigation ──────────────────────────────────────────────────────
@@ -88,6 +92,7 @@ const TYPE_BY_NATURE_ID = {
   nature_internal_transfer: 'transfer_internal',
   nature_reimbursement: 'income',
   nature_debt_payment: 'expense',
+  nature_invoice_payment: 'expense',
 }
 
 const DEBT_LINKABLE_NATURE_IDS = new Set([
@@ -135,6 +140,14 @@ function isPixOrTransferContext(formState) {
   return byText || byType || byNature
 }
 
+function requiresCardSelection(formState) {
+  return formState.paymentMethod === 'credit_card' || formState.transactionNatureId === 'nature_invoice_payment'
+}
+
+function isInvoicePaymentNature(formState) {
+  return formState.transactionNatureId === 'nature_invoice_payment'
+}
+
 export default function Lancamentos({ view = 'confirmed' }) {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -168,6 +181,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
   const { categories } = useCategories()
   const { accounts }   = useAccounts()
   const { debts } = useDebts()
+  const availableCards = MOCK_CARDS
 
   const availableContacts = [
     ...members.map((m) => ({ id: `member:${m.uid || m.id}`, name: m.displayName || m.email || 'Membro', type: 'internal' })),
@@ -205,10 +219,31 @@ export default function Lancamentos({ view = 'confirmed' }) {
         transactionNatureId: value,
         transactionNatureLabel: selected?.label || '',
         type: forcedType || f.type,
-        categoryId: forcedType === 'transfer_internal' ? '' : f.categoryId,
+        categoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.categoryId,
+        subcategoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.subcategoryId,
         debtId: DEBT_LINKABLE_NATURE_IDS.has(value) ? f.debtId : '',
       }))
       setEditingNatureLabel(selected?.label || '')
+      return
+    }
+
+    if (name === 'paymentMethod') {
+      setForm((f) => ({
+        ...f,
+        paymentMethod: value,
+        cardId: value === 'credit_card' || f.transactionNatureId === 'nature_invoice_payment' ? f.cardId : '',
+      }))
+      return
+    }
+
+    if (name === 'categoryId') {
+      const selectedCategory = categories.find((category) => category.id === value)
+      const firstSubcategory = selectedCategory?.subcategories?.[0] || null
+      setForm((f) => ({
+        ...f,
+        categoryId: value,
+        subcategoryId: firstSubcategory?.id || '',
+      }))
       return
     }
 
@@ -309,6 +344,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
       transactionNatureLabel: selected.label,
       type: suggestedType || f.type,
       categoryId: suggestedType === 'transfer_internal' ? '' : f.categoryId,
+      subcategoryId: suggestedType === 'transfer_internal' ? '' : f.subcategoryId,
       debtId: DEBT_LINKABLE_NATURE_IDS.has(natureId) ? f.debtId : '',
     }))
     setEditingNatureLabel(selected.label)
@@ -344,6 +380,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
       accountId:   tx.accountId   || '',
       toAccountId: tx.toAccountId || '',
       categoryId:  tx.categoryId || (tx.type === 'transfer_internal' ? '' : suggestion.suggestedCategoryId || ''),
+      subcategoryId: tx.subcategoryId || '',
       notes:       tx.notes       || '',
       recurring:   tx.recurring   || !!tx.recurringId,
       recurrenceType: tx.recurringType || 'indefinite',
@@ -356,6 +393,10 @@ export default function Lancamentos({ view = 'confirmed' }) {
       contactId: tx.contactId || '',
       newContactName: '',
       debtId: tx.debtId || '',
+      paymentMethod: tx.paymentMethod || '',
+      cardId: tx.cardId || '',
+      receiptDetailEnabled: !!tx.receiptDetailEnabled,
+      receiptItems: Array.isArray(tx.receiptItems) ? tx.receiptItems : [],
     })
     setEditingNatureLabel(tx.transactionNatureLabel || '')
     setModalOpen(true)
@@ -367,7 +408,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
       const isInternal = (natureDrivenType || tx.type) === 'transfer_internal'
       const inferred = suggestTypeAndCategory(tx.description, categories, tx.type)
       const resolvedType = natureDrivenType || (isInternal ? 'transfer_internal' : (inferred.suggestedType || tx.type))
-      const resolvedCategoryId = isInternal
+      const isInvoicePayment = tx.transactionNatureId === 'nature_invoice_payment'
+      const resolvedCategoryId = isInternal || isInvoicePayment
         ? null
         : (tx.categoryId || inferred.suggestedCategoryId || null)
       const resolvedCategoryName = isInternal
@@ -379,6 +421,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
         accountId: tx.accountId || accounts[0]?.id || null,
         categoryId: resolvedCategoryId,
         categoryName: resolvedCategoryName,
+        subcategoryId: isInvoicePayment ? null : tx.subcategoryId || null,
+        subcategoryName: isInvoicePayment ? null : tx.subcategoryName || null,
         status: 'confirmed',
       })
     } catch (err) {
@@ -392,6 +436,11 @@ export default function Lancamentos({ view = 'confirmed' }) {
 
     if (form.transactionNatureId === 'nature_debt_payment' && !form.debtId) {
       alert('Selecione a dívida para vincular o pagamento.')
+      return
+    }
+
+    if (requiresCardSelection(form) && !form.cardId) {
+      alert('Selecione o cartão vinculado.')
       return
     }
 
@@ -413,20 +462,43 @@ export default function Lancamentos({ view = 'confirmed' }) {
       alert('Usuário não autenticado.')
       return
     }
+
+    const normalizedAmount = Number(form.amount || 0)
+    const receiptSummary = summarizeReceiptDetail(form.receiptItems, normalizedAmount)
+    const expenseCategories = categories.filter((category) => category.type === 'expense')
+    if (form.receiptDetailEnabled) {
+      if (!receiptSummary.allRequiredComplete) {
+        alert('Preencha todos os itens do cupom com descrição, valor, categoria analítica, subcategoria, marcação e categoria real do orçamento.')
+        return
+      }
+      if (!receiptSummary.isBalanced) {
+        alert(`A soma dos itens detalhados precisa bater com o valor total do lançamento. Diferença atual: ${formatCurrency(receiptSummary.difference)}.`)
+        return
+      }
+    }
+
     setSaving(true)
     const typeFromNature = TYPE_BY_NATURE_ID[form.transactionNatureId]
     const effectiveType = typeFromNature || form.type
     const isInternal = effectiveType === 'transfer_internal'
+    const invoicePayment = isInvoicePaymentNature(form)
     const inferred = suggestTypeAndCategory(form.description, categories, form.type)
     const resolvedType = isInternal
       ? 'transfer_internal'
       : (typeFromNature || inferred.suggestedType || form.type)
     const resolvedCategoryId = isInternal
       ? null
-      : (form.categoryId || inferred.suggestedCategoryId || null)
+      : (invoicePayment ? null : (form.categoryId || inferred.suggestedCategoryId || null))
     const resolvedCategoryName = isInternal
       ? null
-      : (categories.find((c) => c.id === resolvedCategoryId)?.name || null)
+      : (invoicePayment ? null : (categories.find((c) => c.id === resolvedCategoryId)?.name || null))
+    const resolvedSubcategoryName = invoicePayment
+      ? null
+      : (categories
+        .find((category) => category.id === resolvedCategoryId)
+        ?.subcategories
+        ?.find((subcategory) => subcategory.id === form.subcategoryId)
+        ?.name || null)
     const resolvedAccountId = isInternal
       ? (form.accountId || editingTx?.accountId || null)
       : (form.accountId || editingTx?.accountId || accounts[0]?.id || null)
@@ -440,6 +512,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
       toAccountId: isInternal ? (form.toAccountId || null) : null,
       categoryId:  resolvedCategoryId,
       categoryName: resolvedCategoryName,
+      subcategoryId: invoicePayment || isInternal ? null : (form.subcategoryId || null),
+      subcategoryName: invoicePayment || isInternal ? null : resolvedSubcategoryName,
       notes:       form.notes || '',
       recurring:   !!form.recurring,
       transactionNatureId: form.transactionNatureId || null,
@@ -450,6 +524,17 @@ export default function Lancamentos({ view = 'confirmed' }) {
       debtName: DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId)
         ? (debts.find((debt) => debt.id === form.debtId)?.name || null)
         : null,
+      paymentMethod: form.paymentMethod || null,
+      cardId: requiresCardSelection(form) ? (form.cardId || null) : null,
+      cardName: requiresCardSelection(form)
+        ? (availableCards.find((card) => card.id === form.cardId)?.name || null)
+        : null,
+      receiptDetailEnabled: !!form.receiptDetailEnabled,
+      receiptDetailStatus: form.receiptDetailEnabled
+        ? (receiptSummary.isBalanced ? 'balanced' : 'mismatch')
+        : null,
+      receiptDetailTotal: form.receiptDetailEnabled ? receiptSummary.detailedTotal : 0,
+      receiptItems: form.receiptDetailEnabled ? normalizeReceiptItems(form.receiptItems, expenseCategories) : [],
       workspaceId: activeWorkspaceId,
       createdBy: user.uid,
       userId: user.uid,
@@ -550,9 +635,12 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const statusMeta = STATUS_META[normalizedTxStatus] ?? { label: normalizedTxStatus, cls: '' }
     const isCredit   = t.type === 'income'
     const catName    = categories.find((c) => c.id === t.categoryId)?.name ?? null
+    const subcategoryLabel = t.subcategoryName || categories.find((c) => c.id === t.categoryId)?.subcategories?.find((s) => s.id === t.subcategoryId)?.name
     const natureLabel = t.transactionNatureLabel || transactionNatures.find((nature) => nature.id === t.transactionNatureId)?.label
     const contactLabel = t.contactName || contacts.find((c) => c.id === t.contactId)?.name
     const debtLabel = t.debtName || debts.find((debt) => debt.id === t.debtId)?.name
+    const paymentMethodLabel = getPaymentMethodLabel(t.paymentMethod)
+    const cardLabel = t.cardName || availableCards.find((card) => card.id === t.cardId)?.name
     return (
       <div key={t.id} className={`transaction-item${normalizedTxStatus === 'pending' ? ' tx-pending' : ''}`}>
         <div className="tx-info">
@@ -572,7 +660,10 @@ export default function Lancamentos({ view = 'confirmed' }) {
               <span className="origin-badge" style={{ background: '#6b7280' }}>interna</span>
             )}
             {catName && <span className="tx-cat">{catName}</span>}
+            {subcategoryLabel && <span className="tx-cat">• {subcategoryLabel}</span>}
             {natureLabel && <span className="tx-cat">• {natureLabel}</span>}
+            {t.paymentMethod && <span className="tx-cat">• {paymentMethodLabel}</span>}
+            {cardLabel && <span className="tx-cat">• {cardLabel}</span>}
             {contactLabel && <span className="tx-cat">• {contactLabel}</span>}
             {debtLabel && <span className="tx-cat">• Dívida: {debtLabel}</span>}
             <span className="tx-date">{formatDateBR(t.date)}</span>
@@ -773,6 +864,15 @@ export default function Lancamentos({ view = 'confirmed' }) {
             </select>
           </div>
           <div className="form-group">
+            <label>Forma de pagamento</label>
+            <select name="paymentMethod" value={form.paymentMethod} onChange={handleChange}>
+              <option value="">Selecione…</option>
+              {TRANSACTION_PAYMENT_METHODS.map((method) => (
+                <option key={method.id} value={method.id}>{method.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
             <label>Descrição</label>
             <input name="description" type="text" value={form.description} onChange={handleChange}
               placeholder="Ex: Supermercado" required />
@@ -782,7 +882,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
             <input name="amount" type="number" inputMode="decimal" min="0.01" step="0.01"
               value={form.amount} onChange={handleChange} placeholder="0,00" required />
           </div>
-          {form.type !== 'transfer_internal' ? (
+          {form.type !== 'transfer_internal' && !isInvoicePaymentNature(form) ? (
             <div className="form-group">
               <label>Categoria</label>
               <select name="categoryId" value={form.categoryId} onChange={handleChange}>
@@ -791,6 +891,10 @@ export default function Lancamentos({ view = 'confirmed' }) {
                   .filter((c) => c.type === form.type)
                   .map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
               </select>
+            </div>
+          ) : form.type !== 'transfer_internal' && isInvoicePaymentNature(form) ? (
+            <div className="form-help-block invoice-help-block">
+              Pagamento de fatura é passivo financeiro. A categoria de consumo já foi registrada na compra e não será lançada de novo no orçamento.
             </div>
           ) : (
             <>
@@ -811,6 +915,31 @@ export default function Lancamentos({ view = 'confirmed' }) {
                 </select>
               </div>
             </>
+          )}
+          {form.categoryId && !isInvoicePaymentNature(form) && categories.find((category) => category.id === form.categoryId)?.subcategories?.length > 0 && (
+            <div className="form-group">
+              <label>Subcategoria</label>
+              <select name="subcategoryId" value={form.subcategoryId} onChange={handleChange}>
+                <option value="">Selecione…</option>
+                {categories
+                  .find((category) => category.id === form.categoryId)
+                  ?.subcategories
+                  ?.map((subcategory) => (
+                    <option key={subcategory.id} value={subcategory.id}>{subcategory.name}</option>
+                  ))}
+              </select>
+            </div>
+          )}
+          {requiresCardSelection(form) && (
+            <div className="form-group">
+              <label>{isInvoicePaymentNature(form) ? 'Cartão / fatura vinculada' : 'Cartão usado na compra'}</label>
+              <select name="cardId" value={form.cardId} onChange={handleChange}>
+                <option value="">Selecione…</option>
+                {availableCards.map((card) => (
+                  <option key={card.id} value={card.id}>{card.name}</option>
+                ))}
+              </select>
+            </div>
           )}
           <div className="form-group">
             <label>Natureza da movimentação</label>
@@ -898,6 +1027,20 @@ export default function Lancamentos({ view = 'confirmed' }) {
             <label>Observação</label>
             <textarea name="notes" value={form.notes} onChange={handleChange} rows={2} placeholder="Opcional" />
           </div>
+          {form.type === 'expense' && !isInvoicePaymentNature(form) && (
+            <ReceiptDetailEditor
+              enabled={form.receiptDetailEnabled}
+              onToggle={(enabled) => setForm((f) => ({
+                ...f,
+                receiptDetailEnabled: enabled,
+                receiptItems: enabled ? f.receiptItems : [],
+              }))}
+              items={form.receiptItems}
+              onChange={(items) => setForm((f) => ({ ...f, receiptItems: items }))}
+              totalAmount={form.amount}
+              expenseCategories={categories.filter((category) => category.type === 'expense')}
+            />
+          )}
           <div className="form-check">
             <input id="recurring" name="recurring" type="checkbox"
               checked={form.recurring} onChange={handleCheck} />
@@ -985,8 +1128,11 @@ function defaultForm() {
     recurrenceType: 'indefinite', recurringStartDate: today, recurringEndDate: '',
     totalInstallments: '12', currentInstallment: '1',
     transactionNatureId: '', transactionNatureLabel: '',
+    paymentMethod: '', cardId: '',
     contactId: '', newContactName: '',
-    debtId: '',
+    debtId: '', subcategoryId: '',
+    receiptDetailEnabled: false,
+    receiptItems: [],
   }
 }
 

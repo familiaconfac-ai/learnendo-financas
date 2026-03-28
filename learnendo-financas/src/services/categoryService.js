@@ -42,6 +42,7 @@ export async function addCategory(uid, data, options = {}) {
       name:      data.name,
       icon:      data.icon || '📦',
       type:      data.type || 'expense',
+      subcategories: Array.isArray(data.subcategories) ? data.subcategories : [],
       workspaceId,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),

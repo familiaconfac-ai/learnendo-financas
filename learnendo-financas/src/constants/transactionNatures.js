@@ -2,6 +2,7 @@ export const DEFAULT_TRANSACTION_NATURES = [
   { id: 'nature_income', key: 'renda', label: 'Renda', direction: 'income', affectsBudget: true, editable: true },
   { id: 'nature_expense', key: 'despesa', label: 'Despesa', direction: 'expense', affectsBudget: true, editable: true },
   { id: 'nature_debt_payment', key: 'pagamento_divida', label: 'Pagamento de dívida', direction: 'expense', affectsBudget: false, editable: true },
+  { id: 'nature_invoice_payment', key: 'pagamento_fatura', label: 'Pagamento de fatura', direction: 'expense', affectsBudget: false, editable: true },
   { id: 'nature_loan_received', key: 'emprestimo_recebido', label: 'Empréstimo recebido', direction: 'income', affectsBudget: false, editable: true },
   { id: 'nature_loan_given', key: 'emprestimo_concedido', label: 'Empréstimo concedido', direction: 'expense', affectsBudget: false, editable: true },
   { id: 'nature_loan_repayment', key: 'devolucao_emprestimo', label: 'Devolução de empréstimo', direction: 'income', affectsBudget: false, editable: true },
