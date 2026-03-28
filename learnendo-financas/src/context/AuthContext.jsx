@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback } from 'react'
 import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from '../firebase/config'
 import { getUserProfile } from '../firebase/auth'
@@ -53,11 +53,25 @@ export function AuthProvider({ children }) {
     return unsubscribe
   }, [])
 
+  const refreshProfile = useCallback(async () => {
+    if (IS_MOCK_MODE) {
+      setProfile(MOCK_PROFILE)
+      return
+    }
+    if (!user?.uid) return
+    try {
+      const profileData = await getUserProfile(user.uid)
+      if (profileData) setProfile((prev) => ({ ...prev, ...profileData }))
+    } catch (e) {
+      console.warn('[AuthContext] refreshProfile failed:', e.message)
+    }
+  }, [user?.uid])
+
   const isAdmin =
     user?.email === ADMIN_EMAIL || profile?.role === 'admin'
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, isAdmin }}>
+    <AuthContext.Provider value={{ user, profile, loading, isAdmin, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   )

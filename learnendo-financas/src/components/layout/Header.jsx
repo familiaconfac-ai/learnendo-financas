@@ -22,6 +22,7 @@ const PAGE_TITLES = {
 export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
   const { user, profile } = useAuth()
 
   const title = PAGE_TITLES[location.pathname] ?? ''
@@ -53,7 +54,11 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
           )}
         </div>
 
-        <div className="header-avatar">
+        <button
+          className="header-avatar"
+          onClick={() => navigate('/perfil')}
+          aria-label="Abrir perfil"
+        >
           {profile?.photoURL || user?.photoURL ? (
             <img
               src={profile?.photoURL ?? user?.photoURL}
@@ -65,7 +70,7 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
             user?.email?.[0]?.toUpperCase() ??
             'U'
           )}
-        </div>
+        </button>
       </header>
 
       <HamburgerMenu isOpen={menuOpen} onClose={() => setMenuOpen(false)} />

@@ -94,7 +94,6 @@ export default function Lancamentos({ view = 'confirmed' }) {
   const [activeType,   setActiveType]   = useState('')   // '' = show all sections
   // Secondary filters (hidden by default)
   const [filterOrigin, setFilterOrigin] = useState('')
-  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const [modalOpen,  setModalOpen]  = useState(false)
   const [editingTx,  setEditingTx]  = useState(null)
@@ -472,34 +471,31 @@ export default function Lancamentos({ view = 'confirmed' }) {
           </button>
         ))}
         <button
-          className={`filter-toggle-btn${advancedOpen ? ' open' : ''}`}
-          onClick={() => setAdvancedOpen((o) => !o)}
-          title="Filtrar por origem"
+          className="filter-toggle-btn import-btn"
+          onClick={() => navigate('/importacao')}
+          title="Importar extrato"
         >
-          ⚙️
+          📥 Importar
         </button>
       </div>
 
-      {/* Advanced filters — hidden by default */}
-      {advancedOpen && (
-        <div className="advanced-filters">
-          <select
-            value={filterOrigin}
-            onChange={(e) => setFilterOrigin(e.target.value)}
-            className="filter-select"
+      <div className="advanced-filters">
+        <select
+          value={filterOrigin}
+          onChange={(e) => setFilterOrigin(e.target.value)}
+          className="filter-select"
+        >
+          {ORIGIN_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        {filterOrigin && (
+          <button
+            className="clear-filters-btn"
+            onClick={() => setFilterOrigin('')}
           >
-            {ORIGIN_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          {filterOrigin && (
-            <button
-              className="clear-filters-btn"
-              onClick={() => setFilterOrigin('')}
-            >
-              Limpar
-            </button>
-          )}
-        </div>
-      )}
+            Limpar
+          </button>
+        )}
+      </div>
 
       {/* Review banner */}
       {!isPendingView && pendingCount > 0 && (

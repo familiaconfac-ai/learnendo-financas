@@ -13,6 +13,8 @@ class ParseError extends Error {
   }
 }
 
+import { parseReceiptImageFile } from './receiptImageParser'
+
 const MAX_REASON_LOGS = 40
 const MAX_SANITY_AMOUNT = 10_000_000
 
@@ -1010,6 +1012,10 @@ export async function parseStatementFile(file) {
 
   if (ext === 'pdf') {
     return parsePDF(file)
+  }
+
+  if (['jpg', 'jpeg', 'png', 'webp'].includes(ext)) {
+    return parseReceiptImageFile(file)
   }
 
   const { text } = await readStatementFile(file)

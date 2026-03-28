@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useAccounts } from '../../hooks/useAccounts'
+import { useCategories } from '../../hooks/useCategories'
 import { addTransaction, fetchTransactions } from '../../services/transactionService'
 import { parseStatementFile } from '../../utils/statementParser'
 import { classifyBatch } from '../../utils/transactionClassifier'
@@ -41,12 +42,38 @@ function accountLabel(a) {
   return type ? `${a.name} (${type})` : a.name
 }
 
+function normalize(text) {
+  return String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+function findCategoryByHints(categories, type, hints = []) {
+  if (!Array.isArray(hints) || hints.length === 0) return null
+  const typed = categories.filter((c) => c.type === type)
+  const normalizedHints = hints.map((h) => normalize(h))
+
+  for (const hint of normalizedHints) {
+    const exact = typed.find((c) => normalize(c.name) === hint)
+    if (exact) return exact
+  }
+
+  for (const hint of normalizedHints) {
+    const partial = typed.find((c) => normalize(c.name).includes(hint) || hint.includes(normalize(c.name)))
+    if (partial) return partial
+  }
+
+  return null
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Importacao() {
   const navigate                         = useNavigate()
   const { user }                         = useAuth()
   const { accounts, loading: loadingAccounts } = useAccounts()
+  const { categories } = useCategories()
 
   // ── State ────────────────────────────────────────────────────────────────
 
@@ -76,8 +103,11 @@ export default function Importacao() {
     try {
       const raw = await parseStatementFile(file)
 
-      const classified = classifyBatch(raw).map((row, idx) => ({
+      const hasImageRows = raw.some((row) => row.source === 'image_receipt')
+      const classified = (hasImageRows ? raw : classifyBatch(raw)).map((row, idx) => ({
         ...row,
+        status: 'pending',
+        classification: row.classification || { confidence: 'low', reason: 'image_receipt' },
         id: `r-${idx}`,
       }))
 
@@ -158,6 +188,7 @@ export default function Importacao() {
       for (const row of toSave) {
         const rowAudit = duplicateMapByRowId[row.id]
         const signature = buildDuplicateSignature(row, accountId)
+        const hintedCategory = findCategoryByHints(categories, row.type, row.categoryHints)
         if (rowAudit?.exact) {
           skipped++
           continue
@@ -174,10 +205,11 @@ export default function Importacao() {
             amount:                   row.amount,
             date:                     row.date,
             accountId,
-            categoryId:               null,
+            categoryId:               hintedCategory?.id || null,
+            categoryName:             hintedCategory?.name || null,
             notes:                    '',
-            origin:                   'bank_import',
-            status:                   row.status === 'pending' ? 'pending' : 'confirmed',
+            origin:                   row.source === 'image_receipt' ? 'manual' : 'bank_import',
+            status:                   'pending',
             balanceImpact:            row.type !== 'transfer_internal',
             importBatchId:            batchId,
             classificationConfidence: row.classification?.confidence ?? 'low',
@@ -326,12 +358,12 @@ export default function Importacao() {
         >
           <span className="dropzone-icon">📁</span>
           <p className="dropzone-title">Arraste o extrato ou clique para selecionar</p>
-          <p className="dropzone-sub">Formatos suportados: <strong>CSV</strong>, <strong>OFX / QFX</strong> e <strong>PDF</strong></p>
+          <p className="dropzone-sub">Formatos suportados: <strong>CSV</strong>, <strong>OFX / QFX</strong>, <strong>PDF</strong> e <strong>JPG / PNG</strong></p>
           <label className="dropzone-btn">
             Selecionar arquivo
             <input
               type="file"
-              accept=".csv,.ofx,.qfx,.txt,.pdf"
+              accept=".csv,.ofx,.qfx,.txt,.pdf,.jpg,.jpeg,.png,.webp,image/*"
               style={{ display: 'none' }}
               onChange={handleFileInput}
             />
@@ -358,8 +390,8 @@ export default function Importacao() {
             <div className="how-item">
               <span className="how-icon">🧾</span>
               <div>
-                <strong>PDF (básico)</strong>
-                <p>O app extrai texto do PDF e tenta mapear transações. Layouts desconhecidos mostram erro claro.</p>
+                <strong>PDF e imagem (básico)</strong>
+                <p>Você pode enviar extrato em PDF e imagens (cupom/comprovante) para entrar na fila de revisão.</p>
               </div>
             </div>
             <div className="how-item">

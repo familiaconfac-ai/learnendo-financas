@@ -56,6 +56,13 @@
   border-color: var(--color-primary);
 }
 
+.import-btn {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  padding: 0.3rem 0.55rem;
+}
+
 /* ── Advanced filters (hidden by default) ─────────────────────────────────── */
 .advanced-filters {
   display: flex;

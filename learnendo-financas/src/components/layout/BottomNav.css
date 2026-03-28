@@ -40,6 +40,14 @@
   transform: scale(1.15);
 }
 
+.bottom-nav-logout {
+  color: #b91c1c;
+}
+
+.bottom-nav-logout:hover {
+  color: #dc2626;
+}
+
 .bottom-nav-share {
   color: var(--color-text-muted);
 }

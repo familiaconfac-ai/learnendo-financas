@@ -64,3 +64,27 @@ export async function resetPassword(email) {
   if (IS_MOCK_MODE) return
   await sendPasswordResetEmail(auth, email)
 }
+
+export async function updateUserProfileData(uid, data) {
+  if (IS_MOCK_MODE) {
+    dispatchMock('lf:mock:login')
+    return
+  }
+
+  const safe = {
+    displayName: data.displayName || '',
+    photoURL: data.photoURL || '',
+    preferredCurrency: data.preferredCurrency || 'BRL',
+    preferredExpenseCategoryId: data.preferredExpenseCategoryId || null,
+    updatedAt: serverTimestamp(),
+  }
+
+  if (auth.currentUser && auth.currentUser.uid === uid) {
+    await updateProfile(auth.currentUser, {
+      displayName: safe.displayName || auth.currentUser.displayName || '',
+      photoURL: safe.photoURL || auth.currentUser.photoURL || '',
+    })
+  }
+
+  await setDoc(doc(db, 'users', uid), safe, { merge: true })
+}

@@ -75,6 +75,7 @@
   width: 34px;
   height: 34px;
   border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.35);
   background: rgba(255, 255, 255, 0.25);
   display: flex;
   align-items: center;
@@ -83,7 +84,18 @@
   font-size: 0.9rem;
   flex-shrink: 0;
   overflow: hidden;
-  border: 2px solid rgba(255,255,255,0.35);
+  cursor: pointer;
+  padding: 0;
+  color: #fff;
+}
+
+.header-avatar:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.header-avatar:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 .header-avatar-img {
   width: 100%;
