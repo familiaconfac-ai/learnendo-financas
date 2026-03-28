@@ -47,7 +47,10 @@ const PRESET_EXPENSE_CATEGORIES = [
 ]
 
 function toAmount(value) {
-  const parsed = Number.parseFloat(value)
+  const normalized = String(value ?? '')
+    .replace(/\s+/g, '')
+    .replace(',', '.')
+  const parsed = Number.parseFloat(normalized)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
 }
 
@@ -150,8 +153,9 @@ export default function Orcamento() {
     setModel(nextModel)
     setCollapsed((current) => {
       const merged = { ...current }
-      for (const category of nextModel.expenses) {
-        if (merged[category.name] === undefined) merged[category.name] = false
+      for (let index = 0; index < nextModel.expenses.length; index += 1) {
+        const key = String(index)
+        if (merged[key] === undefined) merged[key] = false
       }
       return merged
     })
@@ -205,6 +209,11 @@ export default function Orcamento() {
       })
       return { ...current, expenses }
     })
+  }
+
+  function shouldSkipBlurPersist(event) {
+    const nextFocused = event?.relatedTarget
+    return Boolean(nextFocused?.dataset?.skipBlurPersist === '1')
   }
 
   async function persistIncome(index) {
@@ -437,10 +446,11 @@ export default function Orcamento() {
     }
   }
 
-  function toggleCategory(categoryName) {
+  function toggleCategory(categoryIndex) {
+    const key = String(categoryIndex)
     setCollapsed((current) => ({
       ...current,
-      [categoryName]: !current[categoryName],
+      [key]: !current[key],
     }))
   }
 
@@ -490,25 +500,34 @@ export default function Orcamento() {
                       type="text"
                       value={row.name}
                       onChange={(e) => setIncomeField(index, 'name', e.target.value)}
-                      onBlur={() => persistIncome(index)}
+                      onBlur={(e) => {
+                        if (shouldSkipBlurPersist(e)) return
+                        persistIncome(index)
+                      }}
                       maxLength={60}
+                      placeholder="Nome da receita"
                       disabled={!permissions?.canEditBudget}
                     />
                     <input
                       className="amount-input"
-                      type="number"
+                      type="text"
                       inputMode="decimal"
-                      min="0"
-                      step="0.01"
+                      autoComplete="off"
                       value={row.amount}
                       onChange={(e) => setIncomeField(index, 'amount', e.target.value)}
-                      onBlur={() => persistIncome(index)}
+                      onBlur={(e) => {
+                        if (shouldSkipBlurPersist(e)) return
+                        persistIncome(index)
+                      }}
+                      placeholder="0,00"
                       disabled={!permissions?.canEditBudget}
                     />
                     <button
                       type="button"
                       className="line-action"
                       title="Duplicar"
+                      data-skip-blur-persist="1"
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => duplicateIncome(index)}
                       disabled={!permissions?.canEditBudget}
                     >
@@ -518,6 +537,8 @@ export default function Orcamento() {
                       type="button"
                       className="line-action danger"
                       title="Excluir"
+                      data-skip-blur-persist="1"
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => deleteIncome(index)}
                       disabled={!permissions?.canEditBudget}
                     >
@@ -534,16 +555,17 @@ export default function Orcamento() {
               </div>
 
               {model.expenses.map((category, categoryIndex) => {
-                const isCollapsed = Boolean(collapsed[category.name])
+                const collapseKey = String(categoryIndex)
+                const isCollapsed = Boolean(collapsed[collapseKey])
                 const categoryTotal = category.items.reduce((sum, item) => sum + toAmount(item.amount), 0)
 
                 return (
-                  <article key={`${category.name}-${categoryIndex}`} className="expense-category">
+                  <article key={`expense-category-${categoryIndex}`} className="expense-category">
                     <div className="expense-category-header">
                       <button
                         type="button"
                         className="collapse-btn"
-                        onClick={() => toggleCategory(category.name)}
+                        onClick={() => toggleCategory(categoryIndex)}
                         aria-label={isCollapsed ? 'Expandir categoria' : 'Recolher categoria'}
                       >
                         {isCollapsed ? '+' : '-'}
@@ -553,8 +575,12 @@ export default function Orcamento() {
                         type="text"
                         value={category.name}
                         onChange={(e) => setExpenseCategoryName(categoryIndex, e.target.value)}
-                        onBlur={() => persistCategoryRename(categoryIndex)}
+                        onBlur={(e) => {
+                          if (shouldSkipBlurPersist(e)) return
+                          persistCategoryRename(categoryIndex)
+                        }}
                         maxLength={60}
+                        placeholder="Nome da categoria"
                         disabled={!permissions?.canEditBudget}
                       />
                       <strong className="category-total">{formatCurrency(categoryTotal)}</strong>
@@ -564,31 +590,40 @@ export default function Orcamento() {
                       <>
                         <div className="line-list">
                           {category.items.map((item, itemIndex) => (
-                            <div key={item.id || `${category.name}-${itemIndex}`} className="budget-line">
+                            <div key={item.id || `expense-${categoryIndex}-${itemIndex}`} className="budget-line">
                               <input
                                 className="name-input"
                                 type="text"
                                 value={item.name}
                                 onChange={(e) => setExpenseField(categoryIndex, itemIndex, 'name', e.target.value)}
-                                onBlur={() => persistExpense(categoryIndex, itemIndex)}
+                                onBlur={(e) => {
+                                  if (shouldSkipBlurPersist(e)) return
+                                  persistExpense(categoryIndex, itemIndex)
+                                }}
                                 maxLength={60}
+                                placeholder="Nome da subcategoria"
                                 disabled={!permissions?.canEditBudget}
                               />
                               <input
                                 className="amount-input"
-                                type="number"
+                                type="text"
                                 inputMode="decimal"
-                                min="0"
-                                step="0.01"
+                                autoComplete="off"
                                 value={item.amount}
                                 onChange={(e) => setExpenseField(categoryIndex, itemIndex, 'amount', e.target.value)}
-                                onBlur={() => persistExpense(categoryIndex, itemIndex)}
+                                onBlur={(e) => {
+                                  if (shouldSkipBlurPersist(e)) return
+                                  persistExpense(categoryIndex, itemIndex)
+                                }}
+                                placeholder="0,00"
                                 disabled={!permissions?.canEditBudget}
                               />
                               <button
                                 type="button"
                                 className="line-action"
                                 title="Duplicar"
+                                data-skip-blur-persist="1"
+                                onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => duplicateExpenseItem(categoryIndex, itemIndex)}
                                 disabled={!permissions?.canEditBudget}
                               >
@@ -598,6 +633,8 @@ export default function Orcamento() {
                                 type="button"
                                 className="line-action danger"
                                 title="Excluir"
+                                data-skip-blur-persist="1"
+                                onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => deleteExpenseItem(categoryIndex, itemIndex)}
                                 disabled={!permissions?.canEditBudget}
                               >

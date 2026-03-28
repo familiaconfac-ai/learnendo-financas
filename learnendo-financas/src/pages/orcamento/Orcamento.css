@@ -185,6 +185,7 @@
   font-size: 0.92rem;
   background: #fff;
   color: #0f172a;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
 }
 
 .name-input,
@@ -195,6 +196,28 @@
 .amount-input {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.name-input:hover,
+.amount-input:hover,
+.category-name-input:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.name-input:focus,
+.amount-input:focus,
+.category-name-input:focus {
+  outline: none;
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.16);
+  background: #ffffff;
+}
+
+.name-input::placeholder,
+.amount-input::placeholder,
+.category-name-input::placeholder {
+  color: #94a3b8;
 }
 
 .line-action {
