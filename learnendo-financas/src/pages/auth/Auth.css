@@ -95,6 +95,39 @@
   box-shadow: 0 0 0 3px rgba(26, 86, 219, 0.12);
 }
 
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  padding-right: 5.5rem;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-weight: 700;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.4rem;
+  border-radius: 8px;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.password-toggle:hover {
+  background: rgba(26, 86, 219, 0.08);
+}
+
+.password-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
 .auth-link {
   text-align: center;
   font-size: 0.875rem;
