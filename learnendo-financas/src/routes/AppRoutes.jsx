@@ -6,6 +6,7 @@ import Layout from '../components/layout/Layout'
 // Auth pages
 import Login from '../pages/auth/Login'
 import Register from '../pages/auth/Register'
+import InviteAccept from '../pages/auth/InviteAccept'
 
 // App pages
 import Dashboard from '../pages/dashboard/Dashboard'
@@ -28,6 +29,7 @@ export default function AppRoutes() {
       {/* Rotas públicas */}
       <Route path="/login" element={<Login />} />
       <Route path="/cadastro" element={<Register />} />
+      <Route path="/convite/:token" element={<InviteAccept />} />
 
       {/* Rotas protegidas – usuário autenticado */}
       <Route element={<PrivateRoute />}>

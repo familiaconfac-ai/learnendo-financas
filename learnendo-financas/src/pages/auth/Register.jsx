@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { registerUser } from '../../firebase/auth'
 import Button from '../../components/ui/Button'
 import './Auth.css'
 
 export default function Register() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -28,7 +29,7 @@ export default function Register() {
     setLoading(true)
     try {
       await registerUser(form.email, form.password, form.name)
-      navigate('/dashboard')
+      navigate(searchParams.get('next') || '/dashboard')
     } catch (err) {
       const code = err?.code ?? ''
       if (code === 'auth/email-already-in-use') {
@@ -120,7 +121,7 @@ export default function Register() {
         </Button>
 
         <p className="auth-link">
-          Já tem conta? <Link to="/login">Entrar</Link>
+          Já tem conta? <Link to={searchParams.get('next') ? `/login?next=${encodeURIComponent(searchParams.get('next'))}` : '/login'}>Entrar</Link>
         </p>
       </form>
     </div>

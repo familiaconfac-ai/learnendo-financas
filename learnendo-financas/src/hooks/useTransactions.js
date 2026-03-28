@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
 import {
-  fetchTransactions,
+  fetchTransactionsWithOptions,
   addTransaction,
   updateTransaction,
   deleteTransaction,
 } from '../services/transactionService'
 import { ensureMonthlyRecurringTransactions } from '../services/recurrenceService'
+import { useWorkspace } from '../context/WorkspaceContext'
 
 /**
  * Hook central para leitura/escrita de transações no Firestore.
@@ -17,6 +18,7 @@ import { ensureMonthlyRecurringTransactions } from '../services/recurrenceServic
  */
 export function useTransactions(year, month) {
   const { user } = useAuth()
+  const { activeWorkspaceId, myRole, permissions } = useWorkspace()
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading]           = useState(true)
   const [error, setError]               = useState(null)
@@ -30,8 +32,12 @@ export function useTransactions(year, month) {
     setLoading(true)
     setError(null)
     try {
-      await ensureMonthlyRecurringTransactions(user.uid, year, month)
-      const data = await fetchTransactions(user.uid, year, month)
+      await ensureMonthlyRecurringTransactions(user.uid, year, month, { workspaceId: activeWorkspaceId })
+      const data = await fetchTransactionsWithOptions(user.uid, year, month, {
+        workspaceId: activeWorkspaceId,
+        viewerRole: myRole,
+        viewerUid: user.uid,
+      })
       // Ordem crescente por data (mais recente primeiro)
       setTransactions(data.sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')))
     } catch (err) {
@@ -41,14 +47,20 @@ export function useTransactions(year, month) {
     } finally {
       setLoading(false)
     }
-  }, [user?.uid, year, month])
+  }, [user?.uid, year, month, activeWorkspaceId, myRole])
 
   useEffect(() => { reload() }, [reload])
 
   /** Cria uma nova transação e recarrega a lista */
   async function add(data) {
     if (!user?.uid) throw new Error('Usuário não autenticado')
-    const id = await addTransaction(user.uid, data)
+    if (!permissions.canLaunch) throw new Error('Seu papel não permite criar lançamentos neste workspace')
+    const id = await addTransaction(user.uid, {
+      ...data,
+      workspaceId: activeWorkspaceId,
+      createdBy: user.uid,
+      userId: user.uid,
+    }, { workspaceId: activeWorkspaceId })
     await reload()
     return id
   }
@@ -56,14 +68,18 @@ export function useTransactions(year, month) {
   /** Atualiza uma transação existente e recarrega a lista */
   async function update(txId, data) {
     if (!user?.uid) throw new Error('Usuário não autenticado')
-    await updateTransaction(user.uid, txId, data)
+    if (!permissions.canConfirm && !permissions.canLaunch) {
+      throw new Error('Seu papel não permite alterar lançamentos neste workspace')
+    }
+    await updateTransaction(user.uid, txId, { ...data, workspaceId: activeWorkspaceId }, { workspaceId: activeWorkspaceId })
     await reload()
   }
 
   /** Remove uma transação e recarrega a lista */
   async function remove(txId) {
     if (!user?.uid) throw new Error('Usuário não autenticado')
-    await deleteTransaction(user.uid, txId)
+    if (!permissions.canLaunch) throw new Error('Seu papel não permite excluir lançamentos neste workspace')
+    await deleteTransaction(user.uid, txId, { workspaceId: activeWorkspaceId })
     await reload()
   }
 

@@ -82,7 +82,8 @@ function normalizeRecurrencePayload(payload) {
   }
 }
 
-export async function createRecurrenceRule(uid, transactionData, recurrenceInput) {
+export async function createRecurrenceRule(uid, transactionData, recurrenceInput, options = {}) {
+  const workspaceId = options.workspaceId || transactionData.workspaceId || null
   const recurrenceBase = normalizeRecurrencePayload(recurrenceInput)
   const rule = {
     type: transactionData.type,
@@ -96,6 +97,7 @@ export async function createRecurrenceRule(uid, transactionData, recurrenceInput
     origin: 'manual',
     status: 'confirmed',
     balanceImpact: transactionData.type !== 'transfer_internal',
+    workspaceId,
     ...recurrenceBase,
     currentInstallment: Number(recurrenceInput.currentInstallment || recurrenceBase.startInstallment),
     lastGeneratedMonth: monthKeyFromDate(transactionData.date),
@@ -125,9 +127,13 @@ async function updateRecurrenceRule(uid, recurrenceId, patch) {
   })
 }
 
-export async function ensureMonthlyRecurringTransactions(uid, year, month) {
+export async function ensureMonthlyRecurringTransactions(uid, year, month, options = {}) {
+  const workspaceId = options.workspaceId || null
   const targetMonth = toMonthKey(year, month)
-  const rules = await getActiveRecurrenceRules(uid)
+  const rules = (await getActiveRecurrenceRules(uid)).filter((rule) => {
+    const ruleWorkspaceId = rule.workspaceId || null
+    return ruleWorkspaceId === workspaceId
+  })
   if (rules.length === 0) return { generated: 0, skipped: 0, finished: 0 }
 
   let generated = 0
@@ -138,7 +144,10 @@ export async function ensureMonthlyRecurringTransactions(uid, year, month) {
   async function getMonthTransactions(monthKey) {
     if (txCacheByMonth.has(monthKey)) return txCacheByMonth.get(monthKey)
     const { year: y, month: m } = parseMonthKey(monthKey)
-    const txList = await fetchTransactionsWithOptions(uid, y, m, { includeRecurringAuto: true })
+    const txList = await fetchTransactionsWithOptions(uid, y, m, {
+      includeRecurringAuto: true,
+      workspaceId,
+    })
     txCacheByMonth.set(monthKey, txList)
     return txList
   }
@@ -205,7 +214,10 @@ export async function ensureMonthlyRecurringTransactions(uid, year, month) {
           recurringInstanceMonth: monthCursor,
           installmentNumber: isFixedRecurrence(normalized) ? installmentToGenerate : null,
           balanceImpact: rule.type !== 'transfer_internal',
-        })
+          workspaceId,
+          createdBy: uid,
+          userId: uid,
+        }, { workspaceId })
         generated++
         txForMonth.push({ recurringId: rule.id, recurringInstanceMonth: monthCursor })
       } else {

@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { loginUser } from '../../firebase/auth'
 import Button from '../../components/ui/Button'
 import './Auth.css'
 
 export default function Login() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [form, setForm] = useState({ email: '', password: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -21,7 +22,7 @@ export default function Login() {
     setLoading(true)
     try {
       await loginUser(form.email, form.password)
-      navigate('/dashboard')
+      navigate(searchParams.get('next') || '/dashboard')
     } catch (err) {
       const code = err?.code ?? ''
       if (
@@ -101,7 +102,7 @@ export default function Login() {
         </Button>
 
         <p className="auth-link">
-          Não tem conta? <Link to="/cadastro">Cadastrar-se</Link>
+          Não tem conta? <Link to={searchParams.get('next') ? `/cadastro?next=${encodeURIComponent(searchParams.get('next'))}` : '/cadastro'}>Cadastrar-se</Link>
         </p>
       </form>
     </div>
