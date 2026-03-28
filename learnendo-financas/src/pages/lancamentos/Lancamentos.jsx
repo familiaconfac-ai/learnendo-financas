@@ -8,6 +8,7 @@ import { useCategories } from '../../hooks/useCategories'
 import { useAccounts } from '../../hooks/useAccounts'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { formatDateBR } from '../../utils/formatDate'
+import { suggestTypeAndCategory } from '../../utils/transactionAutoCategorizer'
 import './Lancamentos.css'
 
 // ── Type chip navigation ──────────────────────────────────────────────────────
@@ -103,7 +104,26 @@ export default function Lancamentos() {
 
   // ── Event handlers ────────────────────────────────────────────────────────
   function handleChange(e) {
-    setForm((f) => ({ ...f, [e.target.name]: e.target.value }))
+    const { name, value } = e.target
+
+    if (name === 'description') {
+      setForm((f) => {
+        const text = value
+        const suggestion = suggestTypeAndCategory(text, categories, f.type)
+        const keepType = f.type === 'transfer_internal' ? f.type : suggestion.suggestedType
+        const nextCategoryId = f.categoryId || suggestion.suggestedCategoryId || ''
+
+        return {
+          ...f,
+          description: text,
+          type: keepType,
+          categoryId: keepType === 'transfer_internal' ? '' : nextCategoryId,
+        }
+      })
+      return
+    }
+
+    setForm((f) => ({ ...f, [name]: value }))
   }
   function handleCheck(e) {
     setForm((f) => ({ ...f, [e.target.name]: e.target.checked }))
@@ -111,20 +131,24 @@ export default function Lancamentos() {
 
   function openNewModal(typeValue) {
     setEditingTx(null)
-    setForm({ ...defaultForm(), type: typeValue || 'expense' })
+    const base = { ...defaultForm(), type: typeValue || 'expense' }
+    setForm(base)
     setModalOpen(true)
   }
 
   function openEditModal(tx) {
+    const suggestion = suggestTypeAndCategory(tx.description || '', categories, tx.type || 'expense')
+    const suggestedType = tx.type === 'transfer_internal' ? 'transfer_internal' : suggestion.suggestedType
+
     setEditingTx(tx)
     setForm({
-      type:        tx.type        || 'expense',
+      type:        suggestedType,
       description: tx.description || '',
       amount:      tx.amount      || '',
       date:        tx.date        || '',
       accountId:   tx.accountId   || '',
       toAccountId: tx.toAccountId || '',
-      categoryId:  tx.categoryId  || '',
+      categoryId:  tx.categoryId || (tx.type === 'transfer_internal' ? '' : suggestion.suggestedCategoryId || ''),
       notes:       tx.notes       || '',
       recurring:   tx.recurring   || false,
     })
@@ -136,15 +160,23 @@ export default function Lancamentos() {
     if (!form.description || !form.amount || !form.date) return
     setSaving(true)
     const isInternal = form.type === 'transfer_internal'
+    const inferred = suggestTypeAndCategory(form.description, categories, form.type)
+    const resolvedType = isInternal ? 'transfer_internal' : (inferred.suggestedType || form.type)
+    const resolvedCategoryId = isInternal ? null : (form.categoryId || inferred.suggestedCategoryId || null)
+    const resolvedAccountId = isInternal
+      ? (form.accountId || editingTx?.accountId || null)
+      : (form.accountId || editingTx?.accountId || accounts[0]?.id || null)
+
     const payload = {
-      type:        form.type,
+      type:        resolvedType,
       description: form.description,
       amount:      form.amount,
       date:        form.date,
-      accountId:   form.accountId || null,
+      accountId:   resolvedAccountId,
       toAccountId: isInternal ? (form.toAccountId || null) : null,
-      categoryId:  isInternal ? null : (form.categoryId || null),
+      categoryId:  resolvedCategoryId,
       notes:       form.notes || '',
+      recurring:   !!form.recurring,
     }
     try {
       if (editingTx) {
@@ -366,10 +398,14 @@ export default function Lancamentos() {
       >
         <form className="launch-form" onSubmit={handleSubmit} noValidate>
           <div className="form-group">
+            <label>Data</label>
+            <input name="date" type="date" value={form.date} onChange={handleChange} required />
+          </div>
+          <div className="form-group">
             <label>Tipo</label>
             <select name="type" value={form.type} onChange={handleChange} required>
-              <option value="expense">Despesa</option>
               <option value="income">Receita</option>
+              <option value="expense">Despesa</option>
               <option value="investment">Investimento</option>
               <option value="transfer_internal">Transferência entre contas</option>
             </select>
@@ -384,36 +420,35 @@ export default function Lancamentos() {
             <input name="amount" type="number" inputMode="decimal" min="0.01" step="0.01"
               value={form.amount} onChange={handleChange} placeholder="0,00" required />
           </div>
-          <div className="form-group">
-            <label>Data</label>
-            <input name="date" type="date" value={form.date} onChange={handleChange} required />
-          </div>
-          <div className="form-group">
-            <label>{form.type === 'transfer_internal' ? 'Conta de origem' : 'Conta'}</label>
-            <select name="accountId" value={form.accountId} onChange={handleChange}>
-              <option value="">Selecione…</option>
-              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </div>
-          {form.type === 'transfer_internal' && (
-            <div className="form-group">
-              <label>Conta de destino</label>
-              <select name="toAccountId" value={form.toAccountId} onChange={handleChange}>
-                <option value="">Selecione…</option>
-                {accounts
-                  .filter((a) => a.id !== form.accountId)
-                  .map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-          )}
-          {form.type !== 'transfer_internal' && (
+          {form.type !== 'transfer_internal' ? (
             <div className="form-group">
               <label>Categoria</label>
               <select name="categoryId" value={form.categoryId} onChange={handleChange}>
                 <option value="">Selecione…</option>
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+                {categories
+                  .filter((c) => c.type === form.type)
+                  .map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
               </select>
             </div>
+          ) : (
+            <>
+              <div className="form-group">
+                <label>Conta de origem</label>
+                <select name="accountId" value={form.accountId} onChange={handleChange}>
+                  <option value="">Selecione…</option>
+                  {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Conta de destino</label>
+                <select name="toAccountId" value={form.toAccountId} onChange={handleChange}>
+                  <option value="">Selecione…</option>
+                  {accounts
+                    .filter((a) => a.id !== form.accountId)
+                    .map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+            </>
           )}
           <div className="form-group">
             <label>Observação</label>
@@ -424,6 +459,9 @@ export default function Lancamentos() {
               checked={form.recurring} onChange={handleCheck} />
             <label htmlFor="recurring">Lançamento recorrente</label>
           </div>
+          <p className="form-help-text">
+            Use para contas que se repetem com frequência, como aluguel, salário, internet ou mensalidades.
+          </p>
         </form>
       </Modal>
     </div>

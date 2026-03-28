@@ -78,6 +78,21 @@ export function normaliseBRAmount(raw) {
 // Date parsing
 // ---------------------------------------------------------------------------
 
+const PT_MONTH_TO_NUM = {
+  jan: '01',
+  fev: '02',
+  mar: '03',
+  abr: '04',
+  mai: '05',
+  jun: '06',
+  jul: '07',
+  ago: '08',
+  set: '09',
+  out: '10',
+  nov: '11',
+  dez: '12',
+}
+
 function parseDateToISO(raw, defaultYear = new Date().getFullYear()) {
   if (!raw) return null
 
@@ -103,6 +118,29 @@ function parseDateToISO(raw, defaultYear = new Date().getFullYear()) {
     return Number.isNaN(new Date(`${iso}T00:00:00`).getTime()) ? null : iso
   }
 
+  // DD MON YYYY (pt-BR months), e.g. 02 MAR 2026
+  const textual = s.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/i)
+  if (textual) {
+    const day = textual[1].padStart(2, '0')
+    const month = PT_MONTH_TO_NUM[stripAccents(textual[2].toLowerCase())]
+    const year = textual[3]
+    if (month) {
+      const iso = `${year}-${month}-${day}`
+      return Number.isNaN(new Date(`${iso}T00:00:00`).getTime()) ? null : iso
+    }
+  }
+
+  // DD MON (without year), assume current year
+  const textualShort = s.match(/^(\d{1,2})\s+([A-Za-z]{3})$/i)
+  if (textualShort) {
+    const day = textualShort[1].padStart(2, '0')
+    const month = PT_MONTH_TO_NUM[stripAccents(textualShort[2].toLowerCase())]
+    if (month) {
+      const iso = `${defaultYear}-${month}-${day}`
+      return Number.isNaN(new Date(`${iso}T00:00:00`).getTime()) ? null : iso
+    }
+  }
+
   // YYYY-MM-DD
   const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (isoMatch) {
@@ -122,8 +160,8 @@ function parseDateToISO(raw, defaultYear = new Date().getFullYear()) {
 function inferDirectionFromText(text) {
   const s = stripAccents(String(text || '').toLowerCase())
   if (!s) return 'unknown'
-  if (/\bcredito\b|\bentrada\b|\brecebido\b|\bestorno\b/.test(s)) return 'credit'
-  if (/\bdebito\b|\bsaida\b|\bpagamento\b|\bcompra\b|\bjuros\b|\bencargo\b/.test(s)) return 'debit'
+  if (/\bcredito\b|\bentrada\b|\brecebido\b|\bestorno\b|\bpix recebido\b|\btransferencia recebida\b/.test(s)) return 'credit'
+  if (/\bdebito\b|\bsaida\b|\bpagamento\b|\bcompra\b|\bjuros\b|\bencargo\b|\bfatura\b/.test(s)) return 'debit'
   return 'unknown'
 }
 
@@ -603,17 +641,28 @@ async function parsePDF(file) {
   }
 
   const kind = detectPdfKind(lines)
+  const layout = detectPdfLayout(lines)
   const structure = analyzePdfLines(lines)
   console.log(`[Parser] PDF kind: ${kind}`)
+  console.log(`[PDF] layout: ${layout}`)
   console.log('[PDF] structure:', structure)
 
-  const rows = parsePdfTransactionLines(lines, kind)
+  const rows = layout === 'nubank_statement'
+    ? parseNubankPdf(lines)
+    : parseGenericPdf(lines, kind)
+
+  const lowConfidenceCount = rows.filter((row) => row.direction === 'unknown').length
+  console.log(`[PDF] ignored lines: ${rows.__meta?.ignoredLines ?? 0}`)
+  console.log(`[PDF] transactions recognized: ${rows.length}`)
+  console.log(`[PDF] low confidence: ${lowConfidenceCount}`)
+
   if (rows.length === 0) {
     throw new ParseError('PDF lido, mas o layout ainda nao foi reconhecido com seguranca.', {
       previewLines,
       pdfPages: pdf.numPages,
       extractedTextLength: totalTextLength,
       pdfKind: kind,
+      pdfLayout: layout,
       pdfStructure: structure,
     })
   }
@@ -623,7 +672,7 @@ async function parsePDF(file) {
 }
 
 function analyzePdfLines(lines) {
-  const datePattern = /\b\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?\b/
+  const datePattern = /\b\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?\b|\b\d{1,2}\s+[A-Za-z]{3}(?:\s+\d{4})?\b/
   const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
 
   let dateLines = 0
@@ -692,7 +741,170 @@ function detectPdfKind(lines) {
   return 'unknown'
 }
 
-function parsePdfTransactionLines(lines, kind) {
+function detectPdfLayout(lines) {
+  const head = stripAccents(lines.slice(0, 180).join(' ').toLowerCase())
+  let nubankScore = 0
+
+  if (/\bnubank\b|\bnu pagamentos\b/.test(head)) nubankScore += 3
+  if (/\bcompra no debito\b/.test(head)) nubankScore += 2
+  if (/\btransferencia recebida pelo pix\b|\bpix recebido\b/.test(head)) nubankScore += 2
+  if (/\bpagamento de fatura\b/.test(head)) nubankScore += 1
+  if (/\btotal de entradas\b|\btotal de saidas\b/.test(head)) nubankScore += 1
+  if (/\bchat do app\b|\bligue\b|\bcapitais e regioes\b/.test(head)) nubankScore += 1
+
+  if (nubankScore >= 3) return 'nubank_statement'
+  return 'generic_statement'
+}
+
+function extractBrazilianAmounts(text) {
+  const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
+  return text.match(amountPattern) || []
+}
+
+function parseDateTextFromLine(line, defaultYear = new Date().getFullYear()) {
+  const full = line.match(/\b(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})\b/i)
+  if (full) return parseDateToISO(full[1], defaultYear)
+
+  const short = line.match(/\b(\d{1,2}\s+[A-Za-z]{3})\b/i)
+  if (short) return parseDateToISO(short[1], defaultYear)
+
+  const numeric = line.match(/\b(\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?)\b/)
+  if (numeric) return parseDateToISO(numeric[1], defaultYear)
+
+  return null
+}
+
+function parseNubankPdf(lines) {
+  const rows = []
+  const meta = { ignoredLines: 0 }
+  const currentYear = new Date().getFullYear()
+  const todayIso = new Date().toISOString().slice(0, 10)
+
+  let lastDateIso = null
+  let pending = null
+
+  for (const raw of lines) {
+    const line = String(raw || '').replace(/\s+/g, ' ').trim()
+    if (!line) continue
+
+    if (isNubankNoiseLine(line)) {
+      meta.ignoredLines += 1
+      continue
+    }
+
+    const lineDate = parseDateTextFromLine(line, currentYear)
+    if (lineDate) lastDateIso = lineDate
+
+    const amounts = extractBrazilianAmounts(line)
+    const onlyAmountLine = isAmountOnlyLine(line)
+
+    if (onlyAmountLine && pending && amounts.length > 0) {
+      const row = buildNubankRowFromParts(pending.text, amounts[0], pending.date || lastDateIso || todayIso)
+      if (row) rows.push(row)
+      pending = null
+      continue
+    }
+
+    if (amounts.length > 0 && looksLikeNubankTransactionLine(line)) {
+      const pickedAmount = pickLikelyAmount(line, amounts)
+      const dateForRow = lineDate || lastDateIso || todayIso
+      const row = buildNubankRowFromParts(line, pickedAmount, dateForRow)
+      if (row) rows.push(row)
+      pending = null
+      continue
+    }
+
+    if (looksLikeDescriptionContinuation(line)) {
+      if (pending) {
+        pending.text = `${pending.text} ${line}`.replace(/\s+/g, ' ').trim()
+      } else {
+        pending = { text: line, date: lineDate || lastDateIso || todayIso }
+      }
+      continue
+    }
+
+    meta.ignoredLines += 1
+  }
+
+  Object.defineProperty(rows, '__meta', {
+    value: meta,
+    enumerable: false,
+    configurable: true,
+  })
+
+  return rows
+}
+
+function isNubankNoiseLine(line) {
+  const s = stripAccents(line.toLowerCase())
+
+  if (/\bsaldo\b|\btotal de entradas\b|\btotal de saidas\b|\bagencia\b|\bconta\b|\batendimento\b|\bchat do app\b|\bligue\b|\bcapitais e regioes\b|\bpagina\b|\bresumo\b/.test(s)) {
+    if (!/pagamento de fatura/.test(s)) return true
+  }
+
+  if (/^\d{2}\s+[a-z]{3}\s+\d{4}\s+total\b/.test(s)) return true
+  return false
+}
+
+function isAmountOnlyLine(line) {
+  const compact = line.replace(/\s+/g, '')
+  return /^[-+]?R?\$?\d{1,3}(?:\.\d{3})*,\d{2}$/.test(compact)
+}
+
+function looksLikeNubankTransactionLine(line) {
+  const s = stripAccents(line.toLowerCase())
+  return /compra no debito|compra|pagamento de fatura|transferencia recebida|pix recebido|pix|debito|credito/.test(s)
+}
+
+function looksLikeDescriptionContinuation(line) {
+  const s = stripAccents(line.toLowerCase())
+  if (isNubankNoiseLine(line)) return false
+  if (isAmountOnlyLine(line)) return false
+  if (!/[a-z]/i.test(s)) return false
+  return true
+}
+
+function pickLikelyAmount(line, amounts) {
+  if (amounts.length === 1) return amounts[0]
+
+  const signed = amounts.filter((value) => /^[\s]*[-+]/.test(value))
+  if (signed.length > 0) return signed[signed.length - 1]
+
+  if (/total de entradas|total de saidas/i.test(stripAccents(line.toLowerCase()))) {
+    return amounts[0]
+  }
+
+  return amounts[amounts.length - 1]
+}
+
+function buildNubankRowFromParts(sourceText, rawAmount, dateIso) {
+  const signed = normaliseBRAmount(rawAmount)
+  if (!Number.isFinite(signed) || signed === 0) return null
+
+  let description = sourceText
+    .replace(rawAmount, '')
+    .replace(/\b\d{1,2}\s+[A-Za-z]{3}(?:\s+\d{4})?\b/i, '')
+    .replace(/\b\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?\b/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!description) description = 'Lancamento importado de PDF Nubank'
+
+  let direction = inferPdfDirection(rawAmount, description, 'statement')
+  if (direction === 'unknown' && signed < 0) direction = 'debit'
+  if (direction === 'unknown' && signed > 0 && /^[\s]*\+/.test(rawAmount)) direction = 'credit'
+
+  return {
+    date: dateIso,
+    description,
+    amount: Math.abs(signed),
+    direction,
+    balance: null,
+    rawLine: sourceText.slice(0, 180),
+  }
+}
+
+function parseGenericPdf(lines, kind) {
   const rows = []
 
   const currentYear = new Date().getFullYear()

@@ -118,6 +118,22 @@ export function classifyTransaction(description, amount, direction, ownAccountNu
     }
   }
 
+  // 3.5 Description-only fallback when direction is unknown/missing
+  if (direction !== 'credit' && direction !== 'debit') {
+    for (const kw of INCOME_KEYWORDS) {
+      if (desc.includes(kw)) {
+        console.log(`[Classifier] ✅ Income by description (no direction) — keyword: "${kw}"`)
+        return { type: 'income', confidence: 'medium', reason: `Income keyword without direction: "${kw}"` }
+      }
+    }
+    for (const kw of EXPENSE_KEYWORDS) {
+      if (desc.includes(kw)) {
+        console.log(`[Classifier] ✅ Expense by description (no direction) — keyword: "${kw}"`)
+        return { type: 'expense', confidence: 'medium', reason: `Expense keyword without direction: "${kw}"` }
+      }
+    }
+  }
+
   // 4. Direction + keyword refinement
   if (direction === 'credit') {
     for (const kw of INCOME_KEYWORDS) {

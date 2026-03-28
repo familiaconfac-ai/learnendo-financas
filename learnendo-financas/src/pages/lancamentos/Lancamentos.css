@@ -339,4 +339,10 @@
   color: var(--color-text);
 }
 .form-group textarea { resize: vertical; min-height: 60px; }
+.form-help-text {
+  margin: -0.25rem 0 0;
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
 
