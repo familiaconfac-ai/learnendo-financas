@@ -10,9 +10,11 @@ import { buildBudgetSpentMap, normalizedCategoryName } from '../utils/financeCal
  * Carrega itens de orçamento do Firestore e cruza com as transações do mês
  * para calcular o `spent` real de cada categoria.
  */
-export function useBudget(year, month) {
+export function useBudget(year, month, options = {}) {
   const { user } = useAuth()
   const { activeWorkspaceId, permissions, myRole } = useWorkspace()
+  const forceEdit = Boolean(options?.forceEdit)
+  const canEditBudget = forceEdit || Boolean(permissions?.canEditBudget)
   const [budgetItems, setBudgetItems] = useState([])
   const [loading, setLoading]         = useState(true)
   const [error, setError]             = useState(null)
@@ -84,7 +86,7 @@ export function useBudget(year, month) {
 
   async function add(data) {
     if (!user?.uid) throw new Error('Usuário não autenticado')
-    if (!permissions.canEditBudget) throw new Error('Seu papel não permite alterar orçamento neste workspace')
+    if (!canEditBudget) throw new Error('Seu papel não permite alterar orçamento neste workspace')
     const id = await addBudget(user.uid, { ...data, workspaceId: activeWorkspaceId }, { workspaceId: activeWorkspaceId })
     await reload()
     return id
@@ -92,14 +94,14 @@ export function useBudget(year, month) {
 
   async function update(budgetId, data) {
     if (!user?.uid) throw new Error('Usuário não autenticado')
-    if (!permissions.canEditBudget) throw new Error('Seu papel não permite alterar orçamento neste workspace')
+    if (!canEditBudget) throw new Error('Seu papel não permite alterar orçamento neste workspace')
     await updateBudget(user.uid, budgetId, { ...data, workspaceId: activeWorkspaceId }, { workspaceId: activeWorkspaceId })
     await reload()
   }
 
   async function remove(budgetId) {
     if (!user?.uid) throw new Error('Usuário não autenticado')
-    if (!permissions.canEditBudget) throw new Error('Seu papel não permite alterar orçamento neste workspace')
+    if (!canEditBudget) throw new Error('Seu papel não permite alterar orçamento neste workspace')
     await deleteBudget(user.uid, budgetId, { workspaceId: activeWorkspaceId })
     await reload()
   }
@@ -107,5 +109,16 @@ export function useBudget(year, month) {
   const totalBudgeted = budgetItems.reduce((s, b) => s + (b.plannedAmount || 0), 0)
   const totalSpent    = budgetItems.reduce((s, b) => s + (b.spent        || 0), 0)
 
-  return { budgetItems, loading, error, reload, add, update, remove, totalBudgeted, totalSpent, permissions }
+  return {
+    budgetItems,
+    loading,
+    error,
+    reload,
+    add,
+    update,
+    remove,
+    totalBudgeted,
+    totalSpent,
+    permissions: { ...permissions, canEditBudget },
+  }
 }

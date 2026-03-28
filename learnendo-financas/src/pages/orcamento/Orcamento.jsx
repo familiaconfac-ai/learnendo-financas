@@ -139,7 +139,10 @@ function buildStructuredModel(budgetItems) {
 
 export default function Orcamento() {
   const { selectedMonth, selectedYear } = useFinance()
-  const { budgetItems, loading, error, add, update, remove, permissions } = useBudget(selectedYear, selectedMonth)
+  const { budgetItems, loading, error, add, update, remove } = useBudget(selectedYear, selectedMonth, {
+    forceEdit: true,
+  })
+  const canEditBudget = true
 
   const [model, setModel] = useState({ income: [], expenses: [] })
   const [collapsed, setCollapsed] = useState({})
@@ -217,7 +220,7 @@ export default function Orcamento() {
   }
 
   async function persistIncome(index) {
-    if (!permissions?.canEditBudget) return
+    if (!canEditBudget) return
     const row = model.income[index]
     if (!row) return
 
@@ -252,7 +255,7 @@ export default function Orcamento() {
   }
 
   async function persistExpense(categoryIndex, itemIndex) {
-    if (!permissions?.canEditBudget) return
+    if (!canEditBudget) return
     const category = model.expenses[categoryIndex]
     const row = category?.items[itemIndex]
     if (!category || !row) return
@@ -289,7 +292,7 @@ export default function Orcamento() {
   }
 
   async function persistCategoryRename(categoryIndex) {
-    if (!permissions?.canEditBudget) return
+    if (!canEditBudget) return
     const category = model.expenses[categoryIndex]
     if (!category) return
     const categoryName = category.name.trim() || 'Categoria'
@@ -317,7 +320,7 @@ export default function Orcamento() {
   }
 
   function addIncome() {
-    if (!permissions?.canEditBudget) return
+    if (!canEditBudget) return
     setModel((current) => ({
       ...current,
       income: [...current.income, { id: null, name: 'Nova receita', amount: '0' }],
@@ -325,7 +328,7 @@ export default function Orcamento() {
   }
 
   async function duplicateIncome(index) {
-    if (!permissions?.canEditBudget) return
+    if (!canEditBudget) return
     const row = model.income[index]
     if (!row) return
 
@@ -353,7 +356,7 @@ export default function Orcamento() {
   }
 
   async function deleteIncome(index) {
-    if (!permissions?.canEditBudget) return
+    if (!canEditBudget) return
     const row = model.income[index]
     if (!row) return
 
@@ -375,7 +378,7 @@ export default function Orcamento() {
   }
 
   function addExpenseItem(categoryIndex) {
-    if (!permissions?.canEditBudget) return
+    if (!canEditBudget) return
     setModel((current) => {
       const expenses = current.expenses.map((category, idx) => {
         if (idx !== categoryIndex) return category
@@ -389,7 +392,7 @@ export default function Orcamento() {
   }
 
   async function duplicateExpenseItem(categoryIndex, itemIndex) {
-    if (!permissions?.canEditBudget) return
+    if (!canEditBudget) return
     const category = model.expenses[categoryIndex]
     const row = category?.items[itemIndex]
     if (!category || !row) return
@@ -418,7 +421,7 @@ export default function Orcamento() {
   }
 
   async function deleteExpenseItem(categoryIndex, itemIndex) {
-    if (!permissions?.canEditBudget) return
+    if (!canEditBudget) return
     const category = model.expenses[categoryIndex]
     const row = category?.items[itemIndex]
     if (!category || !row) return
@@ -487,7 +490,7 @@ export default function Orcamento() {
             <section className="budget-block income-block">
               <div className="budget-block-header">
                 <h3>Receitas</h3>
-                <button type="button" className="add-btn" onClick={addIncome} disabled={!permissions?.canEditBudget}>
+                <button type="button" className="add-btn" onClick={addIncome} disabled={!canEditBudget}>
                   + adicionar receita
                 </button>
               </div>
@@ -506,7 +509,7 @@ export default function Orcamento() {
                       }}
                       maxLength={60}
                       placeholder="Nome da receita"
-                      disabled={!permissions?.canEditBudget}
+                      disabled={!canEditBudget}
                     />
                     <input
                       className="amount-input"
@@ -520,7 +523,7 @@ export default function Orcamento() {
                         persistIncome(index)
                       }}
                       placeholder="0,00"
-                      disabled={!permissions?.canEditBudget}
+                      disabled={!canEditBudget}
                     />
                     <button
                       type="button"
@@ -529,7 +532,7 @@ export default function Orcamento() {
                       data-skip-blur-persist="1"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => duplicateIncome(index)}
-                      disabled={!permissions?.canEditBudget}
+                      disabled={!canEditBudget}
                     >
                       Duplicar
                     </button>
@@ -540,7 +543,7 @@ export default function Orcamento() {
                       data-skip-blur-persist="1"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => deleteIncome(index)}
-                      disabled={!permissions?.canEditBudget}
+                      disabled={!canEditBudget}
                     >
                       Excluir
                     </button>
@@ -581,7 +584,7 @@ export default function Orcamento() {
                         }}
                         maxLength={60}
                         placeholder="Nome da categoria"
-                        disabled={!permissions?.canEditBudget}
+                        disabled={!canEditBudget}
                       />
                       <strong className="category-total">{formatCurrency(categoryTotal)}</strong>
                     </div>
@@ -602,7 +605,7 @@ export default function Orcamento() {
                                 }}
                                 maxLength={60}
                                 placeholder="Nome da subcategoria"
-                                disabled={!permissions?.canEditBudget}
+                                disabled={!canEditBudget}
                               />
                               <input
                                 className="amount-input"
@@ -616,7 +619,7 @@ export default function Orcamento() {
                                   persistExpense(categoryIndex, itemIndex)
                                 }}
                                 placeholder="0,00"
-                                disabled={!permissions?.canEditBudget}
+                                disabled={!canEditBudget}
                               />
                               <button
                                 type="button"
@@ -625,7 +628,7 @@ export default function Orcamento() {
                                 data-skip-blur-persist="1"
                                 onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => duplicateExpenseItem(categoryIndex, itemIndex)}
-                                disabled={!permissions?.canEditBudget}
+                                disabled={!canEditBudget}
                               >
                                 Duplicar
                               </button>
@@ -636,7 +639,7 @@ export default function Orcamento() {
                                 data-skip-blur-persist="1"
                                 onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => deleteExpenseItem(categoryIndex, itemIndex)}
-                                disabled={!permissions?.canEditBudget}
+                                disabled={!canEditBudget}
                               >
                                 Excluir
                               </button>
@@ -647,7 +650,7 @@ export default function Orcamento() {
                           type="button"
                           className="add-inline-btn"
                           onClick={() => addExpenseItem(categoryIndex)}
-                          disabled={!permissions?.canEditBudget}
+                          disabled={!canEditBudget}
                         >
                           + adicionar
                         </button>
