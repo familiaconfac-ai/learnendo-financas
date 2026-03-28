@@ -129,6 +129,11 @@ export async function addTransaction(uid, data, options = {}) {
       origin:          normalizeOrigin(data.origin),
       status:          normalizedStatus,
       affectsBudget:   typeof data.affectsBudget === 'boolean' ? data.affectsBudget : shouldAffectBalance(data.type, data),
+      recurrenceType: data.recurrenceType || null,
+      recurringStartDate: data.recurringStartDate || null,
+      recurringEndDate: data.recurringEndDate || null,
+      totalInstallments: Number.isFinite(Number(data.totalInstallments)) ? Number(data.totalInstallments) : null,
+      currentInstallment: Number.isFinite(Number(data.currentInstallment)) ? Number(data.currentInstallment) : null,
       ...(data.recurringId          ? { recurringId:          data.recurringId } : {}),
       ...(data.recurringType        ? { recurringType:        data.recurringType } : {}),
       ...(data.recurringInstanceMonth ? { recurringInstanceMonth: data.recurringInstanceMonth } : {}),
@@ -209,6 +214,16 @@ export async function updateTransaction(uid, txId, data, options = {}) {
     }
     if (payload.receiptDetailTotal !== undefined) {
       payload.receiptDetailTotal = Number(payload.receiptDetailTotal || 0)
+    }
+    if (payload.totalInstallments !== undefined) {
+      payload.totalInstallments = Number.isFinite(Number(payload.totalInstallments))
+        ? Number(payload.totalInstallments)
+        : null
+    }
+    if (payload.currentInstallment !== undefined) {
+      payload.currentInstallment = Number.isFinite(Number(payload.currentInstallment))
+        ? Number(payload.currentInstallment)
+        : null
     }
     if (payload.affectsBudget !== undefined) {
       payload.balanceImpact = !!payload.affectsBudget
@@ -296,6 +311,11 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
         receiptDetailStatus: raw.receiptDetailStatus || null,
         receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
         receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
+        recurrenceType: raw.recurrenceType || null,
+        recurringStartDate: raw.recurringStartDate || null,
+        recurringEndDate: raw.recurringEndDate || null,
+        totalInstallments: Number.isFinite(Number(raw.totalInstallments)) ? Number(raw.totalInstallments) : null,
+        currentInstallment: Number.isFinite(Number(raw.currentInstallment)) ? Number(raw.currentInstallment) : null,
         // Normaliza Timestamps do Firestore para strings ISO
         createdAt: raw.createdAt?.toDate?.().toISOString() ?? raw.createdAt ?? null,
         updatedAt: raw.updatedAt?.toDate?.().toISOString() ?? raw.updatedAt ?? null,
@@ -326,6 +346,11 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
           receiptDetailStatus: raw.receiptDetailStatus || null,
           receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
           receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
+          recurrenceType: raw.recurrenceType || null,
+          recurringStartDate: raw.recurringStartDate || null,
+          recurringEndDate: raw.recurringEndDate || null,
+          totalInstallments: Number.isFinite(Number(raw.totalInstallments)) ? Number(raw.totalInstallments) : null,
+          currentInstallment: Number.isFinite(Number(raw.currentInstallment)) ? Number(raw.currentInstallment) : null,
           createdAt: raw.createdAt?.toDate?.().toISOString() ?? raw.createdAt ?? null,
           updatedAt: raw.updatedAt?.toDate?.().toISOString() ?? raw.updatedAt ?? null,
         }

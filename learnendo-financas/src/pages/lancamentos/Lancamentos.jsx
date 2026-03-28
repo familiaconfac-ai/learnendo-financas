@@ -148,6 +148,12 @@ function isInvoicePaymentNature(formState) {
   return formState.transactionNatureId === 'nature_invoice_payment'
 }
 
+function getTodayLocalISO() {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
+
 export default function Lancamentos({ view = 'confirmed' }) {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -210,6 +216,16 @@ export default function Lancamentos({ view = 'confirmed' }) {
   // ── Event handlers ────────────────────────────────────────────────────────
   function handleChange(e) {
     const { name, value } = e.target
+
+    if (name === 'type') {
+      setForm((f) => ({
+        ...f,
+        type: value,
+        paymentMethod: value === 'income' ? '' : f.paymentMethod,
+        cardId: value === 'income' ? '' : f.cardId,
+      }))
+      return
+    }
 
     if (name === 'transactionNatureId') {
       const selected = transactionNatures.find((nature) => nature.id === value)
@@ -385,9 +401,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
       recurring:   tx.recurring   || !!tx.recurringId,
       recurrenceType: tx.recurringType || 'indefinite',
       recurringStartDate: tx.date || '',
-      recurringEndDate: '',
-      totalInstallments: '',
-      currentInstallment: '',
+      recurringEndDate: tx.recurringEndDate || '',
+      totalInstallments: tx.totalInstallments ? String(tx.totalInstallments) : '12',
+      currentInstallment: tx.currentInstallment ? String(tx.currentInstallment) : (tx.installmentNumber ? String(tx.installmentNumber) : '1'),
       transactionNatureId: tx.transactionNatureId || '',
       transactionNatureLabel: tx.transactionNatureLabel || '',
       contactId: tx.contactId || '',
@@ -516,6 +532,11 @@ export default function Lancamentos({ view = 'confirmed' }) {
       subcategoryName: invoicePayment || isInternal ? null : resolvedSubcategoryName,
       notes:       form.notes || '',
       recurring:   !!form.recurring,
+      recurrenceType: form.recurring ? form.recurrenceType : null,
+      recurringStartDate: form.recurring ? (form.recurringStartDate || form.date) : null,
+      recurringEndDate: form.recurring && form.recurrenceType === 'fixed' ? (form.recurringEndDate || null) : null,
+      totalInstallments: form.recurring && form.recurrenceType === 'fixed' ? Number(form.totalInstallments || 0) : null,
+      currentInstallment: form.recurring && form.recurrenceType === 'fixed' ? Number(form.currentInstallment || 0) : null,
       transactionNatureId: form.transactionNatureId || null,
       transactionNatureLabel: (editingNatureLabel || form.transactionNatureLabel || '').trim() || null,
       contactId: form.contactId || null,
@@ -602,6 +623,10 @@ export default function Lancamentos({ view = 'confirmed' }) {
           await update(txId, {
             recurringId: recurrence.id,
             recurringType: recurrenceType,
+            recurringStartDate,
+            recurringEndDate: recurrenceType === 'fixed' ? (form.recurringEndDate || null) : null,
+            totalInstallments,
+            currentInstallment,
             recurringInstanceMonth: String(payload.date).slice(0, 7),
             installmentNumber: recurrenceType === 'fixed' ? currentInstallment : null,
           })
@@ -863,15 +888,17 @@ export default function Lancamentos({ view = 'confirmed' }) {
               <option value="transfer_internal">Transferência entre contas</option>
             </select>
           </div>
-          <div className="form-group">
-            <label>Forma de pagamento</label>
-            <select name="paymentMethod" value={form.paymentMethod} onChange={handleChange}>
-              <option value="">Selecione…</option>
-              {TRANSACTION_PAYMENT_METHODS.map((method) => (
-                <option key={method.id} value={method.id}>{method.label}</option>
-              ))}
-            </select>
-          </div>
+          {form.type !== 'income' && (
+            <div className="form-group">
+              <label>Forma de pagamento</label>
+              <select name="paymentMethod" value={form.paymentMethod} onChange={handleChange}>
+                <option value="">Selecione…</option>
+                {TRANSACTION_PAYMENT_METHODS.map((method) => (
+                  <option key={method.id} value={method.id}>{method.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="form-group">
             <label>Descrição</label>
             <input name="description" type="text" value={form.description} onChange={handleChange}
@@ -941,21 +968,22 @@ export default function Lancamentos({ view = 'confirmed' }) {
               </select>
             </div>
           )}
-          <div className="form-group">
-            <label>Natureza da movimentação</label>
-            <select
-              name="transactionNatureId"
-              value={form.transactionNatureId}
-              onChange={handleChange}
-              required
-            >
-              <option value="">Selecione…</option>
-              {transactionNatures.map((nature) => (
-                <option key={nature.id} value={nature.id}>{nature.label}</option>
-              ))}
-            </select>
-          </div>
-          {isPixOrTransferContext(form) && pixTransferNatureOptions.length > 0 && (
+          {transactionNatures.length > 0 && (
+            <div className="form-group">
+              <label>Natureza da movimentação</label>
+              <select
+                name="transactionNatureId"
+                value={form.transactionNatureId}
+                onChange={handleChange}
+              >
+                <option value="">Selecione…</option>
+                {transactionNatures.map((nature) => (
+                  <option key={nature.id} value={nature.id}>{nature.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {transactionNatures.length > 0 && isPixOrTransferContext(form) && pixTransferNatureOptions.length > 0 && (
             <div className="form-group">
               <label>Seleção rápida para Pix/transferência</label>
               <p className="form-help-text">Escolha a intenção do Pix/transferência para não depender apenas da descrição.</p>
@@ -973,19 +1001,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
               </div>
             </div>
           )}
-          {form.transactionNatureId && (
-            <div className="form-group">
-              <label>Personalizar termo da natureza</label>
-              <input
-                type="text"
-                value={editingNatureLabel}
-                onChange={(e) => setEditingNatureLabel(e.target.value)}
-                onBlur={handleNatureLabelBlur}
-                placeholder="Renomeie a natureza para este workspace"
-              />
-              <p className="form-help-text">Ao sair do campo, o novo termo é salvo automaticamente no workspace.</p>
-            </div>
-          )}
+          {/* Personalização de rótulo ocultada temporariamente para reduzir complexidade no formulário */}
           {DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId) && (
             <div className="form-group">
               <label>Dívida vinculada (opcional)</label>
@@ -1121,7 +1137,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
 }
 
 function defaultForm() {
-  const today = new Date().toISOString().split('T')[0]
+  const today = getTodayLocalISO()
   return {
     type: 'expense', description: '', amount: '', date: today,
     accountId: '', toAccountId: '', categoryId: '', notes: '', recurring: false,
