@@ -675,6 +675,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const originMeta = ORIGIN_META[t.origin] ?? null
     const normalizedTxStatus = normalizeStatus(t.status)
     const statusMeta = STATUS_META[normalizedTxStatus] ?? { label: normalizedTxStatus, cls: '' }
+    const canQuickConfirm = isPendingView && normalizedTxStatus === 'pending'
     const isCredit   = t.type === 'income'
     const catName    = categories.find((c) => c.id === t.categoryId)?.name ?? null
     const subcategoryLabel = t.subcategoryName || categories.find((c) => c.id === t.categoryId)?.subcategories?.find((s) => s.id === t.subcategoryId)?.name
@@ -703,17 +704,14 @@ export default function Lancamentos({ view = 'confirmed' }) {
         </span>
         <div className="tx-actions">
           <button className="tx-action-btn" onClick={() => openEditModal(t)} title="Editar">✏️</button>
-          {isPendingView ? (
-            <button
-              className="tx-action-btn tx-action-confirm"
-              onClick={() => handleQuickConfirm(t)}
-              title="Confirmar"
-            >
-              ✅
-            </button>
-          ) : (
-            <button className="tx-action-btn tx-action-del" onClick={() => handleDelete(t)} title="Excluir">🗑️</button>
-          )}
+          <button
+            className={`tx-action-btn tx-action-confirm${canQuickConfirm ? '' : ' is-confirmed'}`}
+            onClick={() => canQuickConfirm && handleQuickConfirm(t)}
+            title={canQuickConfirm ? 'Confirmar' : 'Confirmado'}
+            disabled={!canQuickConfirm}
+          >
+            ✅
+          </button>
         </div>
       </div>
     )
