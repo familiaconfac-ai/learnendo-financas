@@ -1,0 +1,102 @@
+.perfil-page { display: flex; flex-direction: column; }
+
+.perfil-hero {
+  background: linear-gradient(160deg, var(--color-primary) 0%, #1e3a8a 100%);
+  padding: 2rem 1rem 2.5rem;
+  text-align: center;
+  color: #fff;
+}
+.perfil-avatar {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+  margin: 0 auto 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;          /* clips photo to circle */
+  border: 3px solid rgba(255,255,255,0.4);
+}
+/* Photo mode */
+.perfil-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+/* Initial/fallback mode */
+.perfil-avatar-initial {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+.perfil-name { font-size: 1.2rem; font-weight: 700; margin: 0 0 0.2rem; }
+.perfil-email { font-size: 0.85rem; opacity: 0.8; margin: 0; }
+
+.perfil-content {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
+  margin-top: -1rem;
+}
+
+.perfil-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.88rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+.perfil-row:last-child { border-bottom: none; }
+.perfil-row span:first-child { color: var(--color-text-muted); }
+
+.perfil-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.perfil-feedback {
+  border-radius: var(--radius);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.perfil-feedback--ok {
+  background: #ecfdf3;
+  color: #166534;
+  border: 1px solid #86efac;
+}
+
+.perfil-feedback--error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.workspace-create-row {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.workspace-create-btn {
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 700;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+}
+
+.workspace-create-btn:hover {
+  background: var(--color-primary-dark);
+}

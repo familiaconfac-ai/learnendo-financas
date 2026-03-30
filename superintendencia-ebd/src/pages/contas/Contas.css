@@ -1,0 +1,172 @@
+.contas-page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - var(--header-height) - var(--bottom-nav-height));
+}
+
+/* Tabs */
+.tabs-row {
+  display: flex;
+  background: #fff;
+  border-bottom: 1px solid var(--color-border);
+}
+.tab-btn {
+  flex: 1;
+  padding: 0.75rem;
+  border: none;
+  background: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.tab-btn.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.contas-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* Account card */
+.account-card { padding: 1rem; }
+.acc-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.acc-del-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 1rem; opacity: 0.45; padding: 0.2rem; margin-left: auto;
+  transition: opacity 0.15s;
+}
+.acc-del-btn:hover { opacity: 1; }
+
+.contas-empty { text-align: center; padding: 2rem 1rem; color: var(--color-text-muted); font-size: 0.9rem; }
+.contas-empty-hint { font-size: 0.8rem; margin-top: 0.25rem; opacity: 0.7; }
+
+.launch-form { display: flex; flex-direction: column; gap: 0.75rem; }
+.form-group { display: flex; flex-direction: column; gap: 0.3rem; }
+.form-group label { font-size: 0.82rem; font-weight: 500; color: var(--color-text-muted); }
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 0.5rem 0.75rem;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  background: #fff;
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus { outline: none; border-color: var(--color-primary); }
+.acc-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  color: #fff;
+  flex-shrink: 0;
+}
+.acc-info { flex: 1; }
+.acc-name { display: block; font-weight: 600; font-size: 0.95rem; }
+.acc-bank { display: block; font-size: 0.78rem; color: var(--color-text-muted); }
+
+.acc-balance { display: flex; justify-content: space-between; align-items: center; }
+.acc-balance-label { font-size: 0.78rem; color: var(--color-text-muted); }
+.acc-balance-value { font-size: 1.25rem; font-weight: 700; }
+.acc-balance-value.positive { color: var(--color-success); }
+.acc-balance-value.negative { color: var(--color-danger); }
+
+.acc-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-top: 0.4rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+}
+.acc-diff.pos { color: var(--color-success); }
+.acc-diff.neg { color: var(--color-danger); }
+
+/* Credit card */
+.card-card { padding: 1rem; }
+.cc-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+.cc-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  color: #fff;
+  flex-shrink: 0;
+}
+.cc-info { flex: 1; }
+.cc-name { display: block; font-weight: 600; font-size: 0.95rem; }
+.cc-flag { display: block; font-size: 0.72rem; color: var(--color-text-muted); }
+
+.cc-limit-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.3rem;
+}
+.cc-bar-track {
+  height: 8px;
+  background: var(--color-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.cc-bar-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 999px;
+  transition: width 0.4s;
+}
+.cc-bar-fill.warn { background: var(--color-danger); }
+.cc-bar-label { font-size: 0.72rem; color: var(--color-text-muted); margin-top: 0.25rem; }
+
+.cc-dates {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--color-border);
+}
+.cc-date-item { text-align: center; }
+.cc-date-label { display: block; font-size: 0.7rem; color: var(--color-text-muted); }
+.cc-date-value { display: block; font-size: 0.88rem; font-weight: 600; }
+.cc-date-value.invoice { color: var(--color-danger); }
+
+/* Total */
+.total-card { padding: 0.85rem 1rem; }
+.total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.92rem;
+}
+.total-row strong { font-size: 1rem; }
+.negative { color: var(--color-danger); }

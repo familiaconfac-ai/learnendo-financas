@@ -1,0 +1,83 @@
+.card {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+}
+.card--clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.card--clickable:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+.card--highlighted {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(26, 86, 219, 0.12);
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+.card-subtitle {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin: 0.15rem 0 0;
+}
+.card-action {
+  flex-shrink: 0;
+}
+
+/* Summary cards */
+.summary-card {
+  border-radius: var(--radius-lg);
+  padding: 0.9rem 1rem;
+  color: #ffffff;
+  min-width: 0;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.22);
+}
+.summary-card--primary  { background: var(--color-primary); }
+.summary-card--success  { background: #15803d; } /* green-700 — mais escuro para melhor contraste */
+.summary-card--danger   { background: #b91c1c; } /* red-700 — mais escuro para texto branco forte */
+.summary-card--warning  { background: #b45309; } /* amber-700 — mais escuro */
+.summary-card--neutral  { background: #4b5563; }
+.summary-card--purple   { background: #7c3aed; }
+
+.summary-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.summary-card-icon { font-size: 1.4rem; }
+.summary-trend { font-size: 0.7rem; font-weight: 700; }
+.summary-trend.positive { color: #a3f0c8; }
+.summary-trend.negative { color: #fda0a0; }
+
+.summary-card-value {
+  font-size: 1.25rem;
+  font-weight: 800;
+  margin-bottom: 0.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #ffffff;
+}
+.summary-card-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  opacity: 0.92;
+  color: #ffffff;
+}

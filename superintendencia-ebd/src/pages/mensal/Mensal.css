@@ -1,0 +1,31 @@
+.mensal-page { display: flex; flex-direction: column; }
+.mensal-content { padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; max-width: 640px; margin: 0 auto; width: 100%; }
+
+.summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+
+.budget-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+}
+.budget-table th {
+  text-align: left;
+  padding: 0.4rem 0.3rem;
+  color: var(--color-text-muted);
+  border-bottom: 2px solid var(--color-border);
+  font-weight: 600;
+}
+.budget-table td {
+  padding: 0.5rem 0.3rem;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+}
+.budget-table tfoot td {
+  border-top: 2px solid var(--color-border);
+  border-bottom: none;
+  padding-top: 0.6rem;
+}
+.budget-table tr:last-child td { border-bottom: none; }
+.text-right { text-align: right; }
+.text-success { color: var(--color-success); }
+.text-danger  { color: var(--color-danger); }

@@ -1,0 +1,87 @@
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  /* Cores */
+  --color-primary:       #1a56db;
+  --color-primary-dark:  #1544b8;
+  --color-success:       #16a34a;
+  --color-danger:        #dc2626;
+  --color-warning:       #d97706;
+
+  --color-text:          #111827;
+  --color-text-muted:    #6b7280;
+
+  --color-bg:            #f3f4f6;
+  --color-bg-subtle:     #f9fafb;
+  --color-border:        #e5e7eb;
+
+  /* Layout */
+  --header-height:       52px;
+  --bottom-nav-height:   62px;
+
+  /* Espaçamentos */
+  --radius:              8px;
+  --radius-lg:           12px;
+
+  /* Sombras */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.12);
+}
+
+/* ── Reset mínimo ──────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+  overscroll-behavior: none;
+}
+
+#root {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Tipografia base ───────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+a { color: var(--color-primary); }
+
+/* ── Inputs globais (referenciados por .form-group em Auth.css + modais) ───── */
+input, select, textarea {
+  font-family: inherit;
+  font-size: 1rem;
+}
+input[type='checkbox'] { width: auto; }
+
+/* ── Scrollbar fina ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 4px; height: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: var(--color-border); border-radius: 2px; }
+
+/* ── Utilitários rápidos ───────────────────────────────────────────────────── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+}

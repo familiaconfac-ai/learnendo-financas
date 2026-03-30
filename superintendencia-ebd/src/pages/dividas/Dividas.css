@@ -1,0 +1,171 @@
+.dividas-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  padding-bottom: 6rem;
+}
+
+.dividas-summary-card {
+  border: 1px solid #dbeafe;
+  background: #f8fbff;
+}
+
+.dividas-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.summary-label {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.2rem;
+}
+
+.summary-paid {
+  color: var(--color-success);
+}
+
+.summary-remaining {
+  color: var(--color-danger);
+}
+
+.dividas-empty {
+  text-align: center;
+}
+
+.empty-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.84rem;
+}
+
+.dividas-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.debt-card {
+  border: 1px solid var(--color-border);
+}
+
+.debt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.debt-name {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.debt-type {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  text-transform: capitalize;
+}
+
+.debt-badge {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: #e5e7eb;
+  color: #374151;
+  font-weight: 700;
+}
+
+.debt-values {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.debt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.84rem;
+}
+
+.debt-history {
+  margin-top: 0.55rem;
+}
+
+.history-title {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.history-empty {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+.history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--color-text);
+}
+
+.fab {
+  position: fixed;
+  right: 1rem;
+  bottom: calc(var(--bottom-nav-height) + 1rem);
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 1.75rem;
+  line-height: 1;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(26, 86, 219, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s, box-shadow 0.15s;
+  z-index: 50;
+}
+
+.fab:hover {
+  transform: scale(1.07);
+  box-shadow: 0 6px 20px rgba(26, 86, 219, 0.5);
+}
+
+@media (max-width: 700px) {
+  .dividas-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .history-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
