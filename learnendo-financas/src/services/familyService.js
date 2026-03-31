@@ -79,23 +79,31 @@ export async function createFamily(uid, { name, plan = 'family' }) {
 }
 
 export async function fetchUserFamily(uid) {
-  const membershipSnap = await getDoc(userFamilyDoc(uid))
-  if (!membershipSnap.exists()) return null
+  try {
+    const membershipSnap = await getDoc(userFamilyDoc(uid))
+    if (!membershipSnap.exists()) return null
 
-  const familyId = membershipSnap.data()?.familyId
-  if (!familyId) return null
+    const familyId = membershipSnap.data()?.familyId
+    if (!familyId) return null
 
-  const [familySnap, memberSnap] = await Promise.all([
-    getDoc(familyDoc(familyId)),
-    getDoc(memberDoc(familyId, uid)),
-  ])
+    const [familySnap, memberSnap] = await Promise.all([
+      getDoc(familyDoc(familyId)),
+      getDoc(memberDoc(familyId, uid)),
+    ])
 
-  if (!familySnap.exists() || !memberSnap.exists()) {
-    await deleteDoc(userFamilyDoc(uid))
-    return null
+    if (!familySnap.exists() || !memberSnap.exists()) {
+      await deleteDoc(userFamilyDoc(uid))
+      return null
+    }
+
+    return { id: familySnap.id, ...familySnap.data() }
+  } catch (error) {
+    if (error?.code === 'permission-denied') {
+      console.warn('[FamilyService] stale or unauthorized family link for uid:', uid)
+      return null
+    }
+    throw error
   }
-
-  return { id: familySnap.id, ...familySnap.data() }
 }
 
 export async function deleteFamily(_actorUid, familyId) {
