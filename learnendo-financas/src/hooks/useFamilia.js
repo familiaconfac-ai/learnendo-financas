@@ -25,6 +25,7 @@ import { useAuth } from '../context/AuthContext'
 import { IS_MOCK_MODE } from '../firebase/mockMode'
 import {
   fetchUserFamily,
+  fetchAllUserFamilies,
   createFamily,
   updateFamily,
   deleteFamily as deleteFamilyDoc,
@@ -55,6 +56,7 @@ function normaliseRole(role) {
 export function useFamilia() {
   const { user } = useAuth()
 
+  const [families,    setFamilies]    = useState([])
   const [family,      setFamily]      = useState(null)
   const [members,     setMembers]     = useState([])
   const [invitations, setInvitations] = useState([])
@@ -77,6 +79,7 @@ export function useFamilia() {
           id:   m.uid,                    // use uid as id in mock
           role: normaliseRole(m.role),
         }))
+        setFamilies([MOCK_FAMILY])
         setFamily(MOCK_FAMILY)
         setMembers(normMembers)
         setInvitations(MOCK_FAMILY_INVITATIONS)
@@ -84,13 +87,17 @@ export function useFamilia() {
         return
       }
 
-      const fam = await fetchUserFamily(user.uid)
+      // Busca todas as famílias do usuário (owner ou membro)
+      const fams = await fetchAllUserFamilies(user.uid)
+      setFamilies(fams)
+      // Seleciona a primeira família (ou nenhuma)
+      const fam = fams[0] || null
       setFamily(fam)
 
       if (fam?.id) {
         const [rawMembers, rawInvites] = await Promise.all([
-          fetchMembers(user.uid, fam.id),
-          fetchInvitations(user.uid, fam.id),
+          fetchMembers(fam._owner ? user.uid : fam.ownerUid, fam.id),
+          fetchInvitations(fam._owner ? user.uid : fam.ownerUid, fam.id),
         ])
         setMembers(rawMembers.map((m) => ({ ...m, role: normaliseRole(m.role) })))
         setInvitations(rawInvites)
@@ -209,6 +216,7 @@ export function useFamilia() {
   }
 
   return {
+    families,
     family,
     members,
     invitations,
@@ -223,5 +231,6 @@ export function useFamilia() {
     removeMember: removeMemberById,
     changeRole,
     inviteMember,
+    setFamily, // permite selecionar família ativa se necessário
   }
 }

@@ -25,7 +25,52 @@ import {
   query,
   orderBy,
   serverTimestamp,
+  where,
+  getFirestore,
 } from 'firebase/firestore'
+/**
+ * Busca todas as famílias onde o usuário é owner OU membro.
+ * Retorna [{ id, ...data }]
+ */
+export async function fetchAllUserFamilies(uid) {
+  const db = getFirestore();
+  // 1. Famílias criadas pelo usuário (owner)
+  const ownSnap = await getDocs(collection(db, 'users', uid, 'families'));
+  const ownFamilies = ownSnap.docs.map((d) => ({ id: d.id, ...d.data(), _owner: true }));
+
+  // 2. Famílias onde o usuário é membro (em qualquer users/*/families/*/members)
+  // Busca global por membros com uid == uid
+  // ATENÇÃO: Firestore não permite query cross-collection sem index, então usamos collectionGroup
+  const membersSnap = await getDocs(query(
+    collection(db, 'users').firestore.collectionGroup('members'),
+    where('uid', '==', uid)
+  ));
+  const memberFamilies = [];
+  for (const docSnap of membersSnap.docs) {
+    // Caminho: users/{ownerUid}/families/{familyId}/members/{memberId}
+    const pathParts = docSnap.ref.path.split('/');
+    const ownerUid = pathParts[1];
+    const familyId = pathParts[3];
+    // Buscar o documento da família
+    const famDoc = await getDocs(collection(db, 'users', ownerUid, 'families'));
+    const fam = famDoc.docs.find((d) => d.id === familyId);
+    if (fam) {
+      memberFamilies.push({ id: fam.id, ...fam.data(), _owner: ownerUid === uid });
+    }
+  }
+
+  // Unir e remover duplicatas (caso o usuário seja owner e membro)
+  const all = [...ownFamilies, ...memberFamilies];
+  const unique = [];
+  const seen = new Set();
+  for (const fam of all) {
+    if (!seen.has(fam.id)) {
+      unique.push(fam);
+      seen.add(fam.id);
+    }
+  }
+  return unique;
+}
 import { db } from '../firebase/config'
 
 // ── Path helpers ──────────────────────────────────────────────────────────────

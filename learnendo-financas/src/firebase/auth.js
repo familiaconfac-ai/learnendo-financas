@@ -49,8 +49,22 @@ export async function loginUser(email, password) {
 export async function logoutUser() {
   if (IS_MOCK_MODE) {
     dispatchMock('lf:mock:logout')
+    // Limpa contexto local
+    try {
+      localStorage.removeItem('activeWorkspaceId');
+      localStorage.removeItem('activeFamilyId');
+      sessionStorage.removeItem('activeWorkspaceId');
+      sessionStorage.removeItem('activeFamilyId');
+    } catch {}
     return
   }
+  // Limpa contexto local
+  try {
+    localStorage.removeItem('activeWorkspaceId');
+    localStorage.removeItem('activeFamilyId');
+    sessionStorage.removeItem('activeWorkspaceId');
+    sessionStorage.removeItem('activeFamilyId');
+  } catch {}
   await signOut(auth)
 }
 
