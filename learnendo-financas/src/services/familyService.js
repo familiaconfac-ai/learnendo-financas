@@ -27,6 +27,7 @@ import {
   serverTimestamp,
   where,
   getFirestore,
+  collectionGroup,
 } from 'firebase/firestore'
 /**
  * Busca todas as famílias onde o usuário é owner OU membro.
@@ -39,10 +40,9 @@ export async function fetchAllUserFamilies(uid) {
   const ownFamilies = ownSnap.docs.map((d) => ({ id: d.id, ...d.data(), _owner: true }));
 
   // 2. Famílias onde o usuário é membro (em qualquer users/*/families/*/members)
-  // Busca global por membros com uid == uid
-  // ATENÇÃO: Firestore não permite query cross-collection sem index, então usamos collectionGroup
+  // Busca global por membros com uid == uid usando collectionGroup (API modular)
   const membersSnap = await getDocs(query(
-    collection(db, 'users').firestore.collectionGroup('members'),
+    collectionGroup(db, 'members'),
     where('uid', '==', uid)
   ));
   const memberFamilies = [];

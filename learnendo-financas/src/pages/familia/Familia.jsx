@@ -306,6 +306,7 @@ export default function Familia() {
 
   // ── Loading / error / no-family states ───────────────────────────────────
 
+  // Renderização condicional robusta
   if (loading) {
     return (
       <div className="familia-page">
@@ -328,6 +329,7 @@ export default function Familia() {
     )
   }
 
+  // Só renderiza dados se family válido
   if (!family) {
     return (
       <div className="familia-page">

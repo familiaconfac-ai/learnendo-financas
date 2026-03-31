@@ -54,6 +54,7 @@ function normaliseRole(role) {
 }
 
 export function useFamilia() {
+
   const { user } = useAuth()
 
   const [families,    setFamilies]    = useState([])
@@ -62,6 +63,16 @@ export function useFamilia() {
   const [invitations, setInvitations] = useState([])
   const [loading,     setLoading]     = useState(true)
   const [error,       setError]       = useState(null)
+
+  // Reset estado ao trocar de usuário para evitar mostrar dados antigos
+  useEffect(() => {
+    setFamilies([])
+    setFamily(null)
+    setMembers([])
+    setInvitations([])
+    setLoading(!!user?.uid)
+    setError(null)
+  }, [user?.uid])
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
