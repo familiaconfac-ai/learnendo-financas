@@ -17,6 +17,51 @@
 }
 .type-filter::-webkit-scrollbar { display: none; }
 
+.import-highlight {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 1rem 1rem 0.9rem;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border-bottom: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.import-highlight-btn {
+  min-width: min(100%, 220px);
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #1a56db 0%, #2563eb 100%);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 800;
+  padding: 0.9rem 1.1rem;
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.import-highlight-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.28);
+}
+
+.import-highlight-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.import-highlight-subtitle {
+  margin: 0;
+  max-width: 34rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+}
+
 .type-chip {
   flex-shrink: 0;
   padding: 0.3rem 0.8rem;

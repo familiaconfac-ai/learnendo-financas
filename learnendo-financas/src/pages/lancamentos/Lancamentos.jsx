@@ -765,45 +765,63 @@ export default function Lancamentos({ view = 'confirmed' }) {
   // ── JSX ───────────────────────────────────────────────────────────────────
   return (
     <div className="lancamentos-page">
-      <MonthSelector />
+<MonthSelector />
 
-      {/* Type chip navigation — primary filter */}
-      <div className="type-filter">
-        {TYPE_CHIPS.map((chip) => (
+      {isPendingView ? (
+        <div className="import-highlight">
           <button
-            key={chip.value}
-            className={`type-chip${activeType === chip.value ? ' active' : ''}`}
-            onClick={() => setActiveType(chip.value)}
+            className="import-highlight-btn"
+            onClick={() => navigate('/importacao')}
+            title="Importar extrato ou fatura"
           >
-            {chip.label}
+            📥 Importar
           </button>
-        ))}
-        <button
-          className="filter-toggle-btn import-btn"
-          onClick={() => navigate('/importacao')}
-          title="Importar extrato"
-        >
-          📥 Importar
-        </button>
-      </div>
+          <p className="import-highlight-title">Importe movimentações para revisar e lançar mais rápido</p>
+          <p className="import-highlight-subtitle">
+            Você pode importar extrato bancário, fatura do cartão e arquivos com transações para categorizar automaticamente.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Type chip navigation — primary filter */}
+          <div className="type-filter">
+            {TYPE_CHIPS.map((chip) => (
+              <button
+                key={chip.value}
+                className={`type-chip${activeType === chip.value ? ' active' : ''}`}
+                onClick={() => setActiveType(chip.value)}
+              >
+                {chip.label}
+              </button>
+            ))}
+            <button
+              className="filter-toggle-btn import-btn"
+              onClick={() => navigate('/importacao')}
+              title="Importar extrato"
+            >
+              📥 Importar
+            </button>
+          </div>
 
-      <div className="advanced-filters">
-        <select
-          value={filterOrigin}
-          onChange={(e) => setFilterOrigin(e.target.value)}
-          className="filter-select"
-        >
-          {ORIGIN_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-        {filterOrigin && (
-          <button
-            className="clear-filters-btn"
-            onClick={() => setFilterOrigin('')}
-          >
-            Limpar
-          </button>
-        )}
-      </div>
+          <div className="advanced-filters">
+            <select
+              value={filterOrigin}
+              onChange={(e) => setFilterOrigin(e.target.value)}
+              className="filter-select"
+            >
+              {ORIGIN_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            {filterOrigin && (
+              <button
+                className="clear-filters-btn"
+                onClick={() => setFilterOrigin('')}
+              >
+                Limpar
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Review banner */}
       {!isPendingView && pendingCount > 0 && (
@@ -830,14 +848,16 @@ export default function Lancamentos({ view = 'confirmed' }) {
         <div className="transaction-list">
           {activeType === '' ? (
             // ─ "Tudo" view: sections grouped by type ────────────────────────
-            transactions.length === 0 ? (
+transactions.length === 0 ? (
               <div className="empty-state">
-                <img src="/logo.jpg" alt="Learnendo Finanças" className="empty-logo" />
+                {!isPendingView && (
+                  <img src="/logo.jpg" alt="Learnendo Finanças" className="empty-logo" />
+                )}
                 <p className="empty-title">
                   {isPendingView ? 'Nenhuma pendência encontrada' : 'Nenhum lançamento confirmado encontrado'}
                 </p>
                 <p className="empty-hint">
-                  {isPendingView ? 'Importe um extrato para revisar novos lançamentos' : 'Toque em ➕ para adicionar um lançamento'}
+                  {isPendingView ? 'Use o botão Importar acima para trazer extratos e faturas para revisão automática.' : 'Toque em ➕ para adicionar um lançamento'}
                 </p>
               </div>
             ) : (
