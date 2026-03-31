@@ -77,8 +77,23 @@ export async function createFamily(uid, { name, plan = 'family' }) {
 /**
  * Busca a família do usuário autenticado (por vínculo userFamilies).
  */
+
+/**
+ * Busca a família do usuário autenticado (por vínculo userFamilies/{uid}).
+ * Retorna o documento da família ou null se não houver vínculo.
+ */
 export async function fetchUserFamily(uid) {
-  return fetchUserFamilyByMembership(uid);
+  const db = getFirestore();
+  // Busca vínculo explícito userFamilies/{uid}
+  const userFamSnap = await getDocs(query(collection(db, 'userFamilies'), where('__name__', '==', uid)));
+  if (userFamSnap.empty) return null;
+  const userFam = userFamSnap.docs[0].data();
+  if (!userFam.familyId) return null;
+  // Busca documento da família
+  const famDoc = await getDocs(query(collection(db, 'families'), where('__name__', '==', userFam.familyId)));
+  if (famDoc.empty) return null;
+  const fam = famDoc.docs[0];
+  return { id: fam.id, ...fam.data() };
 }
 
 /**
