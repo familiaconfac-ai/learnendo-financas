@@ -1,4 +1,14 @@
 /**
+ * Atualiza dados da família global.
+ */
+export async function updateFamily(uid, familyId, data) {
+  const db = getFirestore();
+  await updateDoc(doc(db, 'families', familyId), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  });
+}
+/**
  * familyService.js
  *
  * Firestore CRUD for the Family feature.
@@ -28,101 +38,47 @@ import {
   where,
   getFirestore,
   collectionGroup,
+  setDoc,
 } from 'firebase/firestore'
 /**
  * Busca todas as famílias onde o usuário é owner OU membro.
  * Retorna [{ id, ...data }]
  */
-export async function fetchAllUserFamilies(uid) {
-  const db = getFirestore();
-  // 1. Famílias criadas pelo usuário (owner)
-  const ownSnap = await getDocs(collection(db, 'users', uid, 'families'));
-  const ownFamilies = ownSnap.docs.map((d) => ({ id: d.id, ...d.data(), _owner: true }));
+// (fetchAllUserFamilies removida: isolamento real por vínculo userFamilies)
 
-  // 2. Famílias onde o usuário é membro (em qualquer users/*/families/*/members)
-  // Busca global por membros com uid == uid usando collectionGroup (API modular)
-  const membersSnap = await getDocs(query(
-    collectionGroup(db, 'members'),
-    where('uid', '==', uid)
-  ));
-  const memberFamilies = [];
-  for (const docSnap of membersSnap.docs) {
-    // Caminho: users/{ownerUid}/families/{familyId}/members/{memberId}
-    const pathParts = docSnap.ref.path.split('/');
-    const ownerUid = pathParts[1];
-    const familyId = pathParts[3];
-    // Buscar o documento da família
-    const famDoc = await getDocs(collection(db, 'users', ownerUid, 'families'));
-    const fam = famDoc.docs.find((d) => d.id === familyId);
-    if (fam) {
-      memberFamilies.push({ id: fam.id, ...fam.data(), _owner: ownerUid === uid });
-    }
-  }
-
-  // Unir e remover duplicatas (caso o usuário seja owner e membro)
-  const all = [...ownFamilies, ...memberFamilies];
-  const unique = [];
-  const seen = new Set();
-  for (const fam of all) {
-    if (!seen.has(fam.id)) {
-      unique.push(fam);
-      seen.add(fam.id);
-    }
-  }
-  return unique;
-}
-import { db } from '../firebase/config'
-
-// ── Path helpers ──────────────────────────────────────────────────────────────
-
-function familyCol(uid)                     { return collection(db, 'users', uid, 'families') }
-function familyDoc(uid, fid)               { return doc(db, 'users', uid, 'families', fid) }
-function memberCol(uid, fid)               { return collection(db, 'users', uid, 'families', fid, 'members') }
-function memberDoc(uid, fid, mid)          { return doc(db, 'users', uid, 'families', fid, 'members', mid) }
-function inviteCol(uid, fid)               { return collection(db, 'users', uid, 'families', fid, 'invitations') }
-function inviteDoc(uid, fid, iid)          { return doc(db, 'users', uid, 'families', fid, 'invitations', iid) }
-
-// ── Family CRUD ───────────────────────────────────────────────────────────────
 
 /**
- * Returns the first family document for the user, or null if none exists.
- */
-export async function fetchUserFamily(uid) {
-  const snap = await getDocs(familyCol(uid))
-  if (snap.empty) return null
-  const d = snap.docs[0]
-  return { id: d.id, ...d.data() }
-}
-
-/**
- * Creates a new family for the user.
+ * Cria uma nova família global e vincula o criador como membro.
  * @param {string} uid
  * @param {{ name: string, plan?: string }} data
  * @returns {string} new family ID
  */
 export async function createFamily(uid, { name, plan = 'family' }) {
-  console.log('[FamilyService] ➕ Creating family for', uid)
-  const ref = await addDoc(familyCol(uid), {
+  const db = getFirestore();
+  // Cria família global
+  const famRef = await addDoc(collection(db, 'families'), {
     name,
     plan,
-    ownerUid:  uid,
+    ownerUid: uid,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  })
-  console.log('[FamilyService] ✅ Family created:', ref.id)
-  return ref.id
+  });
+  // Cria subcoleção de membros
+  await setDoc(doc(db, 'families', famRef.id, 'members', uid), {
+    uid,
+    role: 'gestor',
+    joinedAt: serverTimestamp(),
+    status: 'active',
+  });
+  // Cria vínculo explícito userFamilies/{uid} → { familyId }
+  await setDoc(doc(db, 'userFamilies', uid), { familyId: famRef.id });
+  return famRef.id;
 }
-
 /**
- * Updates a family document (e.g. name, plan).
+ * Busca a família do usuário autenticado (por vínculo userFamilies).
  */
-export async function updateFamily(uid, familyId, data) {
-  console.log('[FamilyService] ✏️ Updating family', familyId)
-  await updateDoc(familyDoc(uid, familyId), {
-    ...data,
-    updatedAt: serverTimestamp(),
-  })
-  console.log('[FamilyService] ✅ Family updated')
+export async function fetchUserFamily(uid) {
+  return fetchUserFamilyByMembership(uid);
 }
 
 /**

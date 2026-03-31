@@ -141,21 +141,23 @@ export default function Dashboard() {
       {/* totalCardInvoices = {formatCurrency(totalCardInvoices)} — mantido calculado */}
 
       {/* Card rápido da família */}
-      <div
-        className="family-shortcut-card"
-        onClick={() => navigate('/familia')}
-        role="button"
-        tabIndex={0}
-      >
-        <span className="fsc-icon">🏡</span>
-        <div className="fsc-info">
-          <span className="fsc-name">{MOCK_FAMILY.name}</span>
-          <span className="fsc-meta">
-            Receitas: {formatCurrency(familySummary.totalReceitas)} ·  Despesas: {formatCurrency(familySummary.totalDespesas)}
-          </span>
+      {family && (
+        <div
+          className="family-shortcut-card"
+          onClick={() => navigate('/familia')}
+          role="button"
+          tabIndex={0}
+        >
+          <span className="fsc-icon">🏡</span>
+          <div className="fsc-info">
+            <span className="fsc-name">{family.name}</span>
+            <span className="fsc-meta">
+              Receitas: {formatCurrency(familySummary.totalReceitas)} ·  Despesas: {formatCurrency(familySummary.totalDespesas)}
+            </span>
+          </div>
+          <span className="fsc-arrow">›</span>
         </div>
-        <span className="fsc-arrow">›</span>
-      </div>
+      )}
 
       {/* Orçado x Realizado */}
       <Card className="dashboard-budget-card">

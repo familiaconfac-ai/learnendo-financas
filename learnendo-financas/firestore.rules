@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Isolamento real por família
+    match /families/{familyId} {
+      allow read, write: if isFamilyMember(familyId);
+      
+      // Subcoleção de membros
+      match /members/{userId} {
+        allow read, write: if isFamilyMember(familyId);
+      }
+      // Subcoleção de transações
+      match /transactions/{docId} {
+        allow read, write: if isFamilyMember(familyId);
+      }
+      // Subcoleção de convites
+      match /invitations/{inviteId} {
+        allow read, write: if isFamilyMember(familyId);
+      }
+    }
+    // Vínculo userFamilies/{uid} → { familyId }
+    match /userFamilies/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Função utilitária
+    function isFamilyMember(familyId) {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid));
+    }
+  }
+}

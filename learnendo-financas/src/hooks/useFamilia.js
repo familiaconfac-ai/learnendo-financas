@@ -25,7 +25,6 @@ import { useAuth } from '../context/AuthContext'
 import { IS_MOCK_MODE } from '../firebase/mockMode'
 import {
   fetchUserFamily,
-  fetchAllUserFamilies,
   createFamily,
   updateFamily,
   deleteFamily as deleteFamilyDoc,
@@ -98,17 +97,15 @@ export function useFamilia() {
         return
       }
 
-      // Busca todas as famílias do usuário (owner ou membro)
-      const fams = await fetchAllUserFamilies(user.uid)
-      setFamilies(fams)
-      // Seleciona a primeira família (ou nenhuma)
-      const fam = fams[0] || null
+      // Busca família do usuário autenticado (por vínculo userFamilies)
+      const fam = await fetchUserFamily(user.uid)
+      setFamilies(fam ? [fam] : [])
       setFamily(fam)
 
       if (fam?.id) {
         const [rawMembers, rawInvites] = await Promise.all([
-          fetchMembers(fam._owner ? user.uid : fam.ownerUid, fam.id),
-          fetchInvitations(fam._owner ? user.uid : fam.ownerUid, fam.id),
+          fetchMembers(fam.ownerUid, fam.id),
+          fetchInvitations(fam.ownerUid, fam.id),
         ])
         setMembers(rawMembers.map((m) => ({ ...m, role: normaliseRole(m.role) })))
         setInvitations(rawInvites)

@@ -100,7 +100,8 @@ export default function Familia() {
     setSummaryLoading(true)
     ;(async () => {
       try {
-        const snap = await getDocs(collection(db, 'users', user.uid, 'transactions'))
+        // Busca transações da família global (isolamento por familyId)
+        const snap = await getDocs(collection(db, 'families', family.id, 'transactions'))
         let income = 0, expense = 0
         snap.forEach((d) => {
           const t = d.data()
