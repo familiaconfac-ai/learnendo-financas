@@ -1,25 +1,3 @@
-/**
- * useFamilia.js
- *
- * React hook for the Family module.
- * Reads from Firestore in real mode, uses mock data in IS_MOCK_MODE.
- *
- * Returns:
- *   family       – family document { id, name, plan, ownerUid, ... }
- *   members      – array of member objects
- *   invitations  – array of invitation objects
- *   loading      – boolean
- *   error        – string | null
- *   myRole       – 'gestor' | 'co-gestor' | 'membro' | 'planejador'
- *   canManage    – boolean (gestor or co-gestor)
- *   create(name)
- *   editName(name)
- *   deleteFamily()
- *   removeMember(memberId)
- *   changeRole(memberId, newRole)
- *   inviteMember(data)
- */
-
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { IS_MOCK_MODE } from '../firebase/mockMode'
@@ -41,11 +19,10 @@ import {
   MOCK_FAMILY_INVITATIONS,
 } from '../utils/mockData'
 
-// Normalise legacy role values to new canonical names
 function normaliseRole(role) {
   const map = {
-    owner:  'gestor',
-    admin:  'co-gestor',
+    owner: 'gestor',
+    admin: 'co-gestor',
     member: 'membro',
     viewer: 'planejador',
   }
@@ -53,17 +30,15 @@ function normaliseRole(role) {
 }
 
 export function useFamilia() {
-
   const { user } = useAuth()
 
-  const [families,    setFamilies]    = useState([])
-  const [family,      setFamily]      = useState(null)
-  const [members,     setMembers]     = useState([])
+  const [families, setFamilies] = useState([])
+  const [family, setFamily] = useState(null)
+  const [members, setMembers] = useState([])
   const [invitations, setInvitations] = useState([])
-  const [loading,     setLoading]     = useState(true)
-  const [error,       setError]       = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  // Reset estado ao trocar de usuário para evitar mostrar dados antigos
   useEffect(() => {
     setFamilies([])
     setFamily(null)
@@ -73,20 +48,20 @@ export function useFamilia() {
     setError(null)
   }, [user?.uid])
 
-  // ── Load ──────────────────────────────────────────────────────────────────
-
   const loadAll = useCallback(async () => {
-    if (!user?.uid) { setLoading(false); return }
+    if (!user?.uid) {
+      setLoading(false)
+      return
+    }
 
     setLoading(true)
     setError(null)
 
     try {
       if (IS_MOCK_MODE) {
-        // Normalise mock member roles
         const normMembers = MOCK_FAMILY_MEMBERS.map((m) => ({
           ...m,
-          id:   m.uid,                    // use uid as id in mock
+          id: m.uid,
           role: normaliseRole(m.role),
         }))
         setFamilies([MOCK_FAMILY])
@@ -97,22 +72,23 @@ export function useFamilia() {
         return
       }
 
-      // Busca família do usuário autenticado (por vínculo userFamilies)
       const fam = await fetchUserFamily(user.uid)
       setFamilies(fam ? [fam] : [])
       setFamily(fam)
 
-      if (fam?.id) {
-        const [rawMembers, rawInvites] = await Promise.all([
-          fetchMembers(fam.ownerUid, fam.id),
-          fetchInvitations(fam.ownerUid, fam.id),
-        ])
-        setMembers(rawMembers.map((m) => ({ ...m, role: normaliseRole(m.role) })))
-        setInvitations(rawInvites)
-      } else {
+      if (!fam?.id) {
         setMembers([])
         setInvitations([])
+        return
       }
+
+      const [rawMembers, rawInvites] = await Promise.all([
+        fetchMembers(user.uid, fam.id),
+        fetchInvitations(user.uid, fam.id),
+      ])
+
+      setMembers(rawMembers.map((m) => ({ ...m, role: normaliseRole(m.role) })))
+      setInvitations(rawInvites)
     } catch (err) {
       console.error('[useFamilia] Load error:', err.message)
       setError(err.message)
@@ -121,25 +97,23 @@ export function useFamilia() {
     }
   }, [user?.uid])
 
-  useEffect(() => { loadAll() }, [loadAll])
+  useEffect(() => {
+    loadAll()
+  }, [loadAll])
 
-  // ── Derived values ────────────────────────────────────────────────────────
-
-  const myMember  = members.find((m) => m.uid === user?.uid || m.id === user?.uid) ?? null
-  const myRole    = myMember?.role ?? (family?.ownerUid === user?.uid ? 'gestor' : 'planejador')
+  const myMember = members.find((m) => m.uid === user?.uid || m.id === user?.uid) ?? null
+  const myRole = myMember?.role ?? (family?.ownerUid === user?.uid ? 'gestor' : 'planejador')
   const canManage = myRole === 'gestor' || myRole === 'co-gestor'
 
-  // ── Mutations ─────────────────────────────────────────────────────────────
-
   async function create(name) {
-    if (!user?.uid) throw new Error('Não autenticado')
+    if (!user?.uid) throw new Error('Nao autenticado')
     if (IS_MOCK_MODE) {
       setFamily({ ...MOCK_FAMILY, name, id: 'mock-new' })
       setMembers([
         {
           id: user.uid,
           uid: user.uid,
-          displayName: user.displayName || user.email || 'Você',
+          displayName: user.displayName || user.email || 'Voce',
           email: user.email || '',
           role: 'gestor',
           status: 'active',
@@ -147,10 +121,11 @@ export function useFamilia() {
       ])
       return
     }
+
     const famId = await createFamily(user.uid, { name })
     await addMember(user.uid, famId, {
       uid: user.uid,
-      displayName: user.displayName || user.email || 'Você',
+      displayName: user.displayName || user.email || 'Voce',
       email: user.email || '',
       role: 'gestor',
       status: 'active',
@@ -161,7 +136,7 @@ export function useFamilia() {
   }
 
   async function editName(name) {
-    if (!user?.uid || !family?.id) throw new Error('Família não encontrada')
+    if (!user?.uid || !family?.id) throw new Error('Familia nao encontrada')
     if (IS_MOCK_MODE) {
       setFamily((f) => ({ ...f, name }))
       return
@@ -171,7 +146,7 @@ export function useFamilia() {
   }
 
   async function deleteFamily() {
-    if (!user?.uid || !family?.id) throw new Error('Família não encontrada')
+    if (!user?.uid || !family?.id) throw new Error('Familia nao encontrada')
     if (IS_MOCK_MODE) {
       setFamily(null)
       setMembers([])
@@ -191,7 +166,7 @@ export function useFamilia() {
       return
     }
     await removeMember(user.uid, family.id, memberId)
-    setMembers((ms) => ms.filter((m) => m.id !== memberId))
+    setMembers((ms) => ms.filter((m) => m.id !== memberId && m.uid !== memberId))
   }
 
   async function changeRole(memberId, role) {
@@ -203,18 +178,20 @@ export function useFamilia() {
       return
     }
     await updateMemberRole(user.uid, family.id, memberId, role)
-    setMembers((ms) => ms.map((m) => (m.id === memberId ? { ...m, role } : m)))
+    setMembers((ms) =>
+      ms.map((m) => (m.id === memberId || m.uid === memberId ? { ...m, role } : m)),
+    )
   }
 
   async function inviteMember(data) {
-    if (!user?.uid || !family?.id) throw new Error('Família não encontrada')
+    if (!user?.uid || !family?.id) throw new Error('Familia nao encontrada')
     if (IS_MOCK_MODE) {
       const newInv = {
-        id:      Date.now().toString(),
+        id: Date.now().toString(),
         ...data,
-        status:  'pending',
-        sentAt:  new Date().toISOString(),
-        sentBy:  user.uid,
+        status: 'pending',
+        sentAt: new Date().toISOString(),
+        sentBy: user.uid,
       }
       setInvitations((inv) => [...inv, newInv])
       return
@@ -239,6 +216,6 @@ export function useFamilia() {
     removeMember: removeMemberById,
     changeRole,
     inviteMember,
-    setFamily, // permite selecionar família ativa se necessário
+    setFamily,
   }
 }

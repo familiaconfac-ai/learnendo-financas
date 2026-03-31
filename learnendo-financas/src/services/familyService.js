@@ -1,238 +1,232 @@
-/**
- * Atualiza dados da família global.
- */
-export async function updateFamily(uid, familyId, data) {
-  const db = getFirestore();
-  await updateDoc(doc(db, 'families', familyId), {
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  getFirestore,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore'
+
+function familyDoc(familyId) {
+  const db = getFirestore()
+  return doc(db, 'families', familyId)
+}
+
+function memberCol(familyId) {
+  const db = getFirestore()
+  return collection(db, 'families', familyId, 'members')
+}
+
+function memberDoc(familyId, memberId) {
+  const db = getFirestore()
+  return doc(db, 'families', familyId, 'members', memberId)
+}
+
+function inviteCol(familyId) {
+  const db = getFirestore()
+  return collection(db, 'families', familyId, 'invitations')
+}
+
+function inviteDoc(familyId, inviteId) {
+  const db = getFirestore()
+  return doc(db, 'families', familyId, 'invitations', inviteId)
+}
+
+function userFamilyDoc(uid) {
+  const db = getFirestore()
+  return doc(db, 'userFamilies', uid)
+}
+
+export async function updateFamily(_actorUid, familyId, data) {
+  await updateDoc(familyDoc(familyId), {
     ...data,
     updatedAt: serverTimestamp(),
-  });
+  })
 }
-/**
- * familyService.js
- *
- * Firestore CRUD for the Family feature.
- *
- * Paths:
- *   users/{uid}/families/{familyId}                        — family document
- *   users/{uid}/families/{familyId}/members/{memberId}     — members sub-collection
- *   users/{uid}/families/{familyId}/invitations/{invId}    — invitations sub-collection
- *
- * Role values (new canonical names):
- *   'gestor'    — full control (owner), can do everything
- *   'co-gestor' — almost full control, can manage members
- *   'membro'    — can create/edit their own transactions
- *   'planejador' — view-only, no edits
- */
 
-import {
-  collection,
-  doc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  getDocs,
-  query,
-  orderBy,
-  serverTimestamp,
-  where,
-  getFirestore,
-  collectionGroup,
-  setDoc,
-} from 'firebase/firestore'
-/**
- * Busca todas as famílias onde o usuário é owner OU membro.
- * Retorna [{ id, ...data }]
- */
-// (fetchAllUserFamilies removida: isolamento real por vínculo userFamilies)
-
-
-/**
- * Cria uma nova família global e vincula o criador como membro.
- * @param {string} uid
- * @param {{ name: string, plan?: string }} data
- * @returns {string} new family ID
- */
 export async function createFamily(uid, { name, plan = 'family' }) {
-  const db = getFirestore();
-  // Cria família global
+  const db = getFirestore()
   const famRef = await addDoc(collection(db, 'families'), {
     name,
     plan,
     ownerUid: uid,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
-  // Cria subcoleção de membros
-  await setDoc(doc(db, 'families', famRef.id, 'members', uid), {
+  })
+
+  await setDoc(memberDoc(famRef.id, uid), {
     uid,
+    email: null,
+    displayName: null,
     role: 'gestor',
     joinedAt: serverTimestamp(),
     status: 'active',
-  });
-  // Cria vínculo explícito userFamilies/{uid} → { familyId }
-  await setDoc(doc(db, 'userFamilies', uid), { familyId: famRef.id });
-  return famRef.id;
-}
-/**
- * Busca a família do usuário autenticado (por vínculo userFamilies).
- */
+    updatedAt: serverTimestamp(),
+  })
 
-/**
- * Busca a família do usuário autenticado (por vínculo userFamilies/{uid}).
- * Retorna o documento da família ou null se não houver vínculo.
- */
+  await setDoc(userFamilyDoc(uid), {
+    familyId: famRef.id,
+    updatedAt: serverTimestamp(),
+  })
+
+  return famRef.id
+}
+
 export async function fetchUserFamily(uid) {
-  const db = getFirestore();
-  // Busca vínculo explícito userFamilies/{uid}
-  const userFamSnap = await getDocs(query(collection(db, 'userFamilies'), where('__name__', '==', uid)));
-  if (userFamSnap.empty) return null;
-  const userFam = userFamSnap.docs[0].data();
-  if (!userFam.familyId) return null;
-  // Busca documento da família
-  const famDoc = await getDocs(query(collection(db, 'families'), where('__name__', '==', userFam.familyId)));
-  if (famDoc.empty) return null;
-  const fam = famDoc.docs[0];
-  return { id: fam.id, ...fam.data() };
-}
+  const membershipSnap = await getDoc(userFamilyDoc(uid))
+  if (!membershipSnap.exists()) return null
 
-/**
- * Deletes a family document AND all its members/invitations sub-documents.
- * Note: in production you'd use a Cloud Function for recursive deletes;
- * this is safe for the small sub-collections this app uses client-side.
- */
-export async function deleteFamily(uid, familyId) {
-  console.log('[FamilyService] 🗑️ Deleting family', familyId)
+  const familyId = membershipSnap.data()?.familyId
+  if (!familyId) return null
 
-  // Fetch sub-collections concurrently
-  const [membersSnap, invitesSnap] = await Promise.all([
-    getDocs(memberCol(uid, familyId)),
-    getDocs(inviteCol(uid, familyId)),
+  const [familySnap, memberSnap] = await Promise.all([
+    getDoc(familyDoc(familyId)),
+    getDoc(memberDoc(familyId, uid)),
   ])
 
-  // Delete all sub-documents
-  const subDeletes = [
-    ...membersSnap.docs.map((d) => deleteDoc(memberDoc(uid, familyId, d.id))),
-    ...invitesSnap.docs.map((d) => deleteDoc(inviteDoc(uid, familyId, d.id))),
-  ]
-  await Promise.all(subDeletes)
+  if (!familySnap.exists() || !memberSnap.exists()) {
+    await deleteDoc(userFamilyDoc(uid))
+    return null
+  }
 
-  // Delete the family document itself
-  await deleteDoc(familyDoc(uid, familyId))
-  console.log('[FamilyService] ✅ Family deleted')
+  return { id: familySnap.id, ...familySnap.data() }
 }
 
-// ── Members ───────────────────────────────────────────────────────────────────
+export async function deleteFamily(_actorUid, familyId) {
+  console.log('[FamilyService] deleting family', familyId)
 
-/**
- * Fetches all members for a family, ordered by join date.
- */
-export async function fetchMembers(uid, familyId) {
+  const [membersSnap, invitesSnap] = await Promise.all([
+    getDocs(memberCol(familyId)),
+    getDocs(inviteCol(familyId)),
+  ])
+
+  const userFamilyDeletes = membersSnap.docs
+    .map((member) => member.data()?.uid)
+    .filter(Boolean)
+    .map((uid) => deleteDoc(userFamilyDoc(uid)))
+
+  const subDeletes = [
+    ...membersSnap.docs.map((member) => deleteDoc(member.ref)),
+    ...invitesSnap.docs.map((invite) => deleteDoc(invite.ref)),
+    ...userFamilyDeletes,
+  ]
+
+  await Promise.all(subDeletes)
+  await deleteDoc(familyDoc(familyId))
+}
+
+export async function fetchMembers(_actorUid, familyId) {
   try {
-    const snap = await getDocs(query(memberCol(uid, familyId), orderBy('joinedAt', 'asc')))
+    const snap = await getDocs(query(memberCol(familyId), orderBy('joinedAt', 'asc')))
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
   } catch (err) {
-    // orderBy requires an index — fall back to unordered if index is missing
-    console.warn('[FamilyService] orderBy failed, fetching unordered:', err.message)
-    const snap = await getDocs(memberCol(uid, familyId))
+    console.warn('[FamilyService] fetchMembers fallback:', err.message)
+    const snap = await getDocs(memberCol(familyId))
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
   }
 }
 
-/**
- * Adds a member to the family.
- */
-export async function addMember(uid, familyId, memberData) {
-  const ref = await addDoc(memberCol(uid, familyId), {
+export async function addMember(_actorUid, familyId, memberData) {
+  const normalizedEmail = typeof memberData.email === 'string'
+    ? memberData.email.trim().toLowerCase()
+    : ''
+
+  const payload = {
     ...memberData,
-    joinedAt:  serverTimestamp(),
+    email: normalizedEmail || '',
+    joinedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  })
+  }
+
+  if (memberData.uid) {
+    await setDoc(memberDoc(familyId, memberData.uid), payload, { merge: true })
+    await setDoc(userFamilyDoc(memberData.uid), {
+      familyId,
+      updatedAt: serverTimestamp(),
+    })
+    return memberData.uid
+  }
+
+  const ref = await addDoc(memberCol(familyId), payload)
   return ref.id
 }
 
-/**
- * Changes a member's role.
- */
-export async function updateMemberRole(uid, familyId, memberId, role) {
-  console.log('[FamilyService] ✏️ Role change', memberId, '→', role)
-  await updateDoc(memberDoc(uid, familyId, memberId), {
+export async function updateMemberRole(_actorUid, familyId, memberId, role) {
+  await updateDoc(memberDoc(familyId, memberId), {
     role,
     updatedAt: serverTimestamp(),
   })
 }
 
-/**
- * Removes a member from the family.
- */
-export async function removeMember(uid, familyId, memberId) {
-  console.log('[FamilyService] 🗑️ Removing member', memberId)
-  await deleteDoc(memberDoc(uid, familyId, memberId))
-  console.log('[FamilyService] ✅ Member removed')
+export async function removeMember(_actorUid, familyId, memberId) {
+  const targetRef = memberDoc(familyId, memberId)
+  const targetSnap = await getDoc(targetRef)
+  if (!targetSnap.exists()) return
+
+  const memberUid = targetSnap.data()?.uid
+  await deleteDoc(targetRef)
+
+  if (memberUid) {
+    const membershipSnap = await getDoc(userFamilyDoc(memberUid))
+    if (membershipSnap.exists() && membershipSnap.data()?.familyId === familyId) {
+      await deleteDoc(userFamilyDoc(memberUid))
+    }
+  }
 }
 
-// ── Invitations ───────────────────────────────────────────────────────────────
-
-/**
- * Fetches all invitations for a family.
- */
-export async function fetchInvitations(uid, familyId) {
-  const snap = await getDocs(inviteCol(uid, familyId))
+export async function fetchInvitations(_actorUid, familyId) {
+  const snap = await getDocs(inviteCol(familyId))
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
 }
 
-/**
- * Adds a new invitation record.
- */
-export async function addInvitation(uid, familyId, data) {
+export async function addInvitation(actorUid, familyId, data) {
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-  const ref = await addDoc(inviteCol(uid, familyId), {
+  const ref = await addDoc(inviteCol(familyId), {
     ...data,
-    status:    'pending',
-    sentAt:    serverTimestamp(),
+    status: 'pending',
+    sentAt: serverTimestamp(),
     expiresAt,
-    sentBy:    uid,
+    sentBy: actorUid,
+    updatedAt: serverTimestamp(),
   })
   return ref.id
 }
 
-/**
- * Cancels (soft-deletes) an invitation.
- */
-export async function cancelInvitation(uid, familyId, inviteId) {
-  await updateDoc(inviteDoc(uid, familyId, inviteId), {
-    status:    'cancelled',
+export async function cancelInvitation(_actorUid, familyId, inviteId) {
+  await updateDoc(inviteDoc(familyId, inviteId), {
+    status: 'cancelled',
     updatedAt: serverTimestamp(),
   })
 }
 
-// ── Pending member ─────────────────────────────────────────────────────────────
-
-/**
- * Adds a pending member entry by email (no UID required).
- * The member appears in the list with status 'pending' until they join.
- * @returns {{ id: string, email: string, displayName: string, role: string, status: string }}
- */
-export async function addPendingMember(uid, familyId, email, role = 'membro') {
-  const normEmail = email.trim().toLowerCase()
-  const ref = await addDoc(memberCol(uid, familyId), {
-    email:       normEmail,
-    uid:         null,
-    displayName: normEmail,
-    name:        normEmail,
+export async function addPendingMember(actorUid, familyId, email, role = 'membro') {
+  const normalizedEmail = email.trim().toLowerCase()
+  const ref = await addDoc(memberCol(familyId), {
+    email: normalizedEmail,
+    uid: null,
+    displayName: normalizedEmail,
+    name: normalizedEmail,
     role,
-    status:      'pending',
-    joinedAt:    serverTimestamp(),
-    invitedAt:   serverTimestamp(),
-    updatedAt:   serverTimestamp(),
+    status: 'pending',
+    invitedBy: actorUid,
+    joinedAt: serverTimestamp(),
+    invitedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   })
+
   return {
-    id:          ref.id,
-    email:       normEmail,
-    displayName: normEmail,
-    name:        normEmail,
+    id: ref.id,
+    email: normalizedEmail,
+    displayName: normalizedEmail,
+    name: normalizedEmail,
     role,
-    status:      'pending',
-    uid:         null,
+    status: 'pending',
+    uid: null,
   }
 }
