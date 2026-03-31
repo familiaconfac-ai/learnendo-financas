@@ -18,47 +18,70 @@
 .type-filter::-webkit-scrollbar { display: none; }
 
 .import-highlight {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.55rem;
-  padding: 1rem 1rem 0.9rem;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  gap: 0.6rem;
+  padding: 1.1rem 1rem 1rem;
+  background:
+    radial-gradient(circle at top, rgba(251, 191, 36, 0.16), transparent 48%),
+    linear-gradient(180deg, #fffdf7 0%, #ffffff 100%);
   border-bottom: 1px solid var(--color-border);
   text-align: center;
+  overflow: hidden;
+}
+
+.import-highlight::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto auto 50%;
+  width: 210px;
+  height: 210px;
+  background: radial-gradient(circle, rgba(29, 78, 216, 0.08) 0%, transparent 68%);
+  transform: translateX(-50%);
+  z-index: -1;
 }
 
 .import-highlight-btn {
-  min-width: min(100%, 220px);
-  border: none;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #1a56db 0%, #2563eb 100%);
-  color: #fff;
+  min-width: min(100%, 236px);
+  border: 1px solid rgba(180, 83, 9, 0.18);
+  border-radius: 18px;
+  background: linear-gradient(135deg, #fff9ed 0%, #ffffff 70%);
+  color: #8a4b08;
   font-size: 1rem;
   font-weight: 800;
-  padding: 0.9rem 1.1rem;
-  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
+  letter-spacing: 0.01em;
+  padding: 0.95rem 1.2rem;
+  box-shadow:
+    0 14px 32px rgba(180, 83, 9, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
 }
 
 .import-highlight-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.28);
+  border-color: rgba(180, 83, 9, 0.3);
+  box-shadow:
+    0 18px 34px rgba(180, 83, 9, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .import-highlight-title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 0.96rem;
   font-weight: 700;
   color: var(--color-text);
+  max-width: 28rem;
 }
 
 .import-highlight-subtitle {
   margin: 0;
-  max-width: 34rem;
-  font-size: 0.82rem;
-  line-height: 1.45;
+  max-width: 35rem;
+  font-size: 0.83rem;
+  line-height: 1.5;
   color: var(--color-text-muted);
 }
 

@@ -9,6 +9,7 @@ import { parseStatementFile } from '../../utils/statementParser'
 import { classifyBatch } from '../../utils/transactionClassifier'
 import { buildDuplicateSignature, findDuplicateMatches } from '../../utils/transactionDuplicates'
 import { formatCurrency } from '../../utils/formatCurrency'
+import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
 import Card, { CardHeader } from '../../components/ui/Card'
 import './Importacao.css'
 
@@ -66,6 +67,24 @@ function findCategoryByHints(categories, type, hints = []) {
   }
 
   return null
+}
+
+function hydrateImportedReceiptItems(items, categories) {
+  const prepared = (Array.isArray(items) ? items : []).map((item) => {
+    const hintedBudgetCategory = findCategoryByHints(
+      categories,
+      'expense',
+      item.budgetCategoryHints || [item.budgetCategoryName].filter(Boolean),
+    )
+
+    return {
+      ...item,
+      budgetCategoryId: hintedBudgetCategory?.id || item.budgetCategoryId || '',
+      budgetCategoryName: hintedBudgetCategory?.name || item.budgetCategoryName || '',
+    }
+  })
+
+  return normalizeReceiptItems(prepared, categories.filter((category) => category.type === 'expense'))
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -209,6 +228,7 @@ export default function Importacao() {
         }
 
         try {
+          const receiptItems = hydrateImportedReceiptItems(row.receiptItems, categories)
           await addTransaction(user.uid, {
             type:                     row.type,
             description:              row.description,
@@ -229,6 +249,8 @@ export default function Importacao() {
             balanceImpact:            row.type !== 'transfer_internal',
             importBatchId:            batchId,
             classificationConfidence: row.classification?.confidence ?? 'low',
+            receiptDetailEnabled:     row.receiptDetailEnabled && receiptItems.length > 0,
+            receiptItems,
           }, { workspaceId: activeWorkspaceId })
           knownSignatures.add(signature)
           count++
@@ -410,8 +432,8 @@ export default function Importacao() {
             <div className="how-item">
               <span className="how-icon">🧾</span>
               <div>
-                <strong>PDF e imagem (básico)</strong>
-                <p>Você pode enviar extrato em PDF e imagens (cupom/comprovante) para entrar na fila de revisão.</p>
+                <strong>PDF e imagem com OCR</strong>
+                <p>Extratos em PDF com texto são lidos automaticamente. Fotos de cupom tentam extrair itens e separar categorias para revisão.</p>
               </div>
             </div>
             <div className="how-item">
@@ -524,6 +546,9 @@ export default function Importacao() {
                     <span className="preview-confidence">
                       Confiança: {row.classification?.confidence ?? 'low'}
                     </span>
+                    {Array.isArray(row.receiptItems) && row.receiptItems.length > 0 && (
+                      <span className="preview-review-tag">🧾 {row.receiptItems.length} item(ns) do cupom</span>
+                    )}
                     {review && <span className="preview-review-tag">⚠ Classificação incerta</span>}
                     {duplicateAudit.exact && (
                       <span className="preview-review-tag">⛔ Duplicado exato</span>

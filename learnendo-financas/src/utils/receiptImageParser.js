@@ -3,64 +3,491 @@ function normalize(text) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .trim()
 }
 
-function categoryHintsFromText(text) {
-  const s = normalize(text)
-
-  if (/cabo|carregador|fone|teclado|mouse|adaptador|usb|hdmi/.test(s)) {
-    return ['Equipamentos', 'Eletrônicos', 'Eletronicos']
-  }
-
-  if (/mercado|supermercado|atacadao|muffato|carrefour|assai/.test(s)) {
-    return ['Mercado', 'Supermercado', 'Alimentação', 'Alimentacao']
-  }
-
-  if (/farmacia|droga|drogaria/.test(s)) {
-    return ['Farmácia', 'Farmacia', 'Saúde', 'Saude']
-  }
-
-  return ['Outros', 'Despesas diversas']
+function createId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-function parseAmountFromText(text) {
-  const normalized = String(text || '').replace(/_/g, ' ')
+const AMOUNT_PATTERN_SOURCE = String.raw`\d{1,3}(?:[.\s]\d{3})*,\d{2}|\d+(?:,\d{2})|\d{1,3}(?:,\d{3})*\.\d{2}`
+const AMOUNT_PATTERN = new RegExp(AMOUNT_PATTERN_SOURCE, 'g')
 
-  const br = normalized.match(/(\d{1,3}(?:\.\d{3})*,\d{2})/)
-  if (br) {
-    const value = Number(br[1].replace(/\./g, '').replace(',', '.'))
-    if (Number.isFinite(value) && value > 0) return value
+function parseAmount(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return 0
+
+  const match = raw.match(new RegExp(`(${AMOUNT_PATTERN_SOURCE})`))
+  if (!match) return 0
+
+  const token = match[1]
+  if (token.includes(',') && token.includes('.')) {
+    if (token.lastIndexOf(',') > token.lastIndexOf('.')) {
+      return Number(token.replace(/\./g, '').replace(',', '.')) || 0
+    }
+    return Number(token.replace(/,/g, '')) || 0
   }
 
-  const us = normalized.match(/(\d{1,3}(?:,\d{3})*\.\d{2})/)
-  if (us) {
-    const value = Number(us[1].replace(/,/g, ''))
-    if (Number.isFinite(value) && value > 0) return value
+  if (token.includes(',')) {
+    return Number(token.replace(/\./g, '').replace(',', '.')) || 0
   }
 
-  return 0
+  return Number(token.replace(/\s/g, '')) || 0
+}
+
+function cleanLine(line) {
+  return String(line || '')
+    .replace(/\s+/g, ' ')
+    .replace(/[|]{2,}/g, ' ')
+    .trim()
+}
+
+function lineHasAmount(line) {
+  return new RegExp(`(${AMOUNT_PATTERN_SOURCE})`).test(line)
+}
+
+function extractLineAmounts(line) {
+  const matches = []
+  for (const match of String(line || '').matchAll(AMOUNT_PATTERN)) {
+    matches.push({
+      token: match[0],
+      index: match.index ?? 0,
+      value: parseAmount(match[0]),
+    })
+  }
+  return matches.filter((match) => match.value > 0)
+}
+
+function findReceiptDate(lines) {
+  for (const line of lines) {
+    const match = line.match(/\b(\d{2})[\/.-](\d{2})[\/.-](\d{2,4})\b/)
+    if (!match) continue
+    const year = match[3].length === 2 ? `20${match[3]}` : match[3]
+    return `${year}-${match[2]}-${match[1]}`
+  }
+  return new Date().toISOString().slice(0, 10)
+}
+
+function findMerchantName(lines, file) {
+  const baseName = String(file?.name || 'cupom')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+
+  for (const line of lines.slice(0, 8)) {
+    const normalized = normalize(line)
+    if (!normalized) continue
+    if (/cnpj|cpf|ie|cupom|documento|extrato|caixa|operador|cliente|www|http|tel|codigo/.test(normalized)) continue
+    if (lineHasAmount(line)) continue
+    if (line.length < 4) continue
+    return line
+  }
+
+  return baseName || 'Cupom importado'
+}
+
+function hasSummaryKeyword(text) {
+  return /(total|subtotal|desconto|acrescimo|troco|pagamento|valor recebido|dinheiro|cartao|credito|debito|pix)/.test(text)
+}
+
+function isDiscountLine(line) {
+  return /(desconto|desc\.?|desc promocional|cupom desconto)/.test(normalize(line))
+}
+
+function isSubtotalLine(line) {
+  return /(subtotal|sub total|parcial)/.test(normalize(line))
+}
+
+function isTotalLine(line) {
+  const normalized = normalize(line)
+  return (
+    /(valor total|total a pagar|total r\$|vl total|total compra|total da compra|liquido)/.test(normalized)
+    || (/total/.test(normalized) && !isSubtotalLine(line) && !isDiscountLine(line))
+  )
+}
+
+function isMetadataLine(line) {
+  const normalized = normalize(line)
+  return (
+    !normalized
+    || /cnpj|cpf|ie|im|sat|nfce|danfe|cupom fiscal|documento auxiliar|consumidor/.test(normalized)
+    || /www|http|obrigado|volte sempre|ate logo|chave pix|protocolo/.test(normalized)
+    || /operador|caixa|cliente|terminal|serie|extrato|documento/.test(normalized)
+    || /^\d{2}[\/.-]\d{2}[\/.-]\d{2,4}/.test(normalized)
+    || /^\d+$/.test(normalized)
+  )
+}
+
+function shouldBufferDescription(line) {
+  const normalized = normalize(line)
+  return (
+    normalized.length >= 3
+    && !lineHasAmount(line)
+    && !isMetadataLine(line)
+    && !hasSummaryKeyword(normalized)
+  )
+}
+
+function rebuildReceiptLines(lines) {
+  const rebuilt = []
+  let pendingDescription = ''
+
+  for (const rawLine of lines) {
+    const line = cleanLine(rawLine)
+    if (!line) continue
+
+    if (shouldBufferDescription(line)) {
+      pendingDescription = pendingDescription ? `${pendingDescription} ${line}` : line
+      continue
+    }
+
+    if (lineHasAmount(line) && pendingDescription) {
+      rebuilt.push(cleanLine(`${pendingDescription} ${line}`))
+      pendingDescription = ''
+      continue
+    }
+
+    if (pendingDescription) {
+      rebuilt.push(cleanLine(pendingDescription))
+      pendingDescription = ''
+    }
+
+    rebuilt.push(line)
+  }
+
+  if (pendingDescription) {
+    rebuilt.push(cleanLine(pendingDescription))
+  }
+
+  return rebuilt
+}
+
+function extractQuantity(line) {
+  const match = String(line || '').match(/(\d+(?:[.,]\d{1,3})?)\s*(?:x|X)\s*\d+[.,]\d{2}/)
+  if (!match) return ''
+  const quantity = Number(match[1].replace(',', '.'))
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : ''
+}
+
+function cleanTrailingAmountTokens(text) {
+  return String(text || '')
+    .replace(new RegExp(`(?:${AMOUNT_PATTERN_SOURCE})(?:\\s+(?:${AMOUNT_PATTERN_SOURCE}))*\\s*$`), ' ')
+    .trim()
+}
+
+function cleanLeadingCodes(text) {
+  return String(text || '')
+    .replace(/^\d{3,}\s+/, '')
+    .replace(/^\d+\s+(?=[a-zA-ZÀ-ÿ])/u, '')
+    .trim()
+}
+
+function findTotalAmount(summary, itemTotal = 0) {
+  if (summary.total > 0) return summary.total
+  if (summary.subtotal > 0 || summary.discountTotal > 0 || summary.surchargeTotal > 0) {
+    const derivedTotal = summary.subtotal - summary.discountTotal + summary.surchargeTotal
+    if (derivedTotal > 0) return Number(derivedTotal.toFixed(2))
+  }
+  return itemTotal
+}
+
+function isReceiptNoise(line) {
+  const normalized = normalize(line)
+  if (!normalized) return true
+
+  return (
+    normalized.length < 3
+    || /^(qtd|item|cod|codigo|sku)\b/.test(normalized)
+    || isMetadataLine(line)
+    || /^\d+$/.test(normalized)
+  )
+}
+
+function cleanItemDescription(text) {
+  return cleanLeadingCodes(
+    cleanTrailingAmountTokens(
+      String(text || '')
+        .replace(/\b(?:qtd\.?|qtde\.?)\s*\d+(?:[.,]\d+)?\b/gi, ' ')
+        .replace(/\b\d+(?:[.,]\d+)?\s*(?:x|X)\s*\d+[.,]\d{2}\b/g, ' ')
+        .replace(/\b\d+[.,]\d{2}\s*(?:x|X)\s*\d+(?:[.,]\d+)?\b/g, ' ')
+        .replace(/\b(?:un|und|kg|g|ml|lt|l)\b/gi, ' ')
+        .replace(/[^\p{L}\p{N}\s/-]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    )
+  )
+}
+
+function classifyReceiptItem(description) {
+  const text = normalize(description)
+  const rules = [
+    {
+      when: /(arroz|feijao|macarrao|leite|pao|cafe|acucar|farinha|carne|frango|iogurte|banana|maca|tomate|alface|batata|queijo|presunto)/,
+      detailCategoryKey: 'alimentacao',
+      detailSubcategoryKey: 'basico',
+      budgetCategoryHints: ['Mercado', 'Supermercado', 'Alimentação', 'Alimentacao'],
+      importance: 'essential',
+    },
+    {
+      when: /(refrigerante|cerveja|vinho|suco|agua|energetico)/,
+      detailCategoryKey: 'alimentacao',
+      detailSubcategoryKey: 'bebida',
+      budgetCategoryHints: ['Mercado', 'Supermercado', 'Alimentação', 'Alimentacao'],
+      importance: 'superfluous',
+    },
+    {
+      when: /(biscoito|bolacha|chocolate|bombom|bala|salgadinho|sorvete)/,
+      detailCategoryKey: 'alimentacao',
+      detailSubcategoryKey: 'superfluo_alimentar',
+      budgetCategoryHints: ['Mercado', 'Supermercado', 'Lazer', 'Outros'],
+      importance: 'superfluous',
+    },
+    {
+      when: /(detergente|sabao|amaciante|agua sanitaria|desinfetante|limpa|esponja)/,
+      detailCategoryKey: 'limpeza',
+      detailSubcategoryKey: 'casa',
+      budgetCategoryHints: ['Casa', 'Limpeza', 'Moradia'],
+      importance: 'essential',
+    },
+    {
+      when: /(shampoo|condicionador|sabonete|creme dental|escova dental|papel higienico|absorvente|fralda)/,
+      detailCategoryKey: 'higiene',
+      detailSubcategoryKey: 'cuidados_pessoais',
+      budgetCategoryHints: ['Higiene', 'Saúde', 'Saude', 'Farmácia', 'Farmacia'],
+      importance: 'essential',
+    },
+    {
+      when: /(camiseta|calca|blusa|vestido|bermuda|tenis|sapato|meia|cueca|lingerie|roupa)/,
+      detailCategoryKey: 'outros',
+      detailSubcategoryKey: 'geral',
+      budgetCategoryHints: ['Vestuário', 'Vestuario', 'Roupas'],
+      importance: 'superfluous',
+    },
+    {
+      when: /(pneu|oleo motor|filtro|palheta|bateria|aditivo|fluido|lampada automotiva)/,
+      detailCategoryKey: 'uso_domestico',
+      detailSubcategoryKey: 'manutencao',
+      budgetCategoryHints: ['Carro', 'Automóvel', 'Automovel', 'Transporte'],
+      importance: 'essential',
+    },
+    {
+      when: /(racao|petisco pet|areia gato|tapete higienico)/,
+      detailCategoryKey: 'outros',
+      detailSubcategoryKey: 'pet',
+      budgetCategoryHints: ['Pet', 'Animais'],
+      importance: 'essential',
+    },
+  ]
+
+  const matched = rules.find((rule) => rule.when.test(text))
+  if (matched) return matched
+
+  return {
+    detailCategoryKey: 'outros',
+    detailSubcategoryKey: 'geral',
+    budgetCategoryHints: ['Outros', 'Despesas diversas'],
+    importance: 'essential',
+  }
+}
+
+function categoryLabelFor(key) {
+  const labels = {
+    alimentacao: 'Alimentação',
+    limpeza: 'Limpeza',
+    higiene: 'Higiene',
+    uso_domestico: 'Uso doméstico',
+    outros: 'Outros',
+  }
+  return labels[key] || 'Outros'
+}
+
+function subcategoryLabelFor(key) {
+  const labels = {
+    basico: 'Básico',
+    proteina: 'Proteína',
+    bebida: 'Bebida',
+    lanche: 'Lanche',
+    superfluo_alimentar: 'Supérfluo alimentar',
+    roupa: 'Roupa',
+    cozinha: 'Cozinha',
+    casa: 'Casa',
+    banho: 'Banho',
+    cabelo: 'Cabelo',
+    cuidados_pessoais: 'Cuidados pessoais',
+    utensilios: 'Utensílios',
+    organizacao: 'Organização',
+    manutencao: 'Manutenção',
+    geral: 'Geral',
+    pet: 'Pet',
+    imprevistos: 'Imprevistos',
+  }
+  return labels[key] || 'Geral'
+}
+
+function createReceiptItem(description, amount, quantity = '') {
+  const itemClass = classifyReceiptItem(description)
+  return {
+    id: createId('receipt_item'),
+    description,
+    amount,
+    quantity,
+    detailCategoryKey: itemClass.detailCategoryKey,
+    detailCategoryLabel: categoryLabelFor(itemClass.detailCategoryKey),
+    detailSubcategoryKey: itemClass.detailSubcategoryKey,
+    detailSubcategoryLabel: subcategoryLabelFor(itemClass.detailSubcategoryKey),
+    budgetCategoryHints: itemClass.budgetCategoryHints,
+    budgetCategoryId: '',
+    budgetCategoryName: '',
+    importance: itemClass.importance,
+  }
+}
+
+function applyDiscountToItems(items, discountAmount) {
+  if (!Array.isArray(items) || items.length === 0 || discountAmount <= 0) return false
+
+  let remainingDiscount = Number(discountAmount)
+  for (let index = items.length - 1; index >= 0 && remainingDiscount > 0; index -= 1) {
+    const currentAmount = Number(items[index].amount || 0)
+    if (currentAmount <= 0) continue
+    const appliedDiscount = Math.min(currentAmount, remainingDiscount)
+    items[index].amount = Number((currentAmount - appliedDiscount).toFixed(2))
+    remainingDiscount = Number((remainingDiscount - appliedDiscount).toFixed(2))
+  }
+
+  return remainingDiscount < Number(discountAmount)
+}
+
+function parseReceiptSummary(lines) {
+  const summary = {
+    total: 0,
+    subtotal: 0,
+    discountTotal: 0,
+    surchargeTotal: 0,
+  }
+
+  for (const line of lines) {
+    if (!lineHasAmount(line)) continue
+    const amount = parseAmount(line)
+    if (amount <= 0) continue
+
+    if (isTotalLine(line)) {
+      summary.total = amount
+      continue
+    }
+
+    if (isSubtotalLine(line)) {
+      summary.subtotal = amount
+      continue
+    }
+
+    if (isDiscountLine(line)) {
+      summary.discountTotal += amount
+      continue
+    }
+
+    if (/(acrescimo|juros|taxa)/.test(normalize(line))) {
+      summary.surchargeTotal += amount
+    }
+  }
+
+  return summary
+}
+
+function parseReceiptItems(lines) {
+  const items = []
+  let carriedDiscountTotal = 0
+
+  for (const rawLine of lines) {
+    const line = cleanLine(rawLine)
+    if (!line || isReceiptNoise(line) || !lineHasAmount(line)) continue
+
+    if (isTotalLine(line) || isSubtotalLine(line)) continue
+
+    if (isDiscountLine(line)) {
+      const discountAmount = parseAmount(line)
+      const applied = applyDiscountToItems(items, discountAmount)
+      if (!applied) {
+        carriedDiscountTotal += discountAmount
+      }
+      continue
+    }
+
+    const amounts = extractLineAmounts(line)
+    if (amounts.length === 0) continue
+
+    const finalAmount = amounts[amounts.length - 1]?.value || 0
+    if (!Number.isFinite(finalAmount) || finalAmount <= 0) continue
+
+    const description = cleanItemDescription(line.slice(0, amounts[amounts.length - 1].index))
+    if (!description || description.length < 2) continue
+
+    const normalized = normalize(description)
+    if (hasSummaryKeyword(normalized)) continue
+
+    items.push(createReceiptItem(description, finalAmount, extractQuantity(line)))
+  }
+
+  if (carriedDiscountTotal > 0) {
+    applyDiscountToItems(items, carriedDiscountTotal)
+  }
+
+  return dedupeReceiptItems(items)
+}
+
+function dedupeReceiptItems(items) {
+  const seen = new Set()
+  return items.filter((item) => {
+    const key = `${normalize(item.description)}|${Number(item.amount).toFixed(2)}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+async function extractTextWithOcr(file) {
+  const { createWorker } = await import('tesseract.js')
+  const worker = await createWorker('por')
+
+  try {
+    const { data } = await worker.recognize(file)
+    return String(data?.text || '')
+  } finally {
+    await worker.terminate()
+  }
 }
 
 export async function parseReceiptImageFile(file) {
-  const baseName = String(file?.name || 'comprovante')
-    .replace(/\.[^.]+$/, '')
-    .replace(/[\-_]+/g, ' ')
-    .trim()
+  const ocrText = await extractTextWithOcr(file)
+  const rawLines = ocrText
+    .split(/\r?\n/)
+    .map(cleanLine)
+    .filter(Boolean)
 
-  const amount = parseAmountFromText(baseName)
-  const hints = categoryHintsFromText(baseName)
+  if (rawLines.length === 0) {
+    throw new Error('Nao foi possivel extrair texto legivel da imagem do cupom.')
+  }
 
-  // Base preparada para OCR no futuro: hoje usamos heurísticas de nome do arquivo.
+  const lines = rebuildReceiptLines(rawLines)
+  const merchantName = findMerchantName(lines, file)
+  const summary = parseReceiptSummary(lines)
+  const receiptItems = parseReceiptItems(lines)
+  const itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const totalAmount = findTotalAmount(summary, itemTotal)
+  const topHints = [...new Set(receiptItems.flatMap((item) => item.budgetCategoryHints || []))].slice(0, 4)
+
   return [{
-    date: new Date().toISOString().slice(0, 10),
-    description: baseName || 'Comprovante importado por imagem',
-    amount,
+    date: findReceiptDate(lines),
+    description: merchantName ? `Cupom ${merchantName}` : 'Cupom importado por imagem',
+    amount: totalAmount > 0 ? totalAmount : itemTotal,
     type: 'expense',
     direction: 'debit',
     balance: null,
-    rawLine: `image:${file?.name || ''}`,
+    rawLine: lines.slice(0, 12).join(' | ').slice(0, 600),
     source: 'image_receipt',
-    categoryHints: hints,
+    categoryHints: topHints.length > 0 ? topHints : ['Outros', 'Despesas diversas'],
     requiresReview: true,
+    receiptDetailEnabled: receiptItems.length > 0,
+    receiptItems,
+    ocrPreviewLines: lines.slice(0, 30),
   }]
 }
