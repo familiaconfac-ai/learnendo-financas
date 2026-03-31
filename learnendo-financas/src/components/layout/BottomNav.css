@@ -12,6 +12,25 @@
   box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.08);
 }
 
+.bottom-nav-feedback {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--bottom-nav-height) + 0.9rem);
+  transform: translateX(-50%);
+  z-index: 120;
+  background: rgba(17, 24, 39, 0.94);
+  color: #fff;
+  padding: 0.65rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+  max-width: calc(100vw - 2rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .bottom-nav-item {
   flex: 1;
   display: flex;
