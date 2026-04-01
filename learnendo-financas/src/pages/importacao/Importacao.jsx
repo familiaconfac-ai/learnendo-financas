@@ -475,11 +475,13 @@ export default function Importacao() {
     let accountSummaryError = null
 
     try {
-      const monthKeys = [...new Set(
-        toSave
-          .map((row) => row.date?.slice(0, 7))
-          .filter(Boolean),
-      )]
+      const monthKeys = isInvoiceImport
+        ? [selectedMonthKey]
+        : [...new Set(
+            toSave
+              .map((row) => row.date?.slice(0, 7))
+              .filter(Boolean),
+          )]
 
       const existingByMonth = await Promise.all(
         monthKeys.map((monthKey) => {
@@ -640,11 +642,13 @@ export default function Importacao() {
 
       setDuplicateAuditLoading(true)
       try {
-        const monthKeys = [...new Set(
-          parsedRows
-            .map((row) => row.date?.slice(0, 7))
-            .filter(Boolean),
-        )]
+        const monthKeys = statementSummary?.kind === 'invoice'
+          ? [selectedMonthKey]
+          : [...new Set(
+              parsedRows
+                .map((row) => row.date?.slice(0, 7))
+                .filter(Boolean),
+            )]
 
         const existingByMonth = await Promise.all(
           monthKeys.map((monthKey) => {
@@ -669,7 +673,7 @@ export default function Importacao() {
 
     loadExistingTransactions()
     return () => { cancelled = true }
-  }, [step, user?.uid, parsedRows])
+  }, [step, user?.uid, parsedRows, statementSummary?.kind, selectedMonthKey, activeWorkspaceId, myRole])
 
   const isInvoiceImport = statementSummary?.kind === 'invoice'
   const targetSelected = isInvoiceImport ? !!cardId : !!accountId
