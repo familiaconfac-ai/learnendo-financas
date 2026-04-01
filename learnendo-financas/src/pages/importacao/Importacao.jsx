@@ -6,12 +6,14 @@ import { useWorkspace } from '../../context/WorkspaceContext'
 import { useAccounts } from '../../hooks/useAccounts'
 import { useCards } from '../../hooks/useCards'
 import { useCategories } from '../../hooks/useCategories'
-import { addTransaction, fetchTransactions } from '../../services/transactionService'
+import { addTransaction, fetchTransactions, updateTransaction } from '../../services/transactionService'
 import { parseStatementFile } from '../../utils/statementParser'
 import { classifyBatch } from '../../utils/transactionClassifier'
 import { buildDuplicateSignature, findDuplicateMatches } from '../../utils/transactionDuplicates'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
+import { computeCreditCardCompetencyMonth } from '../../utils/creditCardPlanning'
+import { findReceiptInvoiceReconciliationCandidate } from '../../utils/receiptInvoiceReconciliation'
 import Card, { CardHeader } from '../../components/ui/Card'
 import './Importacao.css'
 
@@ -144,6 +146,13 @@ function buildSuggestedCardForm(summary) {
   }
 }
 
+function computeImportCompetencyMonth(row, { isInvoiceImport, isReceiptCardImport, selectedMonthKey, card }) {
+  const rowMonth = String(row?.date || '').slice(0, 7)
+  if (isInvoiceImport) return selectedMonthKey
+  if (isReceiptCardImport) return computeCreditCardCompetencyMonth(row?.date, card) || rowMonth
+  return rowMonth
+}
+
 function findMatchingAccountId(accounts, summary) {
   if (!Array.isArray(accounts) || !summary) return ''
 
@@ -226,6 +235,7 @@ export default function Importacao() {
   const [showCreateAccount, setShowCreateAccount] = useState(false)
   const [showCreateCard, setShowCreateCard] = useState(false)
   const [creatingTarget, setCreatingTarget] = useState(false)
+  const [receiptPaymentTarget, setReceiptPaymentTarget] = useState('credit_card')
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.id === accountId) || null,
     [accounts, accountId],
@@ -261,6 +271,7 @@ export default function Importacao() {
       setSuggestedCardForm(buildSuggestedCardForm(summary))
 
       const hasImageRows = raw.some((row) => row.source === 'image_receipt')
+      setReceiptPaymentTarget(hasImageRows && availableCards.length === 0 ? 'account' : 'credit_card')
       const classified = (hasImageRows ? raw : classifyBatch(raw)).map((row, idx) => ({
         ...row,
         status: 'pending',
@@ -375,15 +386,19 @@ export default function Importacao() {
   async function handleConfirmImport() {
     if (!user?.uid) return
     const isInvoiceImport = statementSummary?.kind === 'invoice'
+    const isReceiptImport = parsedRows.some((row) => row.source === 'image_receipt')
+    const isReceiptCardImport = isReceiptImport && receiptPaymentTarget === 'credit_card'
+    const importUsesCard = isInvoiceImport || isReceiptCardImport
     const canSaveBalanceOnly = !isInvoiceImport
+      && !isReceiptImport
       && importOnlyOpeningBalance
       && hasCurrencyValue(statementSummary?.closingBalance)
     if (!permissions.canImport) {
       setSaveError('Seu papel atual não permite importação neste workspace.')
       return
     }
-    if (isInvoiceImport ? !cardId : !accountId) {
-      setSaveError(isInvoiceImport
+    if (importUsesCard ? !cardId : !accountId) {
+      setSaveError(importUsesCard
         ? 'Selecione o cartao/fatura antes de continuar.'
         : 'Selecione uma conta antes de continuar.')
       return
@@ -470,18 +485,22 @@ export default function Importacao() {
     }
     const batchId = Date.now().toString(36)
     let count = 0
+    let reconciledCount = 0
     let skipped = 0
     const failed = []
     let accountSummaryError = null
 
     try {
-      const monthKeys = isInvoiceImport
-        ? [selectedMonthKey]
-        : [...new Set(
-            toSave
-              .map((row) => row.date?.slice(0, 7))
-              .filter(Boolean),
-          )]
+      const monthKeys = [...new Set(
+        toSave
+          .map((row) => computeImportCompetencyMonth(row, {
+            isInvoiceImport,
+            isReceiptCardImport,
+            selectedMonthKey,
+            card: selectedCard,
+          }))
+          .filter(Boolean),
+      )]
 
       const existingByMonth = await Promise.all(
         monthKeys.map((monthKey) => {
@@ -494,17 +513,24 @@ export default function Importacao() {
         }),
       )
 
+      const existingTransactions = existingByMonth.flat()
+      const duplicateOptions = importUsesCard
+        ? { cardIdOverride: cardId }
+        : { accountIdOverride: accountId }
       const knownSignatures = new Set(
-        existingByMonth
-          .flat()
-          .map((tx) => buildDuplicateSignature(tx)),
+        existingTransactions.map((tx) => buildDuplicateSignature(tx)),
       )
+      const reconciledIds = new Set()
 
       for (const row of toSave) {
         const rowAudit = duplicateMapByRowId[row.id]
-        const signature = buildDuplicateSignature(row, isInvoiceImport
-          ? { cardIdOverride: cardId }
-          : { accountIdOverride: accountId })
+        const resolvedCompetencyMonth = computeImportCompetencyMonth(row, {
+          isInvoiceImport,
+          isReceiptCardImport,
+          selectedMonthKey,
+          card: selectedCard,
+        })
+        const signature = buildDuplicateSignature(row, duplicateOptions)
         const hintedCategory = findCategoryByHints(categories, row.type, row.categoryHints)
         if (rowAudit?.exact) {
           skipped++
@@ -524,19 +550,51 @@ export default function Importacao() {
               : row.type === 'transfer_internal'
                 ? 'nature_internal_transfer'
                 : 'nature_expense'
+          const receiptInvoiceMatch = isInvoiceImport
+            ? findReceiptInvoiceReconciliationCandidate(
+                row,
+                existingTransactions.filter((tx) => !reconciledIds.has(tx.id)),
+                { cardIdOverride: cardId },
+              )
+            : null
+          if (receiptInvoiceMatch?.transaction) {
+            const matchedTx = receiptInvoiceMatch.transaction
+            await updateTransaction(user.uid, matchedTx.id, {
+              paymentMethod: 'credit_card',
+              cardId: cardId || null,
+              cardName: selectedCard?.name || null,
+              accountId: null,
+              competencyMonth: resolvedCompetencyMonth,
+              balanceImpact: false,
+              affectsBudget: true,
+              reconciledWithInvoice: true,
+              reconciledAt: new Date().toISOString(),
+              reconciledImportBatchId: batchId,
+              reconciledInvoiceDate: row.date,
+              reconciledInvoiceDescription: row.description,
+              reconciledInvoiceAmount: Number(row.amount || 0),
+              ...(matchedTx.categoryId ? {} : {
+                categoryId: hintedCategory?.id || null,
+                categoryName: hintedCategory?.name || null,
+              }),
+            }, { workspaceId: activeWorkspaceId })
+            reconciledIds.add(matchedTx.id)
+            reconciledCount += 1
+            continue
+          }
           await addTransaction(user.uid, {
             type:                     row.type,
             description:              row.description,
             amount:                   row.amount,
             date:                     row.date,
-            competencyMonth:          isInvoiceImport ? selectedMonthKey : row.date.slice(0, 7),
-            accountId:                isInvoiceImport ? null : accountId,
-            cardId:                   isInvoiceImport ? (cardId || null) : null,
-            cardName:                 isInvoiceImport ? (selectedCard?.name || null) : null,
+            competencyMonth:          resolvedCompetencyMonth,
+            accountId:                importUsesCard ? null : accountId,
+            cardId:                   importUsesCard ? (cardId || null) : null,
+            cardName:                 importUsesCard ? (selectedCard?.name || null) : null,
             categoryId:               hintedCategory?.id || null,
             categoryName:             hintedCategory?.name || null,
             notes:                    '',
-            paymentMethod:            isInvoiceImport ? 'credit_card' : null,
+            paymentMethod:            importUsesCard ? 'credit_card' : null,
             origin:                   row.source === 'image_receipt' ? 'manual' : (isInvoiceImport ? 'credit_card_import' : 'bank_import'),
             status:                   'pending',
             workspaceId:              activeWorkspaceId,
@@ -545,7 +603,7 @@ export default function Importacao() {
             transactionNatureId,
             transactionNatureLabel:   transactionNatures.find((n) => n.id === transactionNatureId)?.label || null,
             affectsBudget:            true,
-            balanceImpact:            isInvoiceImport ? false : row.type !== 'transfer_internal',
+            balanceImpact:            importUsesCard ? false : row.type !== 'transfer_internal',
             importBatchId:            batchId,
             classificationConfidence: row.classification?.confidence ?? 'low',
             receiptDetailEnabled:     row.receiptDetailEnabled && receiptItems.length > 0,
@@ -559,7 +617,7 @@ export default function Importacao() {
         }
       }
 
-      if (!isInvoiceImport && count > 0 && statementSnapshotPayload) {
+      if (!isInvoiceImport && !isReceiptImport && count > 0 && statementSnapshotPayload) {
         try {
           await updateAccount(accountId, statementSnapshotPayload)
         } catch (err) {
@@ -568,7 +626,7 @@ export default function Importacao() {
         }
       }
 
-      if (isInvoiceImport && count > 0 && invoiceSnapshotPayload) {
+      if (isInvoiceImport && (count > 0 || reconciledCount > 0) && invoiceSnapshotPayload) {
         try {
           await updateCard(cardId, invoiceSnapshotPayload)
         } catch (err) {
@@ -577,7 +635,7 @@ export default function Importacao() {
         }
       }
 
-      setSavedCount(count)
+      setSavedCount(count + reconciledCount)
       setSkippedCount(skipped)
       if (failed.length > 0) {
         setSaveError(`${failed.length} lançamento(s) não puderam ser salvos.`)
@@ -593,10 +651,14 @@ export default function Importacao() {
         setSaveError(accountSummaryError)
       }
 
-      if (count > 0 && failed.length === 0 && skipped === 0) {
+      if ((count > 0 || reconciledCount > 0) && failed.length === 0 && skipped === 0) {
         setSaveMessage(isInvoiceImport
-          ? 'Lancamentos da fatura salvos com sucesso.'
-          : 'Lancamentos do extrato salvos com sucesso.')
+          ? (reconciledCount > 0
+              ? `Lancamentos da fatura conciliados com sucesso (${reconciledCount} cupom(ns) reaproveitado(s)).`
+              : 'Lancamentos da fatura salvos com sucesso.')
+          : (isReceiptImport
+              ? 'Cupom salvo com sucesso em Lancamentos.'
+              : 'Lancamentos do extrato salvos com sucesso.'))
       }
 
       setStep('done')
@@ -628,6 +690,7 @@ export default function Importacao() {
     setShowCreateAccount(false)
     setShowCreateCard(false)
     setCreatingTarget(false)
+    setReceiptPaymentTarget('credit_card')
     setStep('idle')
   }
 
@@ -642,13 +705,18 @@ export default function Importacao() {
 
       setDuplicateAuditLoading(true)
       try {
-        const monthKeys = statementSummary?.kind === 'invoice'
-          ? [selectedMonthKey]
-          : [...new Set(
-              parsedRows
-                .map((row) => row.date?.slice(0, 7))
-                .filter(Boolean),
-            )]
+        const isReceiptImport = parsedRows.some((row) => row.source === 'image_receipt')
+        const isReceiptCardImport = isReceiptImport && receiptPaymentTarget === 'credit_card'
+        const monthKeys = [...new Set(
+          parsedRows
+            .map((row) => computeImportCompetencyMonth(row, {
+              isInvoiceImport: statementSummary?.kind === 'invoice',
+              isReceiptCardImport,
+              selectedMonthKey,
+              card: selectedCard,
+            }))
+            .filter(Boolean),
+        )]
 
         const existingByMonth = await Promise.all(
           monthKeys.map((monthKey) => {
@@ -673,11 +741,14 @@ export default function Importacao() {
 
     loadExistingTransactions()
     return () => { cancelled = true }
-  }, [step, user?.uid, parsedRows, statementSummary?.kind, selectedMonthKey, activeWorkspaceId, myRole])
+  }, [step, user?.uid, parsedRows, statementSummary?.kind, selectedMonthKey, activeWorkspaceId, myRole, receiptPaymentTarget, selectedCard])
 
   const isInvoiceImport = statementSummary?.kind === 'invoice'
-  const targetSelected = isInvoiceImport ? !!cardId : !!accountId
-  const canImportOpeningBalanceOnly = !isInvoiceImport && hasCurrencyValue(statementSummary?.closingBalance)
+  const isReceiptImport = parsedRows.some((row) => row.source === 'image_receipt')
+  const isReceiptCardImport = isReceiptImport && receiptPaymentTarget === 'credit_card'
+  const importUsesCard = isInvoiceImport || isReceiptCardImport
+  const targetSelected = importUsesCard ? !!cardId : !!accountId
+  const canImportOpeningBalanceOnly = !isInvoiceImport && !isReceiptImport && hasCurrencyValue(statementSummary?.closingBalance)
   const matchedAccountId = useMemo(
     () => findMatchingAccountId(accounts, statementSummary),
     [accounts, statementSummary],
@@ -707,13 +778,13 @@ export default function Importacao() {
   useEffect(() => {
     if (step !== 'preview') return
 
-    if (isInvoiceImport) {
+    if (importUsesCard) {
       if (!cardId && matchedCardId) {
         setCardId(matchedCardId)
       } else if (!cardId && availableCards.length === 1) {
         setCardId(availableCards[0].id)
       }
-      setShowCreateCard(!matchedCardId)
+      setShowCreateCard(isInvoiceImport && !matchedCardId)
       return
     }
 
@@ -722,14 +793,14 @@ export default function Importacao() {
     } else if (!accountId && accounts.length === 1) {
       setAccountId(accounts[0].id)
     }
-    setShowCreateAccount(!matchedAccountId)
-  }, [step, isInvoiceImport, accountId, cardId, accounts, availableCards, matchedAccountId, matchedCardId])
+    setShowCreateAccount(!isReceiptImport && !matchedAccountId)
+  }, [step, importUsesCard, isInvoiceImport, isReceiptImport, accountId, cardId, accounts, availableCards, matchedAccountId, matchedCardId])
 
   const duplicateMapByRowId = useMemo(() => {
     if (!targetSelected || existingMonthTx.length === 0) return {}
     const map = {}
     parsedRows.forEach((row) => {
-      const matches = findDuplicateMatches(row, existingMonthTx, isInvoiceImport
+      const matches = findDuplicateMatches(row, existingMonthTx, importUsesCard
         ? { cardIdOverride: cardId }
         : { accountIdOverride: accountId })
       map[row.id] = {
@@ -740,7 +811,7 @@ export default function Importacao() {
       }
     })
     return map
-  }, [parsedRows, existingMonthTx, targetSelected, isInvoiceImport, accountId, cardId])
+  }, [parsedRows, existingMonthTx, targetSelected, importUsesCard, accountId, cardId])
 
   useEffect(() => {
     if (!targetSelected) return
@@ -921,10 +992,28 @@ export default function Importacao() {
         )}
 
         {/* Account selector */}
-        {isInvoiceImport && (
+        {isReceiptImport && (
+          <div className="import-target-mode">
+            <button
+              type="button"
+              className={`import-target-pill${receiptPaymentTarget === 'credit_card' ? ' active' : ''}`}
+              onClick={() => setReceiptPaymentTarget('credit_card')}
+            >
+              Cupom no cartao
+            </button>
+            <button
+              type="button"
+              className={`import-target-pill${receiptPaymentTarget === 'account' ? ' active' : ''}`}
+              onClick={() => setReceiptPaymentTarget('account')}
+            >
+              Conta / debito / Pix
+            </button>
+          </div>
+        )}
+        {importUsesCard && (
           <>
             <div className="account-select-row">
-              <label className="account-select-label">Cartao da fatura</label>
+              <label className="account-select-label">{isInvoiceImport ? 'Cartao da fatura' : 'Cartao usado no cupom'}</label>
               <select
                 className="account-select"
                 value={cardId}
@@ -936,7 +1025,9 @@ export default function Importacao() {
                 ))}
               </select>
               <p className="import-target-hint">
-                Escolha o cartao correto para que a fatura entre nos Lancamentos sem afetar o saldo da conta.
+                {isInvoiceImport
+                  ? 'Escolha o cartao correto para que a fatura entre nos Lancamentos sem afetar o saldo da conta.'
+                  : 'Ao salvar este cupom no cartao, a fatura futura podera reaproveitar esse lancamento em vez de duplicar.'}
               </p>
             </div>
 
@@ -946,7 +1037,9 @@ export default function Importacao() {
                 className="btn-secondary"
                 onClick={() => setShowCreateCard((current) => !current)}
               >
-                {showCreateCard ? 'Fechar criacao de cartao' : 'Criar novo cartao a partir desta fatura'}
+                {showCreateCard
+                  ? 'Fechar criacao de cartao'
+                  : (isInvoiceImport ? 'Criar novo cartao a partir desta fatura' : 'Criar cartao para este cupom')}
               </button>
 
               {showCreateCard && (
@@ -996,7 +1089,7 @@ export default function Importacao() {
           </>
         )}
 
-        {!isInvoiceImport && (
+        {!importUsesCard && (
           <>
             <div className="account-select-row">
               <label className="account-select-label">Conta de importação</label>

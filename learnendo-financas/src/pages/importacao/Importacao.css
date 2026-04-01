@@ -269,6 +269,26 @@
   appearance: auto;
 }
 .account-select:focus { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.import-target-mode {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.import-target-pill {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.import-target-pill.active {
+  border-color: var(--color-primary);
+  background: #eff6ff;
+  color: var(--color-primary);
+}
 .import-target-hint {
   margin: 0;
   font-size: 0.78rem;
@@ -402,6 +422,7 @@
 .preview-date       { font-size: 0.72rem; color: var(--color-text-muted); }
 .preview-confidence { font-size: 0.7rem; color: var(--color-text-muted); }
 .preview-review-tag { font-size: 0.7rem; font-weight: 700; color: #92400e; background: #fde68a; border-radius: 999px; padding: 1px 6px; }
+.preview-review-tag--info { color: #1d4ed8; background: #dbeafe; }
 
 .preview-amount     { font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
 .preview-amount.pos { color: var(--color-success); }
