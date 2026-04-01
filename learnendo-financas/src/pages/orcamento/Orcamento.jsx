@@ -104,9 +104,11 @@ function buildStructuredModel(budgetItems) {
     })
   }
 
-  for (const defaultName of INITIAL_INCOME_ITEMS) {
-    const exists = income.some((row) => normalizeKey(row.name) === normalizeKey(defaultName))
-    if (!exists) income.push({ id: null, name: defaultName, amount: '0' })
+  const hasAnyPersistedRows = Array.isArray(budgetItems) && budgetItems.length > 0
+  if (!hasAnyPersistedRows && income.length === 0) {
+    for (const defaultName of INITIAL_INCOME_ITEMS) {
+      income.push({ id: null, name: defaultName, amount: '0' })
+    }
   }
 
   const expenses = PRESET_EXPENSE_CATEGORIES.map((preset) => {

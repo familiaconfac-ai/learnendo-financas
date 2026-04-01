@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useFinance } from '../../context/FinanceContext'
 import Card, { CardHeader } from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import Modal from '../../components/ui/Modal'
@@ -19,12 +20,31 @@ function formatImportDate(value) {
   return parsed.toLocaleDateString('pt-BR')
 }
 
+function buildMonthKey(year, month) {
+  return `${year}-${String(month).padStart(2, '0')}`
+}
+
+function formatMonthLabel(year, month) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(year, month - 1, 1))
+}
+
+function getMonthOpeningBalance(account, monthKey) {
+  const value = account?.monthlyOpeningBalances?.[monthKey]
+  return Number.isFinite(Number(value)) ? Number(value) : null
+}
+
 export default function Contas() {
   const [tab, setTab] = useState('contas') // 'contas' | 'cartoes'
+  const { selectedMonth, selectedYear } = useFinance()
   const { accounts, add, remove } = useAccounts()
   const [modalOpen, setModalOpen] = useState(false)
   const [form, setForm]           = useState({ name: '', bank: '', type: 'checking', balance: '' })
   const [saving, setSaving]       = useState(false)
+  const selectedMonthKey = buildMonthKey(selectedYear, selectedMonth)
+  const selectedMonthLabel = formatMonthLabel(selectedYear, selectedMonth)
 
   function handleChange(e) {
     setForm((f) => ({ ...f, [e.target.name]: e.target.value }))
@@ -81,7 +101,12 @@ export default function Contas() {
                 <p className="contas-empty-hint">Toque em “+ Nova Conta” para adicionar.</p>
               </Card>
             ) : (
-              accounts.map((acc) => (
+              accounts.map((acc) => {
+                const monthOpeningBalance = getMonthOpeningBalance(acc, selectedMonthKey)
+                const baselineBalance = monthOpeningBalance ?? Number(acc.initialBalance || 0)
+                const balanceDiff = Number(acc.balance || 0) - baselineBalance
+
+                return (
                 <Card key={acc.id} className="account-card">
                   <div className="acc-header">
                     <div className="acc-icon" style={{ background: acc.color || '#1a56db' }}>
@@ -100,11 +125,18 @@ export default function Contas() {
                     </span>
                   </div>
                   <div className="acc-meta">
-                    <span>Saldo inicial: {formatCurrency(acc.initialBalance || 0)}</span>
-                    <span className={`acc-diff ${(acc.balance - (acc.initialBalance || 0)) >= 0 ? 'pos' : 'neg'}`}>
-                      {(acc.balance - (acc.initialBalance || 0)) >= 0 ? '+' : ''}{formatCurrency(acc.balance - (acc.initialBalance || 0))}
+                    <span>
+                      {monthOpeningBalance !== null ? `Saldo inicial de ${selectedMonthLabel}` : 'Saldo inicial'}: {formatCurrency(baselineBalance)}
+                    </span>
+                    <span className={`acc-diff ${balanceDiff >= 0 ? 'pos' : 'neg'}`}>
+                      {balanceDiff >= 0 ? '+' : ''}{formatCurrency(balanceDiff)}
                     </span>
                   </div>
+                  {monthOpeningBalance !== null && (
+                    <p className="acc-month-opening-note">
+                      Este valor veio do saldo anterior importado para {selectedMonthLabel}.
+                    </p>
+                  )}
                   {hasStatementSnapshot(acc) && (
                     <div className="acc-statement">
                       <div className="acc-statement-header">
@@ -135,7 +167,8 @@ export default function Contas() {
                     </div>
                   )}
                 </Card>
-              ))
+                )
+              })
             )}
 
             {/* Resumo total */}

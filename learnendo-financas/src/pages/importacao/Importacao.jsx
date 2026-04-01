@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import { useFinance } from '../../context/FinanceContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { useAccounts } from '../../hooks/useAccounts'
 import { useCategories } from '../../hooks/useCategories'
@@ -29,6 +30,17 @@ function isoToBR(iso) {
   if (!iso) return ''
   const [y, m, d] = iso.split('-')
   return `${d}/${m}/${y}`
+}
+
+function buildMonthKey(year, month) {
+  return `${year}-${String(month).padStart(2, '0')}`
+}
+
+function formatMonthLabel(year, month) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(year, month - 1, 1))
 }
 
 const ACCOUNT_TYPE_LABELS = {
@@ -89,6 +101,8 @@ function hydrateImportedReceiptItems(items, categories) {
 }
 
 function hasCurrencyValue(value) {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string' && value.trim() === '') return false
   return Number.isFinite(Number(value))
 }
 
@@ -97,10 +111,13 @@ function hasCurrencyValue(value) {
 export default function Importacao() {
   const navigate                         = useNavigate()
   const { user }                         = useAuth()
+  const { selectedMonth, selectedYear }  = useFinance()
   const { activeWorkspaceId, myRole, permissions, transactionNatures } = useWorkspace()
   const { accounts, loading: loadingAccounts, update: updateAccount } = useAccounts()
   const { categories } = useCategories()
   const availableCards = MOCK_CARDS
+  const selectedMonthKey = buildMonthKey(selectedYear, selectedMonth)
+  const selectedMonthLabel = formatMonthLabel(selectedYear, selectedMonth)
 
   // ── State ────────────────────────────────────────────────────────────────
 
@@ -120,6 +137,12 @@ export default function Importacao() {
   const [statementSummary, setStatementSummary] = useState(null)
   const [existingMonthTx, setExistingMonthTx] = useState([])
   const [duplicateAuditLoading, setDuplicateAuditLoading] = useState(false)
+  const [importOnlyOpeningBalance, setImportOnlyOpeningBalance] = useState(false)
+  const [balanceOnlyApplied, setBalanceOnlyApplied] = useState(false)
+  const selectedAccount = useMemo(
+    () => accounts.find((account) => account.id === accountId) || null,
+    [accounts, accountId],
+  )
 
   // ── File handling ─────────────────────────────────────────────────────────
 
@@ -128,6 +151,8 @@ export default function Importacao() {
     setParsePreviewLines([])
     setSaveError(null)
     setSaveMessage('')
+    setBalanceOnlyApplied(false)
+    setImportOnlyOpeningBalance(false)
     setFileName(file.name)
     setAccountId('')
     setCardId('')
@@ -187,6 +212,9 @@ export default function Importacao() {
     if (!user?.uid) return
     const isInvoiceImport = statementSummary?.kind === 'invoice'
     const selectedCard = availableCards.find((card) => card.id === cardId)
+    const canSaveBalanceOnly = !isInvoiceImport
+      && importOnlyOpeningBalance
+      && hasCurrencyValue(statementSummary?.closingBalance)
     if (!permissions.canImport) {
       setSaveError('Seu papel atual não permite importação neste workspace.')
       return
@@ -200,7 +228,55 @@ export default function Importacao() {
 
     setSaveError(null)
     setSaveMessage('')
+    setBalanceOnlyApplied(false)
     setStep('saving')
+
+    const statementSnapshotPayload = !isInvoiceImport && accountId && statementSummary?.hasBalanceInfo
+      ? {
+          lastStatementOpeningBalance: hasCurrencyValue(statementSummary.openingBalance) ? Number(statementSummary.openingBalance) : null,
+          lastStatementClosingBalance: hasCurrencyValue(statementSummary.closingBalance) ? Number(statementSummary.closingBalance) : null,
+          lastStatementNetMovement: Number(statementSummary.netMovement || 0),
+          lastStatementImportedAt: new Date().toISOString(),
+          lastStatementFileName: fileName || '',
+        }
+      : null
+
+    if (canSaveBalanceOnly) {
+      try {
+        const closingBalance = Number(statementSummary.closingBalance)
+        const monthlyOpeningBalances = selectedAccount?.monthlyOpeningBalances
+          && typeof selectedAccount.monthlyOpeningBalances === 'object'
+          ? selectedAccount.monthlyOpeningBalances
+          : {}
+        const payload = {
+          monthlyOpeningBalances: {
+            ...monthlyOpeningBalances,
+            [selectedMonthKey]: closingBalance,
+          },
+          monthlyOpeningBalanceMonth: selectedMonthKey,
+          ...(statementSnapshotPayload || {}),
+        }
+
+        if (!hasCurrencyValue(selectedAccount?.initialBalance)) {
+          payload.initialBalance = closingBalance
+        }
+        if (!hasCurrencyValue(selectedAccount?.balance)) {
+          payload.balance = closingBalance
+        }
+
+        await updateAccount(accountId, payload)
+        setSavedCount(0)
+        setSkippedCount(0)
+        setBalanceOnlyApplied(true)
+        setSaveMessage(`Saldo inicial de ${selectedMonthLabel} configurado com ${formatCurrency(closingBalance)}.`)
+        setStep('done')
+      } catch (err) {
+        console.error('[Importacao] Could not persist opening balance:', err.message)
+        setSaveError(err.message || 'Nao foi possivel registrar o saldo inicial deste mes.')
+        setStep('done')
+      }
+      return
+    }
 
     const toSave = parsedRows.filter((r) => selectedIds.has(r.id))
     if (toSave.length === 0) {
@@ -296,15 +372,9 @@ export default function Importacao() {
         }
       }
 
-      if (!isInvoiceImport && count > 0 && accountId && statementSummary?.hasBalanceInfo) {
+      if (!isInvoiceImport && count > 0 && statementSnapshotPayload) {
         try {
-          await updateAccount(accountId, {
-            lastStatementOpeningBalance: hasCurrencyValue(statementSummary.openingBalance) ? Number(statementSummary.openingBalance) : null,
-            lastStatementClosingBalance: hasCurrencyValue(statementSummary.closingBalance) ? Number(statementSummary.closingBalance) : null,
-            lastStatementNetMovement: Number(statementSummary.netMovement || 0),
-            lastStatementImportedAt: new Date().toISOString(),
-            lastStatementFileName: fileName || '',
-          })
+          await updateAccount(accountId, statementSnapshotPayload)
         } catch (err) {
           console.error('[Importacao] Could not persist statement summary on account:', err.message)
           accountSummaryError = 'Os lancamentos foram salvos, mas o resumo de saldo nao pode ser vinculado a conta.'
@@ -355,6 +425,8 @@ export default function Importacao() {
     setFileName('')
     setStatementSummary(null)
     setExistingMonthTx([])
+    setImportOnlyOpeningBalance(false)
+    setBalanceOnlyApplied(false)
     setStep('idle')
   }
 
@@ -402,6 +474,24 @@ export default function Importacao() {
 
   const isInvoiceImport = statementSummary?.kind === 'invoice'
   const targetSelected = isInvoiceImport ? !!cardId : !!accountId
+  const canImportOpeningBalanceOnly = !isInvoiceImport && hasCurrencyValue(statementSummary?.closingBalance)
+
+  useEffect(() => {
+    if (step !== 'preview' || !canImportOpeningBalanceOnly) {
+      setImportOnlyOpeningBalance(false)
+      return
+    }
+
+    const rowMonths = [...new Set(
+      parsedRows
+        .map((row) => row.date?.slice(0, 7))
+        .filter(Boolean),
+    )]
+    const shouldSuggestBalanceOnly = rowMonths.length > 0
+      && rowMonths.every((monthKey) => monthKey < selectedMonthKey)
+
+    setImportOnlyOpeningBalance(shouldSuggestBalanceOnly)
+  }, [step, canImportOpeningBalanceOnly, parsedRows, selectedMonthKey])
 
   useEffect(() => {
     if (step !== 'preview') return
@@ -453,12 +543,13 @@ export default function Importacao() {
   const exactDupCount = parsedRows.filter((r) => duplicateMapByRowId[r.id]?.exact).length
   const possibleDupCount = parsedRows.filter((r) => duplicateMapByRowId[r.id]?.possible).length
   const selectedNonExactCount = parsedRows.filter((r) => selectedIds.has(r.id) && !duplicateMapByRowId[r.id]?.exact).length
+  const openingBalanceOnlySelected = canImportOpeningBalanceOnly && importOnlyOpeningBalance
   const netSelected   = parsedRows
     .filter((r) => selectedIds.has(r.id))
     .reduce((sum, r) => sum + (r.direction === 'credit' ? r.amount : -r.amount), 0)
   const saveDisabledReason = !targetSelected
     ? (isInvoiceImport ? 'Selecione o cartao da fatura para liberar o salvamento.' : 'Selecione a conta do extrato para liberar o salvamento.')
-    : selectedNonExactCount === 0
+    : !openingBalanceOnlySelected && selectedNonExactCount === 0
       ? 'Nao ha lancamentos novos selecionados para salvar.'
       : ''
 
@@ -632,7 +723,9 @@ export default function Importacao() {
           </div>
         )}
 
-        <div className="account-select-row">
+        {!isInvoiceImport && (
+          <>
+            <div className="account-select-row">
           <label className="account-select-label">Conta de importação</label>
           <select
             className="account-select"
@@ -647,10 +740,27 @@ export default function Importacao() {
           </select>
         </div>
 
-        {!isInvoiceImport && (
-          <p className="import-target-hint">
-            Escolha a conta para salvar os lancamentos e vincular o saldo anterior/atual deste extrato.
-          </p>
+            <p className="import-target-hint">
+              Escolha a conta para salvar os lancamentos e vincular o saldo anterior/atual deste extrato.
+            </p>
+
+            {canImportOpeningBalanceOnly && (
+              <label className="import-balance-only">
+                <input
+                  type="checkbox"
+                  checked={importOnlyOpeningBalance}
+                  onChange={(e) => setImportOnlyOpeningBalance(e.target.checked)}
+                />
+                <div>
+                  <strong>Comecar {selectedMonthLabel} apenas com o saldo anterior</strong>
+                  <p>
+                    Usa o saldo atual deste extrato como saldo inicial de {selectedMonthLabel}
+                    e nao importa os lancamentos do mes anterior.
+                  </p>
+                </div>
+              </label>
+            )}
+          </>
         )}
 
         {/* Bulk controls */}
@@ -719,6 +829,10 @@ export default function Importacao() {
 
         {saveDisabledReason ? (
           <p className="import-action-hint import-action-hint--warn">{saveDisabledReason}</p>
+        ) : openingBalanceOnlySelected ? (
+          <p className="import-action-hint">
+            Apenas o saldo inicial de {selectedMonthLabel} sera registrado para esta conta.
+          </p>
         ) : (
           <p className="import-action-hint">Os itens salvos entram em Lancamentos para revisao.</p>
         )}
@@ -731,7 +845,9 @@ export default function Importacao() {
             onClick={handleConfirmImport}
             disabled={!!saveDisabledReason}
           >
-            Salvar em Lancamentos {selectedNonExactCount > 0 ? `(${selectedNonExactCount})` : ''}
+            {openingBalanceOnlySelected
+              ? `Salvar saldo inicial de ${selectedMonthLabel}`
+              : `Salvar em Lancamentos ${selectedNonExactCount > 0 ? `(${selectedNonExactCount})` : ''}`}
           </button>
         </div>
       </>
@@ -742,7 +858,11 @@ export default function Importacao() {
     return (
       <div className="import-loading">
         <div className="import-spinner" />
-        <p>Salvando <strong>{selectedIds.size}</strong> lançamentos…</p>
+        <p>
+          {openingBalanceOnlySelected
+            ? `Registrando o saldo inicial de ${selectedMonthLabel}...`
+            : <>Salvando <strong>{selectedIds.size}</strong> lançamentos…</>}
+        </p>
       </div>
     )
   }
@@ -752,7 +872,9 @@ export default function Importacao() {
       <div className="import-done">
         <span className="import-done-icon">✅</span>
         <p className="import-done-title">
-          {savedCount} lançamento{savedCount !== 1 ? 's' : ''} importado{savedCount !== 1 ? 's' : ''}!
+          {balanceOnlyApplied
+            ? `Saldo inicial de ${selectedMonthLabel} configurado!`
+            : `${savedCount} lançamento${savedCount !== 1 ? 's' : ''} importado${savedCount !== 1 ? 's' : ''}!`}
         </p>
         {saveMessage && <p className="import-done-note">{saveMessage}</p>}
         {skippedCount > 0 && (

@@ -274,6 +274,32 @@
   font-size: 0.78rem;
   color: var(--color-text-muted);
 }
+.import-balance-only {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  background: #eff6ff;
+  cursor: pointer;
+}
+.import-balance-only input {
+  margin-top: 0.15rem;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+.import-balance-only strong {
+  display: block;
+  font-size: 0.84rem;
+  color: #0f172a;
+}
+.import-balance-only p {
+  margin: 0.2rem 0 0;
+  font-size: 0.77rem;
+  color: #334155;
+}
 
 /* ── Bulk controls ───────────────────────────────────────────────────────── */
 

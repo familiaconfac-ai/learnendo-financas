@@ -776,7 +776,7 @@ async function parsePDF(file) {
 
 function analyzePdfLines(lines) {
   const datePattern = /\b\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?\b|\b\d{1,2}\s+[A-Za-z]{3}(?:\s+\d{4})?\b/
-  const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
+  const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
 
   let dateLines = 0
   let amountLines = 0
@@ -860,7 +860,7 @@ function detectPdfLayout(lines) {
 }
 
 function extractBrazilianAmounts(text) {
-  const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
+  const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
   return text.match(amountPattern) || []
 }
 
@@ -1055,7 +1055,7 @@ function parseGenericPdf(lines, kind) {
 
   const currentYear = new Date().getFullYear()
   const datePattern = /\b(\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.](?:\d{2}|\d{4}))?)\b/
-  const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
+  const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
   const skipLinePattern = /\bsaldo\b|\bsaldo anterior\b|\bsaldo final\b|\bsaldo do dia\b|\btotal\b|\bresumo\b|\bpagina\b|\bextrato\b/i
 
   for (const line of lines) {
