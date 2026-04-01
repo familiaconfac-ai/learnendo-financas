@@ -10,6 +10,7 @@ import { classifyBatch } from '../../utils/transactionClassifier'
 import { buildDuplicateSignature, findDuplicateMatches } from '../../utils/transactionDuplicates'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
+import { MOCK_CARDS } from '../../utils/mockData'
 import Card, { CardHeader } from '../../components/ui/Card'
 import './Importacao.css'
 
@@ -87,14 +88,19 @@ function hydrateImportedReceiptItems(items, categories) {
   return normalizeReceiptItems(prepared, categories.filter((category) => category.type === 'expense'))
 }
 
+function hasCurrencyValue(value) {
+  return Number.isFinite(Number(value))
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Importacao() {
   const navigate                         = useNavigate()
   const { user }                         = useAuth()
   const { activeWorkspaceId, myRole, permissions, transactionNatures } = useWorkspace()
-  const { accounts, loading: loadingAccounts } = useAccounts()
+  const { accounts, loading: loadingAccounts, update: updateAccount } = useAccounts()
   const { categories } = useCategories()
+  const availableCards = MOCK_CARDS
 
   // ── State ────────────────────────────────────────────────────────────────
 
@@ -102,6 +108,7 @@ export default function Importacao() {
   const [parsedRows, setParsedRows]      = useState([])
   const [selectedIds, setSelectedIds]    = useState(new Set())
   const [accountId, setAccountId]        = useState('')
+  const [cardId, setCardId]              = useState('')
   const [parseError, setParseError]      = useState(null)
   const [parsePreviewLines, setParsePreviewLines] = useState([])
   const [savedCount, setSavedCount]      = useState(0)
@@ -110,6 +117,7 @@ export default function Importacao() {
   const [dragOver, setDragOver]          = useState(false)
   const [fileName, setFileName]          = useState('')
   const [saveMessage, setSaveMessage]    = useState('')
+  const [statementSummary, setStatementSummary] = useState(null)
   const [existingMonthTx, setExistingMonthTx] = useState([])
   const [duplicateAuditLoading, setDuplicateAuditLoading] = useState(false)
 
@@ -118,11 +126,16 @@ export default function Importacao() {
   async function handleFile(file) {
     setParseError(null)
     setParsePreviewLines([])
+    setSaveError(null)
+    setSaveMessage('')
     setFileName(file.name)
+    setAccountId('')
+    setCardId('')
     setStep('parsing')
 
     try {
       const raw = await parseStatementFile(file)
+      setStatementSummary(raw?.__summary || null)
 
       const hasImageRows = raw.some((row) => row.source === 'image_receipt')
       const classified = (hasImageRows ? raw : classifyBatch(raw)).map((row, idx) => ({
@@ -137,6 +150,7 @@ export default function Importacao() {
       setStep('preview')
     } catch (err) {
       console.error('[Importacao] Parse error:', err)
+      setStatementSummary(null)
       setParseError(err.message || 'Não foi possível processar o arquivo.')
       setParsePreviewLines(Array.isArray(err.previewLines) ? err.previewLines : [])
       setStep('idle')
@@ -171,12 +185,16 @@ export default function Importacao() {
 
   async function handleConfirmImport() {
     if (!user?.uid) return
+    const isInvoiceImport = statementSummary?.kind === 'invoice'
+    const selectedCard = availableCards.find((card) => card.id === cardId)
     if (!permissions.canImport) {
       setSaveError('Seu papel atual não permite importação neste workspace.')
       return
     }
-    if (!accountId) {
-      setSaveError('Selecione uma conta antes de continuar.')
+    if (isInvoiceImport ? !cardId : !accountId) {
+      setSaveError(isInvoiceImport
+        ? 'Selecione o cartao/fatura antes de continuar.'
+        : 'Selecione uma conta antes de continuar.')
       return
     }
 
@@ -185,10 +203,16 @@ export default function Importacao() {
     setStep('saving')
 
     const toSave = parsedRows.filter((r) => selectedIds.has(r.id))
+    if (toSave.length === 0) {
+      setSaveError('Selecione ao menos um lancamento para salvar.')
+      setStep('preview')
+      return
+    }
     const batchId = Date.now().toString(36)
     let count = 0
     let skipped = 0
     const failed = []
+    let accountSummaryError = null
 
     try {
       const monthKeys = [...new Set(
@@ -216,7 +240,9 @@ export default function Importacao() {
 
       for (const row of toSave) {
         const rowAudit = duplicateMapByRowId[row.id]
-        const signature = buildDuplicateSignature(row, accountId)
+        const signature = buildDuplicateSignature(row, isInvoiceImport
+          ? { cardIdOverride: cardId }
+          : { accountIdOverride: accountId })
         const hintedCategory = findCategoryByHints(categories, row.type, row.categoryHints)
         if (rowAudit?.exact) {
           skipped++
@@ -229,24 +255,34 @@ export default function Importacao() {
 
         try {
           const receiptItems = hydrateImportedReceiptItems(row.receiptItems, categories)
+          const transactionNatureId = row.type === 'income'
+            ? 'nature_income'
+            : row.type === 'investment'
+              ? 'nature_investment'
+              : row.type === 'transfer_internal'
+                ? 'nature_internal_transfer'
+                : 'nature_expense'
           await addTransaction(user.uid, {
             type:                     row.type,
             description:              row.description,
             amount:                   row.amount,
             date:                     row.date,
-            accountId,
+            accountId:                isInvoiceImport ? null : accountId,
+            cardId:                   isInvoiceImport ? (cardId || null) : null,
+            cardName:                 isInvoiceImport ? (selectedCard?.name || null) : null,
             categoryId:               hintedCategory?.id || null,
             categoryName:             hintedCategory?.name || null,
             notes:                    '',
-            origin:                   row.source === 'image_receipt' ? 'manual' : 'bank_import',
+            paymentMethod:            isInvoiceImport ? 'credit_card' : null,
+            origin:                   row.source === 'image_receipt' ? 'manual' : (isInvoiceImport ? 'credit_card_import' : 'bank_import'),
             status:                   'pending',
             workspaceId:              activeWorkspaceId,
             createdBy:                user.uid,
             userId:                   user.uid,
-            transactionNatureId:      row.type === 'income' ? 'nature_income' : 'nature_expense',
-            transactionNatureLabel:   transactionNatures.find((n) => n.id === (row.type === 'income' ? 'nature_income' : 'nature_expense'))?.label || null,
+            transactionNatureId,
+            transactionNatureLabel:   transactionNatures.find((n) => n.id === transactionNatureId)?.label || null,
             affectsBudget:            true,
-            balanceImpact:            row.type !== 'transfer_internal',
+            balanceImpact:            isInvoiceImport ? false : row.type !== 'transfer_internal',
             importBatchId:            batchId,
             classificationConfidence: row.classification?.confidence ?? 'low',
             receiptDetailEnabled:     row.receiptDetailEnabled && receiptItems.length > 0,
@@ -260,6 +296,21 @@ export default function Importacao() {
         }
       }
 
+      if (!isInvoiceImport && count > 0 && accountId && statementSummary?.hasBalanceInfo) {
+        try {
+          await updateAccount(accountId, {
+            lastStatementOpeningBalance: hasCurrencyValue(statementSummary.openingBalance) ? Number(statementSummary.openingBalance) : null,
+            lastStatementClosingBalance: hasCurrencyValue(statementSummary.closingBalance) ? Number(statementSummary.closingBalance) : null,
+            lastStatementNetMovement: Number(statementSummary.netMovement || 0),
+            lastStatementImportedAt: new Date().toISOString(),
+            lastStatementFileName: fileName || '',
+          })
+        } catch (err) {
+          console.error('[Importacao] Could not persist statement summary on account:', err.message)
+          accountSummaryError = 'Os lancamentos foram salvos, mas o resumo de saldo nao pode ser vinculado a conta.'
+        }
+      }
+
       setSavedCount(count)
       setSkippedCount(skipped)
       if (failed.length > 0) {
@@ -270,6 +321,18 @@ export default function Importacao() {
       } else if (count > 0) {
         setSaveMessage('Lançamentos salvos no Firestore com sucesso.')
       }
+      if (failed.length > 0 && accountSummaryError) {
+        setSaveError(`${failed.length} lancamento(s) nao puderam ser salvos. ${accountSummaryError}`)
+      } else if (failed.length === 0 && accountSummaryError) {
+        setSaveError(accountSummaryError)
+      }
+
+      if (count > 0 && failed.length === 0 && skipped === 0) {
+        setSaveMessage(isInvoiceImport
+          ? 'Lancamentos da fatura salvos com sucesso.'
+          : 'Lancamentos do extrato salvos com sucesso.')
+      }
+
       setStep('done')
     } catch (err) {
       console.error('[Importacao] Unexpected save error:', err)
@@ -281,6 +344,8 @@ export default function Importacao() {
   function handleReset() {
     setParsedRows([])
     setSelectedIds(new Set())
+    setAccountId('')
+    setCardId('')
     setParseError(null)
     setParsePreviewLines([])
     setSavedCount(0)
@@ -288,6 +353,7 @@ export default function Importacao() {
     setSaveError(null)
     setSaveMessage('')
     setFileName('')
+    setStatementSummary(null)
     setExistingMonthTx([])
     setStep('idle')
   }
@@ -334,11 +400,31 @@ export default function Importacao() {
     return () => { cancelled = true }
   }, [step, user?.uid, parsedRows])
 
+  const isInvoiceImport = statementSummary?.kind === 'invoice'
+  const targetSelected = isInvoiceImport ? !!cardId : !!accountId
+
+  useEffect(() => {
+    if (step !== 'preview') return
+
+    if (isInvoiceImport) {
+      if (!cardId && availableCards.length === 1) {
+        setCardId(availableCards[0].id)
+      }
+      return
+    }
+
+    if (!accountId && accounts.length === 1) {
+      setAccountId(accounts[0].id)
+    }
+  }, [step, isInvoiceImport, accountId, cardId, accounts, availableCards])
+
   const duplicateMapByRowId = useMemo(() => {
-    if (!accountId || existingMonthTx.length === 0) return {}
+    if (!targetSelected || existingMonthTx.length === 0) return {}
     const map = {}
     parsedRows.forEach((row) => {
-      const matches = findDuplicateMatches(row, existingMonthTx, { accountIdOverride: accountId })
+      const matches = findDuplicateMatches(row, existingMonthTx, isInvoiceImport
+        ? { cardIdOverride: cardId }
+        : { accountIdOverride: accountId })
       map[row.id] = {
         exact: matches.isExactDuplicate,
         possible: !matches.isExactDuplicate && matches.hasPossibleDuplicate,
@@ -347,10 +433,10 @@ export default function Importacao() {
       }
     })
     return map
-  }, [parsedRows, existingMonthTx, accountId])
+  }, [parsedRows, existingMonthTx, targetSelected, isInvoiceImport, accountId, cardId])
 
   useEffect(() => {
-    if (!accountId) return
+    if (!targetSelected) return
     setSelectedIds((prev) => {
       const next = new Set(prev)
       parsedRows.forEach((row) => {
@@ -358,7 +444,7 @@ export default function Importacao() {
       })
       return next
     })
-  }, [accountId, parsedRows, duplicateMapByRowId])
+  }, [targetSelected, parsedRows, duplicateMapByRowId])
 
   // ── Derived values ────────────────────────────────────────────────────────
 
@@ -370,6 +456,11 @@ export default function Importacao() {
   const netSelected   = parsedRows
     .filter((r) => selectedIds.has(r.id))
     .reduce((sum, r) => sum + (r.direction === 'credit' ? r.amount : -r.amount), 0)
+  const saveDisabledReason = !targetSelected
+    ? (isInvoiceImport ? 'Selecione o cartao da fatura para liberar o salvamento.' : 'Selecione a conta do extrato para liberar o salvamento.')
+    : selectedNonExactCount === 0
+      ? 'Nao ha lancamentos novos selecionados para salvar.'
+      : ''
 
   // ── Step renders ──────────────────────────────────────────────────────────
 
@@ -470,10 +561,10 @@ export default function Importacao() {
               {reviewCount > 0 && (
                 <span className="badge badge-warn"> · {reviewCount} para revisar</span>
               )}
-              {accountId && exactDupCount > 0 && (
+              {targetSelected && exactDupCount > 0 && (
                 <span className="badge badge-danger"> · {exactDupCount} duplicadas</span>
               )}
-              {accountId && possibleDupCount > 0 && (
+              {targetSelected && possibleDupCount > 0 && (
                 <span className="badge badge-info"> · {possibleDupCount} possivelmente duplicadas</span>
               )}
             </span>
@@ -483,7 +574,64 @@ export default function Importacao() {
           </span>
         </div>
 
+        {saveError && (
+          <div className="parse-error-box import-inline-error">
+            <strong>Importacao:</strong>
+            <p>{saveError}</p>
+          </div>
+        )}
+
+        {statementSummary?.hasBalanceInfo && (
+          <Card className="statement-balance-card">
+            <CardHeader
+              title={isInvoiceImport ? 'Resumo da fatura' : 'Resumo do extrato'}
+              subtitle={statementSummary.openingInferred || statementSummary.closingInferred
+                ? 'Valores estimados a partir do arquivo importado'
+                : 'Valores lidos do proprio arquivo'}
+            />
+            <div className="statement-balance-grid">
+              <div className="statement-balance-item">
+                <span className="statement-balance-label">
+                  {statementSummary.openingInferred ? 'Saldo anterior (estimado)' : 'Saldo anterior'}
+                </span>
+                <strong>{formatCurrency(Number(statementSummary.openingBalance || 0))}</strong>
+              </div>
+              <div className="statement-balance-item">
+                <span className="statement-balance-label">
+                  {statementSummary.closingInferred ? 'Saldo atual (estimado)' : 'Saldo atual'}
+                </span>
+                <strong>{formatCurrency(Number(statementSummary.closingBalance || 0))}</strong>
+              </div>
+              <div className="statement-balance-item">
+                <span className="statement-balance-label">Movimento do periodo</span>
+                <strong className={statementSummary.netMovement >= 0 ? 'balance-pos' : 'balance-neg'}>
+                  {statementSummary.netMovement >= 0 ? '+' : ''}{formatCurrency(Math.abs(Number(statementSummary.netMovement || 0)))}
+                </strong>
+              </div>
+            </div>
+          </Card>
+        )}
+
         {/* Account selector */}
+        {isInvoiceImport && (
+          <div className="account-select-row">
+            <label className="account-select-label">Cartao da fatura</label>
+            <select
+              className="account-select"
+              value={cardId}
+              onChange={(e) => setCardId(e.target.value)}
+            >
+              <option value="">Selecione um cartao...</option>
+              {availableCards.map((card) => (
+                <option key={card.id} value={card.id}>{card.name}</option>
+              ))}
+            </select>
+            <p className="import-target-hint">
+              Escolha o cartao para que a fatura entre nos Lancamentos sem afetar o saldo da conta.
+            </p>
+          </div>
+        )}
+
         <div className="account-select-row">
           <label className="account-select-label">Conta de importação</label>
           <select
@@ -498,6 +646,12 @@ export default function Importacao() {
             ))}
           </select>
         </div>
+
+        {!isInvoiceImport && (
+          <p className="import-target-hint">
+            Escolha a conta para salvar os lancamentos e vincular o saldo anterior/atual deste extrato.
+          </p>
+        )}
 
         {/* Bulk controls */}
         <div className="preview-bulk-row">
@@ -563,15 +717,21 @@ export default function Importacao() {
           })}
         </div>
 
+        {saveDisabledReason ? (
+          <p className="import-action-hint import-action-hint--warn">{saveDisabledReason}</p>
+        ) : (
+          <p className="import-action-hint">Os itens salvos entram em Lancamentos para revisao.</p>
+        )}
+
         {/* Action bar */}
         <div className="import-step-actions">
           <button className="btn-secondary" onClick={handleReset}>Cancelar</button>
           <button
             className="btn-primary"
             onClick={handleConfirmImport}
-            disabled={selectedNonExactCount === 0 || !accountId}
+            disabled={!!saveDisabledReason}
           >
-            Salvar {selectedNonExactCount} lançamento{selectedNonExactCount !== 1 ? 's' : ''}
+            Salvar em Lancamentos {selectedNonExactCount > 0 ? `(${selectedNonExactCount})` : ''}
           </button>
         </div>
       </>

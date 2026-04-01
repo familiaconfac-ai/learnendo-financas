@@ -77,6 +77,7 @@
 .badge-ok    { background: #dcfce7; color: #15803d; }
 .badge-warn  { background: #fef3c7; color: #92400e; }
 .badge-info  { background: #dbeafe; color: #1e40af; }
+.badge-danger{ background: #fee2e2; color: #b91c1c; }
 
 /* Import items */
 .import-items {
@@ -173,6 +174,9 @@
   line-height: 1.4;
   color: #7f1d1d;
 }
+.import-inline-error {
+  margin-top: -0.25rem;
+}
 
 /* ── Loading spinner ─────────────────────────────────────────────────────── */
 
@@ -215,6 +219,31 @@
 .psb-net.pos { color: var(--color-success); }
 .psb-net.neg { color: var(--color-danger);  }
 
+.statement-balance-card {
+  padding: 0.25rem 0.25rem 0.5rem;
+}
+.statement-balance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  padding: 0 0.75rem 0.5rem;
+}
+.statement-balance-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: #fff;
+}
+.statement-balance-label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.balance-pos { color: var(--color-success); }
+.balance-neg { color: var(--color-danger); }
+
 /* ── Account selector ────────────────────────────────────────────────────── */
 
 .account-select-row {
@@ -240,6 +269,11 @@
   appearance: auto;
 }
 .account-select:focus { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.import-target-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
 
 /* ── Bulk controls ───────────────────────────────────────────────────────── */
 
@@ -324,6 +358,15 @@
 
 /* ── Step action bar ─────────────────────────────────────────────────────── */
 
+.import-action-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+.import-action-hint--warn {
+  color: #92400e;
+}
+
 .import-step-actions {
   display: flex;
   gap: 0.75rem;
@@ -363,5 +406,15 @@
   width: 100%;
   max-width: 320px;
   margin-top: 0.35rem;
+}
+
+@media (max-width: 640px) {
+  .statement-balance-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-row-footer {
+    flex-wrap: wrap;
+  }
 }
 

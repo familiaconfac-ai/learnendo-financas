@@ -317,6 +317,19 @@ export default function Lancamentos({ view = 'confirmed' }) {
       return
     }
 
+    if (name === 'amount') {
+      // FIX: normaliza separador decimal PT-BR (vírgula → ponto) para evitar
+      // que input[type=text] retorne string vazia ao digitar "50,00".
+      // Ex: "50,00" → "50.00"; "1.500,00" → "1500.00"
+      const raw = String(value)
+      const hasCommaDecimal = raw.includes(',')
+      const normalized = hasCommaDecimal
+        ? raw.replace(/\./g, '').replace(',', '.')
+        : raw
+      setForm((f) => ({ ...f, amount: normalized }))
+      return
+    }
+
     if (name === 'description') {
       setForm((f) => {
         const text = value
@@ -389,6 +402,16 @@ export default function Lancamentos({ view = 'confirmed' }) {
   function openNewModal(typeValue) {
     setEditingTx(null)
     const base = { ...defaultForm(), type: typeValue || 'expense' }
+    // FIX: se o mês selecionado for diferente do mês atual, usa o 1º dia do mês
+    // selecionado como data padrão para que o lançamento apareça na lista correta.
+    const todayISO = getTodayLocalISO()
+    const [todayYear, todayMonth] = todayISO.split('-').map(Number)
+    if (todayYear !== selectedYear || todayMonth !== selectedMonth) {
+      const paddedMonth = String(selectedMonth).padStart(2, '0')
+      const firstDay = `${selectedYear}-${paddedMonth}-01`
+      base.date = firstDay
+      base.recurringStartDate = firstDay
+    }
     const defaultNature = transactionNatures.find((nature) => nature.direction === (base.type === 'income' ? 'income' : 'expense'))
     if (defaultNature) {
       base.transactionNatureId = defaultNature.id
@@ -465,7 +488,15 @@ export default function Lancamentos({ view = 'confirmed' }) {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.description || !form.amount || !form.date) return
+    if (!form.description || !form.amount || !form.date) {
+      // FIX: log diagnóstico para identificar qual campo está vazio
+      console.warn('[Lancamentos] handleSubmit: bloqueado por campo obrigatório vazio', {
+        hasDescription: !!form.description,
+        hasAmount: !!form.amount,
+        hasDate: !!form.date,
+      })
+      return
+    }
 
     if (form.transactionNatureId === 'nature_debt_payment' && !form.debtId) {
       alert('Selecione a dívida para vincular o pagamento.')
@@ -510,7 +541,10 @@ export default function Lancamentos({ view = 'confirmed' }) {
       }
     }
 
+    // FIX: setSaving(true) movido para dentro do try para garantir que saving seja
+    // resetado pelo finally em qualquer caminho de erro, incluindo fetchTransactions.
     setSaving(true)
+    try {
     const typeFromNature = TYPE_BY_NATURE_ID[form.transactionNatureId]
     const effectiveType = typeFromNature || form.type
     const isInternal = effectiveType === 'transfer_internal'
@@ -601,9 +635,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
     })
 
     if (duplicates.isExactDuplicate) {
-      setSaving(false)
       alert('Lançamento duplicado detectado. Revise data, valor, descrição e conta antes de salvar.')
-      return
+      return // finally reseta saving
     }
 
     if (duplicates.hasPossibleDuplicate) {
@@ -611,16 +644,17 @@ export default function Lancamentos({ view = 'confirmed' }) {
         `Encontramos ${duplicates.possible.length} lançamento(s) parecido(s). Deseja salvar mesmo assim?`,
       )
       if (!proceed) {
-        setSaving(false)
-        return
+        return // finally reseta saving
       }
     }
 
+    console.log('[Lancamentos] handleSubmit:', editingTx ? `atualizando id=${editingTx.id}` : 'criando novo lançamento', { type: payload.type, amount: payload.amount, date: payload.date })
     try {
       if (editingTx) {
         await update(editingTx.id, payload)
       } else {
         const txId = await add(payload)
+        console.log('[Lancamentos] handleSubmit: lançamento criado com sucesso, id=', txId)
 
         if (form.recurring) {
           const recurrenceType = form.recurrenceType === 'fixed' ? 'fixed' : 'indefinite'
@@ -653,6 +687,13 @@ export default function Lancamentos({ view = 'confirmed' }) {
       setEditingTx(null)
       setForm(defaultForm())
     } catch (err) {
+      console.error('[Lancamentos] handleSubmit: erro ao salvar', err)
+      alert('Erro ao salvar lançamento: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+    } catch (err) {
+      console.error('[Lancamentos] handleSubmit: erro inesperado (fora do try interno)', err)
       alert('Erro ao salvar lançamento: ' + err.message)
     } finally {
       setSaving(false)
@@ -928,7 +969,9 @@ transactions.length === 0 ? (
           </div>
           <div className="form-group">
             <label>Valor (R$)</label>
-            <input name="amount" type="number" inputMode="decimal" min="0.01" step="0.01"
+            {/* FIX: type=text + inputMode=decimal permite digitar "50,00" (PT-BR) sem
+               que o browser rejeite e zere o campo via e.target.value="" */}
+          <input name="amount" type="text" inputMode="decimal"
               value={form.amount} onChange={handleChange} placeholder="0,00" required />
           </div>
           {form.type !== 'transfer_internal' && !isInvoicePaymentNature(form) ? (

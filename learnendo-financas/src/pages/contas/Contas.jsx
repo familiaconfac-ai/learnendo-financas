@@ -7,6 +7,18 @@ import { formatCurrency } from '../../utils/formatCurrency'
 import { MOCK_CARDS } from '../../utils/mockData'
 import './Contas.css'
 
+function hasStatementSnapshot(account) {
+  return Number.isFinite(Number(account?.lastStatementOpeningBalance))
+    || Number.isFinite(Number(account?.lastStatementClosingBalance))
+}
+
+function formatImportDate(value) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return parsed.toLocaleDateString('pt-BR')
+}
+
 export default function Contas() {
   const [tab, setTab] = useState('contas') // 'contas' | 'cartoes'
   const { accounts, add, remove } = useAccounts()
@@ -93,6 +105,35 @@ export default function Contas() {
                       {(acc.balance - (acc.initialBalance || 0)) >= 0 ? '+' : ''}{formatCurrency(acc.balance - (acc.initialBalance || 0))}
                     </span>
                   </div>
+                  {hasStatementSnapshot(acc) && (
+                    <div className="acc-statement">
+                      <div className="acc-statement-header">
+                        <span>Ultimo extrato importado</span>
+                        {formatImportDate(acc.lastStatementImportedAt) && (
+                          <span>{formatImportDate(acc.lastStatementImportedAt)}</span>
+                        )}
+                      </div>
+                      <div className="acc-statement-grid">
+                        <div className="acc-statement-item">
+                          <span>Saldo anterior</span>
+                          <strong>{formatCurrency(Number(acc.lastStatementOpeningBalance || 0))}</strong>
+                        </div>
+                        <div className="acc-statement-item">
+                          <span>Saldo atual</span>
+                          <strong>{formatCurrency(Number(acc.lastStatementClosingBalance || 0))}</strong>
+                        </div>
+                        <div className="acc-statement-item">
+                          <span>Movimento</span>
+                          <strong className={(acc.lastStatementNetMovement || 0) >= 0 ? 'acc-diff pos' : 'acc-diff neg'}>
+                            {(acc.lastStatementNetMovement || 0) >= 0 ? '+' : ''}{formatCurrency(Math.abs(Number(acc.lastStatementNetMovement || 0)))}
+                          </strong>
+                        </div>
+                      </div>
+                      {acc.lastStatementFileName && (
+                        <span className="acc-statement-file">{acc.lastStatementFileName}</span>
+                      )}
+                    </div>
+                  )}
                 </Card>
               ))
             )}

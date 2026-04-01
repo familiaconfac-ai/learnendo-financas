@@ -17,6 +17,28 @@ function normalizeType(type) {
   return type === 'transfer_internal' ? 'transfer' : type
 }
 
+function normalizeDuplicateOptions(accountIdOverrideOrOptions = null) {
+  if (accountIdOverrideOrOptions && typeof accountIdOverrideOrOptions === 'object' && !Array.isArray(accountIdOverrideOrOptions)) {
+    return {
+      accountIdOverride: accountIdOverrideOrOptions.accountIdOverride ?? null,
+      cardIdOverride: accountIdOverrideOrOptions.cardIdOverride ?? null,
+    }
+  }
+
+  return {
+    accountIdOverride: accountIdOverrideOrOptions,
+    cardIdOverride: null,
+  }
+}
+
+function resolveDuplicateTarget(tx, overrides = {}) {
+  if (overrides.cardIdOverride) return `card:${overrides.cardIdOverride}`
+  if (overrides.accountIdOverride) return `account:${overrides.accountIdOverride}`
+  if (tx?.cardId) return `card:${tx.cardId}`
+  if (tx?.accountId) return `account:${tx.accountId}`
+  return ''
+}
+
 function sharedTokenCount(a, b) {
   const tokensA = new Set(normalizeText(a).split(' ').filter((t) => t.length >= 3))
   const tokensB = new Set(normalizeText(b).split(' ').filter((t) => t.length >= 3))
@@ -27,21 +49,23 @@ function sharedTokenCount(a, b) {
   return count
 }
 
-export function buildDuplicateSignature(tx, accountIdOverride = null) {
-  const accountId = accountIdOverride ?? tx.accountId ?? ''
+export function buildDuplicateSignature(tx, accountIdOverrideOrOptions = null) {
+  const overrides = normalizeDuplicateOptions(accountIdOverrideOrOptions)
+  const targetKey = resolveDuplicateTarget(tx, overrides)
   return [
     tx.date ?? '',
     normalizeType(tx.type) ?? '',
     toNumber(tx.amount).toFixed(2),
     normalizeText(tx.description),
-    accountId,
+    targetKey,
   ].join('::')
 }
 
-export function isPossibleDuplicate(candidate, existing, accountIdOverride = null) {
-  const accountId = accountIdOverride ?? candidate.accountId ?? ''
-  const existingAccountId = existing.accountId ?? ''
-  if (accountId && existingAccountId && accountId !== existingAccountId) return false
+export function isPossibleDuplicate(candidate, existing, accountIdOverrideOrOptions = null) {
+  const overrides = normalizeDuplicateOptions(accountIdOverrideOrOptions)
+  const candidateTarget = resolveDuplicateTarget(candidate, overrides)
+  const existingTarget = resolveDuplicateTarget(existing)
+  if (candidateTarget && existingTarget && candidateTarget !== existingTarget) return false
 
   if ((candidate.date ?? '') !== (existing.date ?? '')) return false
   if (normalizeType(candidate.type) !== normalizeType(existing.type)) return false
@@ -58,9 +82,12 @@ export function isPossibleDuplicate(candidate, existing, accountIdOverride = nul
 export function findDuplicateMatches(candidate, existingTransactions, options = {}) {
   const list = Array.isArray(existingTransactions) ? existingTransactions : []
   const ignoreId = options.ignoreId ?? null
-  const accountIdOverride = options.accountIdOverride ?? null
+  const overrides = {
+    accountIdOverride: options.accountIdOverride ?? null,
+    cardIdOverride: options.cardIdOverride ?? null,
+  }
 
-  const candidateSignature = buildDuplicateSignature(candidate, accountIdOverride)
+  const candidateSignature = buildDuplicateSignature(candidate, overrides)
   const exact = []
   const possible = []
 
@@ -71,7 +98,7 @@ export function findDuplicateMatches(candidate, existingTransactions, options = 
       exact.push(tx)
       return
     }
-    if (isPossibleDuplicate(candidate, tx, accountIdOverride)) {
+    if (isPossibleDuplicate(candidate, tx, overrides)) {
       possible.push(tx)
     }
   })

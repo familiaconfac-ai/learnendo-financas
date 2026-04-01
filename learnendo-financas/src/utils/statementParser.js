@@ -167,6 +167,92 @@ function inferDirectionFromText(text) {
   return 'unknown'
 }
 
+function signedAmountFromRow(row) {
+  const amount = Number(row?.amount || 0)
+  if (!Number.isFinite(amount) || amount === 0) return 0
+  return row?.direction === 'credit' ? amount : -Math.abs(amount)
+}
+
+function finalizeStatementSummary(rows, partial = {}) {
+  const explicitOpening = Number.isFinite(Number(partial.openingBalance))
+    ? Number(partial.openingBalance)
+    : null
+  const explicitClosing = Number.isFinite(Number(partial.closingBalance))
+    ? Number(partial.closingBalance)
+    : null
+  const rowBalances = rows
+    .filter((row) => Number.isFinite(Number(row?.balance)))
+    .sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')))
+
+  const netMovement = rows.reduce((sum, row) => sum + signedAmountFromRow(row), 0)
+
+  let openingBalance = explicitOpening
+  let closingBalance = explicitClosing
+  let openingInferred = false
+  let closingInferred = false
+
+  if (rowBalances.length > 0) {
+    const first = rowBalances[0]
+    const last = rowBalances[rowBalances.length - 1]
+    const firstSigned = signedAmountFromRow(first)
+
+    if (openingBalance === null && Number.isFinite(firstSigned)) {
+      openingBalance = Number(first.balance) - firstSigned
+      openingInferred = true
+    }
+
+    if (closingBalance === null) {
+      closingBalance = Number(last.balance)
+      closingInferred = true
+    }
+  }
+
+  if (openingBalance === null && closingBalance !== null) {
+    openingBalance = closingBalance - netMovement
+    openingInferred = true
+  }
+
+  if (closingBalance === null && openingBalance !== null) {
+    closingBalance = openingBalance + netMovement
+    closingInferred = true
+  }
+
+  return {
+    kind: partial.kind || 'statement',
+    layout: partial.layout || null,
+    openingBalance,
+    closingBalance,
+    netMovement,
+    transactionCount: rows.length,
+    hasBalanceInfo: openingBalance !== null || closingBalance !== null,
+    openingInferred,
+    closingInferred,
+  }
+}
+
+function attachStatementSummary(rows, partial = {}) {
+  Object.defineProperty(rows, '__summary', {
+    value: finalizeStatementSummary(rows, partial),
+    enumerable: false,
+    configurable: true,
+  })
+  return rows
+}
+
+function detectTabularKind(headers = []) {
+  const line = headers.join(' ')
+  if (/\bfatura\b|\bcartao\b|\bvencimento\b|\bfechamento\b/.test(line)) return 'invoice'
+  if (/\bsaldo\b|\bbalance\b|\bextrato\b|\bconta\b/.test(line)) return 'statement'
+  return 'statement'
+}
+
+function extractOfxClosingBalance(text) {
+  const ledgerMatch = String(text || '').match(/<LEDGERBAL>[\s\S]*?<BALAMT>([^<\r\n]+)/i)
+  const rawValue = ledgerMatch?.[1] || null
+  const closing = normaliseBRAmount(rawValue)
+  return Number.isFinite(closing) ? closing : null
+}
+
 // ---------------------------------------------------------------------------
 // OFX parser
 // ---------------------------------------------------------------------------
@@ -218,7 +304,10 @@ function parseOFX(text) {
     throw new ParseError('Arquivo OFX lido, mas nenhuma transacao valida foi identificada.')
   }
 
-  return rows
+  return attachStatementSummary(rows, {
+    kind: 'statement',
+    closingBalance: extractOfxClosingBalance(text),
+  })
 }
 
 function ofxField(block, field) {
@@ -288,7 +377,9 @@ function parseCSV(text) {
     throw new ParseError('Arquivo CSV lido, mas nenhuma transacao valida foi formada. Verifique datas, valores e delimitador.')
   }
 
-  return rows
+  return attachStatementSummary(rows, {
+    kind: detectTabularKind(headers || []),
+  })
 }
 
 function detectBestSeparator(lines) {
@@ -520,6 +611,10 @@ function parseCSVDataRow(cells, columns, rowNum, diagnostics) {
     if (direction === 'unknown') direction = 'debit'
   }
 
+  const parsedBalance = columns.balanceIdx >= 0
+    ? normaliseBRAmount(cells[columns.balanceIdx])
+    : NaN
+
   diagnostics.rowsAccepted += 1
 
   return {
@@ -527,7 +622,7 @@ function parseCSVDataRow(cells, columns, rowNum, diagnostics) {
     description: desc,
     amount,
     direction,
-    balance: null,
+    balance: Number.isFinite(parsedBalance) ? parsedBalance : null,
     rawLine: cells.join(' | ').slice(0, 180),
   }
 }
@@ -645,13 +740,19 @@ async function parsePDF(file) {
   const kind = detectPdfKind(lines)
   const layout = detectPdfLayout(lines)
   const structure = analyzePdfLines(lines)
+  const balanceSummary = extractPdfBalanceSummary(lines)
   console.log(`[Parser] PDF kind: ${kind}`)
   console.log(`[PDF] layout: ${layout}`)
   console.log('[PDF] structure:', structure)
 
-  const rows = layout === 'nubank_statement'
+  const parsedRows = layout === 'nubank_statement'
     ? parseNubankPdf(lines)
     : parseGenericPdf(lines, kind)
+  const rows = attachStatementSummary(parsedRows, {
+    kind,
+    layout,
+    ...balanceSummary,
+  })
 
   const lowConfidenceCount = rows.filter((row) => row.direction === 'unknown').length
   console.log(`[PDF] ignored lines: ${rows.__meta?.ignoredLines ?? 0}`)
@@ -761,6 +862,49 @@ function detectPdfLayout(lines) {
 function extractBrazilianAmounts(text) {
   const amountPattern = /[-+]?\s*R?\$?\s*\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|[-+]?\s*R?\$?\s*\d+(?:,\d{2})/g
   return text.match(amountPattern) || []
+}
+
+function extractLineBalanceValue(line) {
+  const amounts = extractBrazilianAmounts(line)
+  if (amounts.length === 0) return null
+  const candidate = amounts[amounts.length - 1]
+  const parsed = normaliseBRAmount(candidate)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function extractPdfBalanceSummary(lines) {
+  let openingBalance = null
+  let closingBalance = null
+  const runningBalances = []
+
+  lines.forEach((raw) => {
+    const line = String(raw || '').trim()
+    if (!line) return
+
+    const normalized = stripAccents(line.toLowerCase())
+    const value = extractLineBalanceValue(line)
+    if (value === null) return
+
+    if (openingBalance === null && /\bsaldo anterior\b|\bsaldo inicial\b/.test(normalized)) {
+      openingBalance = value
+      return
+    }
+
+    if (/\bsaldo final\b|\bsaldo atual\b|\bsaldo disponivel\b/.test(normalized)) {
+      closingBalance = value
+      return
+    }
+
+    if (/\bsaldo do dia\b/.test(normalized)) {
+      runningBalances.push(value)
+    }
+  })
+
+  if (closingBalance === null && runningBalances.length > 0) {
+    closingBalance = runningBalances[runningBalances.length - 1]
+  }
+
+  return { openingBalance, closingBalance }
 }
 
 function parseDateTextFromLine(line, defaultYear = new Date().getFullYear()) {
@@ -932,6 +1076,11 @@ function parseGenericPdf(lines, kind) {
 
     const signed = normaliseBRAmount(rawAmount)
     if (!Number.isFinite(signed) || signed === 0) continue
+    const amountIndex = amounts.findIndex((candidate) => candidate === rawAmount)
+    const rawBalance = kind === 'statement' && amounts.length > 1
+      ? (amountIndex === amounts.length - 1 ? amounts[0] : amounts[amounts.length - 1])
+      : null
+    const parsedBalance = normaliseBRAmount(rawBalance)
 
     let description = compactLine
       .replace(dateMatch[1], '')
@@ -953,7 +1102,7 @@ function parseGenericPdf(lines, kind) {
       description,
       amount: Math.abs(signed),
       direction,
-      balance: null,
+      balance: Number.isFinite(parsedBalance) ? parsedBalance : null,
       rawLine: line.slice(0, 180),
     })
   }

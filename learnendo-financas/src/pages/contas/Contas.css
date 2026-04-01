@@ -102,6 +102,47 @@
 }
 .acc-diff.pos { color: var(--color-success); }
 .acc-diff.neg { color: var(--color-danger); }
+.acc-statement {
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--color-border);
+}
+.acc-statement-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+}
+.acc-statement-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+.acc-statement-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+.acc-statement-item span {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+.acc-statement-item strong {
+  font-size: 0.86rem;
+}
+.acc-statement-file {
+  display: block;
+  margin-top: 0.45rem;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  word-break: break-word;
+}
 
 /* Credit card */
 .card-card { padding: 1rem; }
@@ -170,3 +211,15 @@
 }
 .total-row strong { font-size: 1rem; }
 .negative { color: var(--color-danger); }
+
+@media (max-width: 640px) {
+  .acc-meta,
+  .acc-statement-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .acc-statement-grid {
+    grid-template-columns: 1fr;
+  }
+}
