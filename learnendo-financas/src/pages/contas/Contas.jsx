@@ -7,6 +7,7 @@ import Modal from '../../components/ui/Modal'
 import { useAccounts } from '../../hooks/useAccounts'
 import { useCards } from '../../hooks/useCards'
 import { formatCurrency } from '../../utils/formatCurrency'
+import { buildCardPlanningSnapshot, monthKeyLabel } from '../../utils/creditCardPlanning'
 import './Contas.css'
 
 function hasStatementSnapshot(account) {
@@ -414,6 +415,7 @@ export default function Contas() {
                 const currentInvoice = Number(card.currentInvoice || 0)
                 const available = Math.max(limit - usedLimit, 0)
                 const usagePct = limit > 0 ? Math.min((usedLimit / limit) * 100, 100) : 0
+                const planning = buildCardPlanningSnapshot(card)
 
                 return (
                   <Card key={card.id} className="card-card">
@@ -460,6 +462,19 @@ export default function Contas() {
                         <span className="cc-date-value invoice">{formatCurrency(currentInvoice)}</span>
                       </div>
                     </div>
+
+                    {planning && (
+                      <div className="cc-planning-box">
+                        <strong>Planejamento do crédito</strong>
+                        <p>Melhor dia de compra: dia {planning.bestPurchaseDay}.</p>
+                        <p>
+                          Próxima fatura tende a vencer em {planning.nextDueDate ? new Date(`${planning.nextDueDate}T12:00:00`).toLocaleDateString('pt-BR') : 'data não informada'}.
+                        </p>
+                        <p>
+                          Compras antes do fechamento costumam comprometer o orçamento de {monthKeyLabel(String(planning.nextDueDate || '').slice(0, 7)) || 'mês seguinte'}.
+                        </p>
+                      </div>
+                    )}
 
                     {(card.lastInvoiceFileName || card.lastInvoiceImportedAt) && (
                       <div className="cc-import-meta">

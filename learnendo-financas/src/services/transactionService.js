@@ -180,7 +180,7 @@ export async function updateTransaction(uid, txId, data, options = {}) {
     const payload = { ...data, updatedAt: serverTimestamp() }
     const isInternalTransfer = payload.type === 'transfer_internal'
     if (payload.amount !== undefined) payload.amount = Number(payload.amount)
-    if (payload.date)                 payload.competencyMonth = payload.date.slice(0, 7)
+    if (!payload.competencyMonth && payload.date) payload.competencyMonth = payload.date.slice(0, 7)
     if (payload.categoryName !== undefined) {
       payload.categoryName = typeof payload.categoryName === 'string'
         ? (payload.categoryName.trim() || null)

@@ -85,6 +85,9 @@ function normalizeRecurrencePayload(payload) {
 export async function createRecurrenceRule(uid, transactionData, recurrenceInput, options = {}) {
   const workspaceId = options.workspaceId || transactionData.workspaceId || null
   const recurrenceBase = normalizeRecurrencePayload(recurrenceInput)
+  const baseMonth = transactionData.recurringInstanceMonth
+    || transactionData.competencyMonth
+    || monthKeyFromDate(transactionData.date)
   const rule = {
     type: transactionData.type,
     description: transactionData.description,
@@ -100,7 +103,7 @@ export async function createRecurrenceRule(uid, transactionData, recurrenceInput
     workspaceId,
     ...recurrenceBase,
     currentInstallment: Number(recurrenceInput.currentInstallment || recurrenceBase.startInstallment),
-    lastGeneratedMonth: monthKeyFromDate(transactionData.date),
+    lastGeneratedMonth: baseMonth,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   }
@@ -109,7 +112,7 @@ export async function createRecurrenceRule(uid, transactionData, recurrenceInput
   return {
     id: ref.id,
     ...rule,
-    lastGeneratedMonth: monthKeyFromDate(transactionData.date),
+    lastGeneratedMonth: baseMonth,
   }
 }
 

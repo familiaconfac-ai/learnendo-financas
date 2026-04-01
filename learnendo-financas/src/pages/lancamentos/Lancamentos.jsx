@@ -21,6 +21,12 @@ import { suggestTypeAndCategory } from '../../utils/transactionAutoCategorizer'
 import { resolveNatureAffectsBudget } from '../../constants/transactionNatures'
 import { TRANSACTION_PAYMENT_METHODS, getPaymentMethodLabel } from '../../constants/transactionPaymentMethods'
 import { normalizeReceiptItems, summarizeReceiptDetail } from '../../utils/receiptDetailCatalog'
+import {
+  buildCardPlanningSnapshot,
+  buildCreditCardGuidance,
+  detectCardCommitment,
+  monthKeyLabel,
+} from '../../utils/creditCardPlanning'
 import './Lancamentos.css'
 
 // ── Type chip navigation ──────────────────────────────────────────────────────
@@ -197,6 +203,12 @@ function requiresBankAccount(formState) {
   return formState.paymentMethod !== 'credit_card'
 }
 
+function recurringStartDateForTransaction(tx) {
+  const competencyMonth = String(tx?.competencyMonth || '').slice(0, 7)
+  if (competencyMonth) return `${competencyMonth}-01`
+  return tx?.date || ''
+}
+
 export default function Lancamentos({ view = 'confirmed' }) {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -223,6 +235,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
   const [form,       setForm]       = useState(defaultForm())
   const [saving,     setSaving]     = useState(false)
   const [editingNatureLabel, setEditingNatureLabel] = useState('')
+  const [cardHint, setCardHint] = useState(null)
 
   // Dados reais do Firestore — users/{uid}/transactions
   const { transactions: allTx, loading, error, add, update, remove } =
@@ -231,6 +244,13 @@ export default function Lancamentos({ view = 'confirmed' }) {
   const { accounts }   = useAccounts()
   const { cards: availableCards } = useCards()
   const { debts } = useDebts()
+  const selectedCardOption = availableCards.find((card) => card.id === form.cardId) || null
+  const creditCardGuidance = form.paymentMethod === 'credit_card' && !isInvoicePaymentNature(form)
+    ? buildCreditCardGuidance(form.date, selectedCardOption)
+    : null
+  const cardPlanningSnapshot = selectedCardOption
+    ? buildCardPlanningSnapshot(selectedCardOption)
+    : null
 
   const availableContacts = [
     ...members.map((m) => ({ id: `member:${m.uid || m.id}`, name: m.displayName || m.email || 'Membro', type: 'internal' })),
@@ -427,6 +447,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
 
   function openNewModal(typeValue) {
     setEditingTx(null)
+    setCardHint(null)
     const base = { ...defaultForm(), type: typeValue || 'expense' }
     if (accounts.length === 1) {
       base.accountId = accounts[0].id
@@ -455,6 +476,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const suggestion = suggestTypeAndCategory(tx.description || '', categories, tx.type || 'expense')
     const typeFromNature = TYPE_BY_NATURE_ID[tx.transactionNatureId]
     const suggestedType = typeFromNature || (tx.type === 'transfer_internal' ? 'transfer_internal' : suggestion.suggestedType)
+    const importedCardHint = (tx.origin === 'credit_card_import' || tx.paymentMethod === 'credit_card')
+      ? detectCardCommitment(tx.description)
+      : null
 
     setEditingTx(tx)
     setForm({
@@ -467,12 +491,18 @@ export default function Lancamentos({ view = 'confirmed' }) {
       categoryId:  tx.categoryId || (tx.type === 'transfer_internal' ? '' : suggestion.suggestedCategoryId || ''),
       subcategoryId: tx.subcategoryId || '',
       notes:       tx.notes       || '',
-      recurring:   tx.recurring   || !!tx.recurringId,
-      recurrenceType: tx.recurringType || 'indefinite',
-      recurringStartDate: tx.date || '',
+      recurring:   tx.recurring || !!tx.recurringId || !!importedCardHint,
+      recurrenceType: tx.recurrenceType || importedCardHint?.recurrenceType || 'indefinite',
+      recurringStartDate: tx.recurringStartDate || recurringStartDateForTransaction(tx),
       recurringEndDate: tx.recurringEndDate || '',
-      totalInstallments: tx.totalInstallments ? String(tx.totalInstallments) : '12',
-      currentInstallment: tx.currentInstallment ? String(tx.currentInstallment) : (tx.installmentNumber ? String(tx.installmentNumber) : '1'),
+      totalInstallments: tx.totalInstallments
+        ? String(tx.totalInstallments)
+        : (importedCardHint?.totalInstallments ? String(importedCardHint.totalInstallments) : '12'),
+      currentInstallment: tx.currentInstallment
+        ? String(tx.currentInstallment)
+        : (tx.installmentNumber
+          ? String(tx.installmentNumber)
+          : (importedCardHint?.currentInstallment ? String(importedCardHint.currentInstallment) : '1')),
       transactionNatureId: tx.transactionNatureId || '',
       transactionNatureLabel: tx.transactionNatureLabel || '',
       contactId: tx.contactId || '',
@@ -484,6 +514,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
       receiptItems: Array.isArray(tx.receiptItems) ? tx.receiptItems : [],
     })
     setEditingNatureLabel(tx.transactionNatureLabel || '')
+    setCardHint(importedCardHint)
     setModalOpen(true)
   }
 
@@ -613,12 +644,18 @@ export default function Lancamentos({ view = 'confirmed' }) {
         ?.find((subcategory) => subcategory.id === form.subcategoryId)
         ?.name || null)
     const resolvedAccountId = form.accountId || editingTx?.accountId || null
+    const selectedCard = availableCards.find((card) => card.id === form.cardId)
+    const isCardPurchase = form.paymentMethod === 'credit_card' && !invoicePayment
+    const resolvedCompetencyMonth = isCardPurchase
+      ? (buildCreditCardGuidance(form.date, selectedCard)?.competencyMonth || String(form.date || '').slice(0, 7))
+      : (editingTx?.competencyMonth || String(form.date || '').slice(0, 7))
 
     const payload = {
       type:        resolvedType,
       description: form.description,
       amount:      form.amount,
       date:        form.date,
+      competencyMonth: resolvedCompetencyMonth,
       accountId:   resolvedAccountId,
       toAccountId: isInternal ? (form.toAccountId || null) : null,
       categoryId:  resolvedCategoryId,
@@ -696,16 +733,48 @@ export default function Lancamentos({ view = 'confirmed' }) {
     try {
       if (editingTx) {
         await update(editingTx.id, payload)
+        if (form.recurring && !editingTx.recurringId) {
+          const recurrenceType = form.recurrenceType === 'fixed' ? 'fixed' : 'indefinite'
+          const recurringStartDate = form.recurringStartDate || `${resolvedCompetencyMonth}-01`
+          const currentInstallment = recurrenceType === 'fixed' ? Number(form.currentInstallment || 1) : 1
+          const totalInstallments = recurrenceType === 'fixed' ? Number(form.totalInstallments || 1) : null
+          const recurrence = await createRecurrenceRule(user.uid, {
+            ...payload,
+            recurringInstanceMonth: resolvedCompetencyMonth,
+          }, {
+            recurrenceType,
+            startDate: recurringStartDate,
+            endDate: recurrenceType === 'fixed' ? (form.recurringEndDate || null) : null,
+            totalInstallments,
+            startInstallment: currentInstallment,
+            currentInstallment,
+            active: true,
+          }, { workspaceId: activeWorkspaceId })
+
+          await update(editingTx.id, {
+            recurringId: recurrence.id,
+            recurringType: recurrenceType,
+            recurringStartDate,
+            recurringEndDate: recurrenceType === 'fixed' ? (form.recurringEndDate || null) : null,
+            totalInstallments,
+            currentInstallment,
+            recurringInstanceMonth: resolvedCompetencyMonth,
+            installmentNumber: recurrenceType === 'fixed' ? currentInstallment : null,
+          })
+        }
       } else {
         const txId = await add(payload)
         console.log('[Lancamentos] handleSubmit: lançamento criado com sucesso, id=', txId)
 
         if (form.recurring) {
           const recurrenceType = form.recurrenceType === 'fixed' ? 'fixed' : 'indefinite'
-          const recurringStartDate = form.recurringStartDate || payload.date
+          const recurringStartDate = form.recurringStartDate || `${resolvedCompetencyMonth}-01`
           const currentInstallment = recurrenceType === 'fixed' ? Number(form.currentInstallment || 1) : 1
           const totalInstallments = recurrenceType === 'fixed' ? Number(form.totalInstallments || 1) : null
-          const recurrence = await createRecurrenceRule(user.uid, payload, {
+          const recurrence = await createRecurrenceRule(user.uid, {
+            ...payload,
+            recurringInstanceMonth: resolvedCompetencyMonth,
+          }, {
             recurrenceType,
             startDate: recurringStartDate,
             endDate: recurrenceType === 'fixed' ? (form.recurringEndDate || null) : null,
@@ -722,7 +791,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
             recurringEndDate: recurrenceType === 'fixed' ? (form.recurringEndDate || null) : null,
             totalInstallments,
             currentInstallment,
-            recurringInstanceMonth: String(payload.date).slice(0, 7),
+            recurringInstanceMonth: resolvedCompetencyMonth,
             installmentNumber: recurrenceType === 'fixed' ? currentInstallment : null,
           })
         }
@@ -769,6 +838,12 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const debtLabel = t.debtName || debts.find((debt) => debt.id === t.debtId)?.name
     const paymentMethodLabel = getPaymentMethodLabel(t.paymentMethod)
     const cardLabel = t.cardName || cardOptionLabel(availableCards.find((card) => card.id === t.cardId))
+    const commitmentHint = (t.origin === 'credit_card_import' || t.paymentMethod === 'credit_card')
+      ? detectCardCommitment(t.description)
+      : null
+    const competencyLabel = t.paymentMethod === 'credit_card' && t.competencyMonth
+      ? monthKeyLabel(t.competencyMonth)
+      : ''
     return (
       <div key={t.id} className={`transaction-item${normalizedTxStatus === 'pending' ? ' tx-pending' : ''}`}>
         <div className="tx-info">
@@ -782,6 +857,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
             <span className="tx-date">
               {catName ? `${catName} • ` : ''}{formatFriendlyDate(t.date)}
             </span>
+            {commitmentHint && <span className="tx-date">{commitmentHint.reason}</span>}
+            {competencyLabel && <span className="tx-date">Compete em {competencyLabel}</span>}
           </span>
         </div>
         <span className={`tx-value tx-value--${t.type}`}>
@@ -946,7 +1023,7 @@ transactions.length === 0 ? (
       {/* Modal */}
       <Modal
         isOpen={modalOpen}
-        onClose={() => { setModalOpen(false); setEditingTx(null) }}
+        onClose={() => { setModalOpen(false); setEditingTx(null); setCardHint(null) }}
         title={editingTx ? 'Editar lançamento' : 'Novo lançamento'}
         footer={
           <>
@@ -955,7 +1032,7 @@ transactions.length === 0 ? (
                 Excluir
               </Button>
             )}
-            <Button variant="ghost" fullWidth onClick={() => setModalOpen(false)}>Cancelar</Button>
+            <Button variant="ghost" fullWidth onClick={() => { setModalOpen(false); setCardHint(null) }}>Cancelar</Button>
             <Button variant="primary" fullWidth onClick={handleSubmit} loading={saving}>Salvar</Button>
           </>
         }
@@ -1065,15 +1142,31 @@ transactions.length === 0 ? (
             </div>
           )}
           {requiresCardSelection(form) && (
-            <div className="form-group">
-              <label>{isInvoicePaymentNature(form) ? 'Cartão / fatura vinculada' : 'Cartão usado na compra'}</label>
-              <select name="cardId" value={form.cardId} onChange={handleChange}>
-                <option value="">Selecione…</option>
-                {availableCards.map((card) => (
-                  <option key={card.id} value={card.id}>{cardOptionLabel(card)}</option>
-                ))}
-              </select>
-            </div>
+            <>
+              <div className="form-group">
+                <label>{isInvoicePaymentNature(form) ? 'Cartão / fatura vinculada' : 'Cartão usado na compra'}</label>
+                <select name="cardId" value={form.cardId} onChange={handleChange}>
+                  <option value="">Selecione…</option>
+                  {availableCards.map((card) => (
+                    <option key={card.id} value={card.id}>{cardOptionLabel(card)}</option>
+                  ))}
+                </select>
+              </div>
+              {creditCardGuidance && !isInvoicePaymentNature(form) && (
+                <div className="form-help-block credit-card-guidance">
+                  <strong>{creditCardGuidance.message}</strong>
+                  <p>
+                    Fechamento do cartão: dia {selectedCardOption?.closingDay || '—'}.
+                    Melhor dia de compra: dia {cardPlanningSnapshot?.bestPurchaseDay || '—'}.
+                  </p>
+                </div>
+              )}
+              {cardHint && (
+                <p className="form-help-text">
+                  Sugestão automática: {cardHint.reason}. Revise e confirme antes de salvar.
+                </p>
+              )}
+            </>
           )}
           {transactionNatures.length > 0 && (
             <div className="form-group">

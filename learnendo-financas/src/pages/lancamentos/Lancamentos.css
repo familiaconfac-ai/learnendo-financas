@@ -484,6 +484,15 @@
   margin-top: -0.2rem;
 }
 
+.credit-card-guidance strong {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.credit-card-guidance p {
+  margin: 0;
+}
+
 @media (max-width: 680px) {
   .nature-chip-btn {
     min-height: 36px;
