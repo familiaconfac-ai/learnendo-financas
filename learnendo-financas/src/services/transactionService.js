@@ -101,7 +101,7 @@ export async function addTransaction(uid, data, options = {}) {
       description:     data.description,
       amount:          Number(data.amount),
       date:            data.date,
-      competencyMonth: data.date.slice(0, 7),   // ex: "2026-03"
+      competencyMonth: data.competencyMonth || data.date.slice(0, 7),   // ex: "2026-03"
       workspaceId:     workspaceId,
       createdBy:       data.createdBy || uid,
       userId:          data.userId || uid,

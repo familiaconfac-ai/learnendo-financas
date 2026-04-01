@@ -527,6 +527,7 @@ export default function Importacao() {
             description:              row.description,
             amount:                   row.amount,
             date:                     row.date,
+            competencyMonth:          isInvoiceImport ? selectedMonthKey : row.date.slice(0, 7),
             accountId:                isInvoiceImport ? null : accountId,
             cardId:                   isInvoiceImport ? (cardId || null) : null,
             cardName:                 isInvoiceImport ? (selectedCard?.name || null) : null,
