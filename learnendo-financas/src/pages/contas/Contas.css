@@ -97,6 +97,11 @@
 .contas-empty-hint { font-size: 0.8rem; margin-top: 0.25rem; opacity: 0.7; }
 
 .launch-form { display: flex; flex-direction: column; gap: 0.75rem; }
+.form-grid-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
 .form-group { display: flex; flex-direction: column; gap: 0.3rem; }
 .form-group label { font-size: 0.82rem; font-weight: 500; color: var(--color-text-muted); }
 .form-group input,
@@ -125,6 +130,33 @@
 .acc-info { flex: 1; }
 .acc-name { display: block; font-weight: 600; font-size: 0.95rem; }
 .acc-bank { display: block; font-size: 0.78rem; color: var(--color-text-muted); }
+.acc-detail,
+.cc-issuer {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--color-text-muted);
+  margin-top: 0.15rem;
+}
+
+.item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.item-action-btn {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.9rem;
+}
+
+.item-action-btn--danger {
+  color: var(--color-danger);
+}
 
 .acc-balance { display: flex; justify-content: space-between; align-items: center; }
 .acc-balance-label { font-size: 0.78rem; color: var(--color-text-muted); }
@@ -234,6 +266,16 @@
 }
 .cc-bar-fill.warn { background: var(--color-danger); }
 .cc-bar-label { font-size: 0.72rem; color: var(--color-text-muted); margin-top: 0.25rem; }
+.cc-import-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--color-border);
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
 
 .cc-dates {
   display: flex;
@@ -264,8 +306,20 @@
     align-items: stretch;
   }
 
+  .form-grid-two,
+  .cc-dates {
+    grid-template-columns: 1fr;
+  }
+
+  .cc-dates {
+    flex-direction: column;
+    gap: 0.6rem;
+    align-items: flex-start;
+  }
+
   .acc-meta,
-  .acc-statement-header {
+  .acc-statement-header,
+  .cc-import-meta {
     flex-direction: column;
     align-items: flex-start;
   }

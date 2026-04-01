@@ -9,6 +9,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useTransactions } from '../../hooks/useTransactions'
 import { useCategories } from '../../hooks/useCategories'
 import { useAccounts } from '../../hooks/useAccounts'
+import { useCards } from '../../hooks/useCards'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { useDebts } from '../../hooks/useDebts'
 import { fetchTransactions } from '../../services/transactionService'
@@ -20,7 +21,6 @@ import { suggestTypeAndCategory } from '../../utils/transactionAutoCategorizer'
 import { resolveNatureAffectsBudget } from '../../constants/transactionNatures'
 import { TRANSACTION_PAYMENT_METHODS, getPaymentMethodLabel } from '../../constants/transactionPaymentMethods'
 import { normalizeReceiptItems, summarizeReceiptDetail } from '../../utils/receiptDetailCatalog'
-import { MOCK_CARDS } from '../../utils/mockData'
 import './Lancamentos.css'
 
 // ── Type chip navigation ──────────────────────────────────────────────────────
@@ -188,7 +188,7 @@ function accountOptionLabel(account) {
 function cardOptionLabel(card) {
   if (!card) return ''
   const flag = card.flag ? card.flag.toUpperCase() : 'CRÉDITO'
-  return `${card.name} • ${flag}`
+  return [card.name, flag, card.holderName].filter(Boolean).join(' • ')
 }
 
 function requiresBankAccount(formState) {
@@ -229,8 +229,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
     useTransactions(selectedYear, selectedMonth)
   const { categories } = useCategories()
   const { accounts }   = useAccounts()
+  const { cards: availableCards } = useCards()
   const { debts } = useDebts()
-  const availableCards = MOCK_CARDS
 
   const availableContacts = [
     ...members.map((m) => ({ id: `member:${m.uid || m.id}`, name: m.displayName || m.email || 'Membro', type: 'internal' })),

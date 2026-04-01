@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useFinance } from '../../context/FinanceContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { useAccounts } from '../../hooks/useAccounts'
+import { useCards } from '../../hooks/useCards'
 import { useCategories } from '../../hooks/useCategories'
 import { addTransaction, fetchTransactions } from '../../services/transactionService'
 import { parseStatementFile } from '../../utils/statementParser'
@@ -11,7 +12,6 @@ import { classifyBatch } from '../../utils/transactionClassifier'
 import { buildDuplicateSignature, findDuplicateMatches } from '../../utils/transactionDuplicates'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
-import { MOCK_CARDS } from '../../utils/mockData'
 import Card, { CardHeader } from '../../components/ui/Card'
 import './Importacao.css'
 
@@ -55,6 +55,15 @@ function accountLabel(a) {
   const type = ACCOUNT_TYPE_LABELS[a.type] ?? a.type ?? ''
   if (a.bank && a.bank.trim()) return `${a.bank} • ${type}`
   return type ? `${a.name} (${type})` : a.name
+}
+
+function cardLabel(card) {
+  const parts = [
+    card.name,
+    card.holderName || '',
+    card.flag ? String(card.flag).toUpperCase() : '',
+  ].filter(Boolean)
+  return parts.join(' • ')
 }
 
 function normalize(text) {
@@ -106,6 +115,79 @@ function hasCurrencyValue(value) {
   return Number.isFinite(Number(value))
 }
 
+function firstName(value) {
+  return String(value || '').trim().split(/\s+/)[0] || ''
+}
+
+function buildSuggestedAccountForm(summary) {
+  return {
+    name: summary?.suggestedAccountName || [summary?.institutionName || 'Conta', firstName(summary?.holderName)].filter(Boolean).join(' '),
+    bank: summary?.institutionName || '',
+    holderName: summary?.holderName || '',
+    branchNumber: summary?.branchNumber || '',
+    accountNumber: summary?.accountNumber || '',
+    type: 'checking',
+    balance: hasCurrencyValue(summary?.closingBalance) ? String(Number(summary.closingBalance)) : '',
+  }
+}
+
+function buildSuggestedCardForm(summary) {
+  return {
+    name: summary?.suggestedCardName || [summary?.institutionName || 'Cartão', firstName(summary?.holderName)].filter(Boolean).join(' '),
+    holderName: summary?.holderName || '',
+    issuerBank: summary?.institutionName || '',
+    flag: summary?.flag || '',
+    closingDay: summary?.closingDay ? String(summary.closingDay) : '',
+    dueDay: summary?.dueDay ? String(summary.dueDay) : '',
+    currentInvoice: hasCurrencyValue(summary?.currentInvoice) ? String(Number(summary.currentInvoice)) : '',
+    limit: '',
+  }
+}
+
+function findMatchingAccountId(accounts, summary) {
+  if (!Array.isArray(accounts) || !summary) return ''
+
+  if (summary.accountNumber) {
+    const byNumber = accounts.find((account) => normalize(account.accountNumber) === normalize(summary.accountNumber))
+    if (byNumber) return byNumber.id
+  }
+
+  if (summary.suggestedAccountName) {
+    const byName = accounts.find((account) => normalize(account.name) === normalize(summary.suggestedAccountName))
+    if (byName) return byName.id
+  }
+
+  if (summary.institutionName && summary.holderName) {
+    const byBankAndHolder = accounts.find((account) =>
+      normalize(account.bank) === normalize(summary.institutionName)
+      && normalize(account.holderName) === normalize(summary.holderName),
+    )
+    if (byBankAndHolder) return byBankAndHolder.id
+  }
+
+  return ''
+}
+
+function findMatchingCardId(cards, summary) {
+  if (!Array.isArray(cards) || !summary) return ''
+
+  if (summary.suggestedCardName) {
+    const byName = cards.find((card) => normalize(card.name) === normalize(summary.suggestedCardName))
+    if (byName) return byName.id
+  }
+
+  if (summary.institutionName && summary.holderName) {
+    const byIssuerAndHolder = cards.find((card) =>
+      normalize(card.issuerBank) === normalize(summary.institutionName)
+      && normalize(card.holderName) === normalize(summary.holderName)
+      && (!summary.flag || normalize(card.flag) === normalize(summary.flag))
+    )
+    if (byIssuerAndHolder) return byIssuerAndHolder.id
+  }
+
+  return ''
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Importacao() {
@@ -113,9 +195,9 @@ export default function Importacao() {
   const { user }                         = useAuth()
   const { selectedMonth, selectedYear }  = useFinance()
   const { activeWorkspaceId, myRole, permissions, transactionNatures } = useWorkspace()
-  const { accounts, loading: loadingAccounts, update: updateAccount } = useAccounts()
+  const { accounts, loading: loadingAccounts, update: updateAccount, add: addAccount } = useAccounts()
+  const { cards: availableCards, add: addCard, update: updateCard } = useCards()
   const { categories } = useCategories()
-  const availableCards = MOCK_CARDS
   const selectedMonthKey = buildMonthKey(selectedYear, selectedMonth)
   const selectedMonthLabel = formatMonthLabel(selectedYear, selectedMonth)
 
@@ -139,9 +221,18 @@ export default function Importacao() {
   const [duplicateAuditLoading, setDuplicateAuditLoading] = useState(false)
   const [importOnlyOpeningBalance, setImportOnlyOpeningBalance] = useState(false)
   const [balanceOnlyApplied, setBalanceOnlyApplied] = useState(false)
+  const [suggestedAccountForm, setSuggestedAccountForm] = useState(buildSuggestedAccountForm(null))
+  const [suggestedCardForm, setSuggestedCardForm] = useState(buildSuggestedCardForm(null))
+  const [showCreateAccount, setShowCreateAccount] = useState(false)
+  const [showCreateCard, setShowCreateCard] = useState(false)
+  const [creatingTarget, setCreatingTarget] = useState(false)
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.id === accountId) || null,
     [accounts, accountId],
+  )
+  const selectedCard = useMemo(
+    () => availableCards.find((card) => card.id === cardId) || null,
+    [availableCards, cardId],
   )
 
   // ── File handling ─────────────────────────────────────────────────────────
@@ -156,11 +247,18 @@ export default function Importacao() {
     setFileName(file.name)
     setAccountId('')
     setCardId('')
+    setSuggestedAccountForm(buildSuggestedAccountForm(null))
+    setSuggestedCardForm(buildSuggestedCardForm(null))
+    setShowCreateAccount(false)
+    setShowCreateCard(false)
     setStep('parsing')
 
     try {
       const raw = await parseStatementFile(file)
-      setStatementSummary(raw?.__summary || null)
+      const summary = raw?.__summary || null
+      setStatementSummary(summary)
+      setSuggestedAccountForm(buildSuggestedAccountForm(summary))
+      setSuggestedCardForm(buildSuggestedCardForm(summary))
 
       const hasImageRows = raw.some((row) => row.source === 'image_receipt')
       const classified = (hasImageRows ? raw : classifyBatch(raw)).map((row, idx) => ({
@@ -206,12 +304,77 @@ export default function Importacao() {
     })
   }
 
+  function handleSuggestedAccountChange(event) {
+    setSuggestedAccountForm((current) => ({ ...current, [event.target.name]: event.target.value }))
+  }
+
+  function handleSuggestedCardChange(event) {
+    setSuggestedCardForm((current) => ({ ...current, [event.target.name]: event.target.value }))
+  }
+
+  async function handleCreateSuggestedAccount() {
+    if (!suggestedAccountForm.name.trim()) {
+      setSaveError('Informe um nome para criar a conta.')
+      return
+    }
+
+    setCreatingTarget(true)
+    setSaveError(null)
+    try {
+      const newId = await addAccount({
+        name: suggestedAccountForm.name.trim(),
+        bank: suggestedAccountForm.bank.trim(),
+        holderName: suggestedAccountForm.holderName.trim(),
+        branchNumber: suggestedAccountForm.branchNumber.trim(),
+        accountNumber: suggestedAccountForm.accountNumber.trim(),
+        type: suggestedAccountForm.type || 'checking',
+        balance: suggestedAccountForm.balance || statementSummary?.closingBalance || 0,
+      })
+      setAccountId(newId)
+      setShowCreateAccount(false)
+    } catch (err) {
+      setSaveError(err.message || 'Não foi possível criar a conta.')
+    } finally {
+      setCreatingTarget(false)
+    }
+  }
+
+  async function handleCreateSuggestedCard() {
+    if (!suggestedCardForm.name.trim()) {
+      setSaveError('Informe um nome para criar o cartão.')
+      return
+    }
+
+    setCreatingTarget(true)
+    setSaveError(null)
+    try {
+      const newId = await addCard({
+        name: suggestedCardForm.name.trim(),
+        holderName: suggestedCardForm.holderName.trim(),
+        issuerBank: suggestedCardForm.issuerBank.trim(),
+        flag: suggestedCardForm.flag,
+        closingDay: suggestedCardForm.closingDay || 0,
+        dueDay: suggestedCardForm.dueDay || 0,
+        currentInvoice: suggestedCardForm.currentInvoice || statementSummary?.currentInvoice || statementSummary?.netMovement || 0,
+        usedLimit: suggestedCardForm.currentInvoice || statementSummary?.currentInvoice || statementSummary?.netMovement || 0,
+        limit: suggestedCardForm.limit || 0,
+        lastInvoiceImportedAt: new Date().toISOString(),
+        lastInvoiceFileName: fileName || '',
+      })
+      setCardId(newId)
+      setShowCreateCard(false)
+    } catch (err) {
+      setSaveError(err.message || 'Não foi possível criar o cartão.')
+    } finally {
+      setCreatingTarget(false)
+    }
+  }
+
   // ── Confirm & save ────────────────────────────────────────────────────────
 
   async function handleConfirmImport() {
     if (!user?.uid) return
     const isInvoiceImport = statementSummary?.kind === 'invoice'
-    const selectedCard = availableCards.find((card) => card.id === cardId)
     const canSaveBalanceOnly = !isInvoiceImport
       && importOnlyOpeningBalance
       && hasCurrencyValue(statementSummary?.closingBalance)
@@ -238,6 +401,27 @@ export default function Importacao() {
           lastStatementNetMovement: Number(statementSummary.netMovement || 0),
           lastStatementImportedAt: new Date().toISOString(),
           lastStatementFileName: fileName || '',
+          ...(selectedAccount?.bank ? {} : (statementSummary?.institutionName ? { bank: statementSummary.institutionName } : {})),
+          ...(selectedAccount?.holderName ? {} : (statementSummary?.holderName ? { holderName: statementSummary.holderName } : {})),
+          ...(selectedAccount?.branchNumber ? {} : (statementSummary?.branchNumber ? { branchNumber: statementSummary.branchNumber } : {})),
+          ...(selectedAccount?.accountNumber ? {} : (statementSummary?.accountNumber ? { accountNumber: statementSummary.accountNumber } : {})),
+        }
+      : null
+    const invoiceSnapshotPayload = isInvoiceImport && cardId
+      ? {
+          currentInvoice: hasCurrencyValue(statementSummary?.currentInvoice)
+            ? Number(statementSummary.currentInvoice)
+            : Number(statementSummary?.netMovement || 0),
+          usedLimit: hasCurrencyValue(statementSummary?.currentInvoice)
+            ? Number(statementSummary.currentInvoice)
+            : Number(statementSummary?.netMovement || 0),
+          lastInvoiceImportedAt: new Date().toISOString(),
+          lastInvoiceFileName: fileName || '',
+          ...(selectedCard?.issuerBank ? {} : (statementSummary?.institutionName ? { issuerBank: statementSummary.institutionName } : {})),
+          ...(selectedCard?.holderName ? {} : (statementSummary?.holderName ? { holderName: statementSummary.holderName } : {})),
+          ...(selectedCard?.flag ? {} : (statementSummary?.flag ? { flag: statementSummary.flag } : {})),
+          ...(selectedCard?.closingDay ? {} : (statementSummary?.closingDay ? { closingDay: statementSummary.closingDay } : {})),
+          ...(selectedCard?.dueDay ? {} : (statementSummary?.dueDay ? { dueDay: statementSummary.dueDay } : {})),
         }
       : null
 
@@ -381,6 +565,15 @@ export default function Importacao() {
         }
       }
 
+      if (isInvoiceImport && count > 0 && invoiceSnapshotPayload) {
+        try {
+          await updateCard(cardId, invoiceSnapshotPayload)
+        } catch (err) {
+          console.error('[Importacao] Could not persist invoice summary on card:', err.message)
+          accountSummaryError = 'Os lançamentos foram salvos, mas a fatura não pôde ser vinculada ao cartão.'
+        }
+      }
+
       setSavedCount(count)
       setSkippedCount(skipped)
       if (failed.length > 0) {
@@ -427,6 +620,11 @@ export default function Importacao() {
     setExistingMonthTx([])
     setImportOnlyOpeningBalance(false)
     setBalanceOnlyApplied(false)
+    setSuggestedAccountForm(buildSuggestedAccountForm(null))
+    setSuggestedCardForm(buildSuggestedCardForm(null))
+    setShowCreateAccount(false)
+    setShowCreateCard(false)
+    setCreatingTarget(false)
     setStep('idle')
   }
 
@@ -475,6 +673,14 @@ export default function Importacao() {
   const isInvoiceImport = statementSummary?.kind === 'invoice'
   const targetSelected = isInvoiceImport ? !!cardId : !!accountId
   const canImportOpeningBalanceOnly = !isInvoiceImport && hasCurrencyValue(statementSummary?.closingBalance)
+  const matchedAccountId = useMemo(
+    () => findMatchingAccountId(accounts, statementSummary),
+    [accounts, statementSummary],
+  )
+  const matchedCardId = useMemo(
+    () => findMatchingCardId(availableCards, statementSummary),
+    [availableCards, statementSummary],
+  )
 
   useEffect(() => {
     if (step !== 'preview' || !canImportOpeningBalanceOnly) {
@@ -497,16 +703,22 @@ export default function Importacao() {
     if (step !== 'preview') return
 
     if (isInvoiceImport) {
-      if (!cardId && availableCards.length === 1) {
+      if (!cardId && matchedCardId) {
+        setCardId(matchedCardId)
+      } else if (!cardId && availableCards.length === 1) {
         setCardId(availableCards[0].id)
       }
+      setShowCreateCard(!matchedCardId)
       return
     }
 
-    if (!accountId && accounts.length === 1) {
+    if (!accountId && matchedAccountId) {
+      setAccountId(matchedAccountId)
+    } else if (!accountId && accounts.length === 1) {
       setAccountId(accounts[0].id)
     }
-  }, [step, isInvoiceImport, accountId, cardId, accounts, availableCards])
+    setShowCreateAccount(!matchedAccountId)
+  }, [step, isInvoiceImport, accountId, cardId, accounts, availableCards, matchedAccountId, matchedCardId])
 
   const duplicateMapByRowId = useMemo(() => {
     if (!targetSelected || existingMonthTx.length === 0) return {}
@@ -548,7 +760,7 @@ export default function Importacao() {
     .filter((r) => selectedIds.has(r.id))
     .reduce((sum, r) => sum + (r.direction === 'credit' ? r.amount : -r.amount), 0)
   const saveDisabledReason = !targetSelected
-    ? (isInvoiceImport ? 'Selecione o cartao da fatura para liberar o salvamento.' : 'Selecione a conta do extrato para liberar o salvamento.')
+    ? (isInvoiceImport ? 'Selecione ou crie o cartão da fatura para liberar o salvamento.' : 'Selecione ou crie a conta do extrato para liberar o salvamento.')
     : !openingBalanceOnlySelected && selectedNonExactCount === 0
       ? 'Nao ha lancamentos novos selecionados para salvar.'
       : ''
@@ -705,44 +917,146 @@ export default function Importacao() {
 
         {/* Account selector */}
         {isInvoiceImport && (
-          <div className="account-select-row">
-            <label className="account-select-label">Cartao da fatura</label>
-            <select
-              className="account-select"
-              value={cardId}
-              onChange={(e) => setCardId(e.target.value)}
-            >
-              <option value="">Selecione um cartao...</option>
-              {availableCards.map((card) => (
-                <option key={card.id} value={card.id}>{card.name}</option>
-              ))}
-            </select>
-            <p className="import-target-hint">
-              Escolha o cartao para que a fatura entre nos Lancamentos sem afetar o saldo da conta.
-            </p>
-          </div>
+          <>
+            <div className="account-select-row">
+              <label className="account-select-label">Cartao da fatura</label>
+              <select
+                className="account-select"
+                value={cardId}
+                onChange={(e) => setCardId(e.target.value)}
+              >
+                <option value="">Selecione um cartao...</option>
+                {availableCards.map((card) => (
+                  <option key={card.id} value={card.id}>{cardLabel(card)}</option>
+                ))}
+              </select>
+              <p className="import-target-hint">
+                Escolha o cartao correto para que a fatura entre nos Lancamentos sem afetar o saldo da conta.
+              </p>
+            </div>
+
+            <div className="import-create-inline">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowCreateCard((current) => !current)}
+              >
+                {showCreateCard ? 'Fechar criacao de cartao' : 'Criar novo cartao a partir desta fatura'}
+              </button>
+
+              {showCreateCard && (
+                <div className="import-create-card">
+                  <div className="import-create-grid">
+                    <div className="form-group">
+                      <label>Nome do cartao</label>
+                      <input name="name" value={suggestedCardForm.name} onChange={handleSuggestedCardChange} placeholder="Ex: Nubank Mastercard Marcio" />
+                    </div>
+                    <div className="form-group">
+                      <label>Titular</label>
+                      <input name="holderName" value={suggestedCardForm.holderName} onChange={handleSuggestedCardChange} placeholder="Ex: Marcio Martins" />
+                    </div>
+                    <div className="form-group">
+                      <label>Banco / emissor</label>
+                      <input name="issuerBank" value={suggestedCardForm.issuerBank} onChange={handleSuggestedCardChange} placeholder="Ex: Nubank" />
+                    </div>
+                    <div className="form-group">
+                      <label>Bandeira</label>
+                      <input name="flag" value={suggestedCardForm.flag} onChange={handleSuggestedCardChange} placeholder="Ex: mastercard" />
+                    </div>
+                    <div className="form-group">
+                      <label>Fechamento</label>
+                      <input name="closingDay" type="number" min="1" max="31" value={suggestedCardForm.closingDay} onChange={handleSuggestedCardChange} placeholder="27" />
+                    </div>
+                    <div className="form-group">
+                      <label>Vencimento</label>
+                      <input name="dueDay" type="number" min="1" max="31" value={suggestedCardForm.dueDay} onChange={handleSuggestedCardChange} placeholder="6" />
+                    </div>
+                    <div className="form-group">
+                      <label>Fatura atual (R$)</label>
+                      <input name="currentInvoice" type="number" step="0.01" value={suggestedCardForm.currentInvoice} onChange={handleSuggestedCardChange} placeholder="0,00" />
+                    </div>
+                    <div className="form-group">
+                      <label>Limite total (R$)</label>
+                      <input name="limit" type="number" step="0.01" value={suggestedCardForm.limit} onChange={handleSuggestedCardChange} placeholder="Opcional" />
+                    </div>
+                  </div>
+                  <div className="import-create-actions">
+                    <button type="button" className="btn-primary" onClick={handleCreateSuggestedCard} disabled={creatingTarget}>
+                      {creatingTarget ? 'Criando...' : 'Criar e usar este cartao'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         {!isInvoiceImport && (
           <>
             <div className="account-select-row">
-          <label className="account-select-label">Conta de importação</label>
-          <select
-            className="account-select"
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-            disabled={loadingAccounts}
-          >
-            <option value="">Selecione uma conta…</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>{accountLabel(a)}</option>
-            ))}
-          </select>
-        </div>
+              <label className="account-select-label">Conta de importação</label>
+              <select
+                className="account-select"
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                disabled={loadingAccounts}
+              >
+                <option value="">Selecione uma conta…</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>{accountLabel(account)}</option>
+                ))}
+              </select>
+            </div>
 
             <p className="import-target-hint">
               Escolha a conta para salvar os lancamentos e vincular o saldo anterior/atual deste extrato.
             </p>
+
+            <div className="import-create-inline">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowCreateAccount((current) => !current)}
+              >
+                {showCreateAccount ? 'Fechar criação de conta' : 'Criar nova conta a partir deste extrato'}
+              </button>
+
+              {showCreateAccount && (
+                <div className="import-create-card">
+                  <div className="import-create-grid">
+                    <div className="form-group">
+                      <label>Nome da conta</label>
+                      <input name="name" value={suggestedAccountForm.name} onChange={handleSuggestedAccountChange} placeholder="Ex: Nubank Márcio" />
+                    </div>
+                    <div className="form-group">
+                      <label>Banco</label>
+                      <input name="bank" value={suggestedAccountForm.bank} onChange={handleSuggestedAccountChange} placeholder="Ex: Nubank" />
+                    </div>
+                    <div className="form-group">
+                      <label>Titular</label>
+                      <input name="holderName" value={suggestedAccountForm.holderName} onChange={handleSuggestedAccountChange} placeholder="Ex: Márcio Martins" />
+                    </div>
+                    <div className="form-group">
+                      <label>Agência</label>
+                      <input name="branchNumber" value={suggestedAccountForm.branchNumber} onChange={handleSuggestedAccountChange} placeholder="0001" />
+                    </div>
+                    <div className="form-group">
+                      <label>Conta</label>
+                      <input name="accountNumber" value={suggestedAccountForm.accountNumber} onChange={handleSuggestedAccountChange} placeholder="123456-7" />
+                    </div>
+                    <div className="form-group">
+                      <label>Saldo inicial (R$)</label>
+                      <input name="balance" type="number" step="0.01" value={suggestedAccountForm.balance} onChange={handleSuggestedAccountChange} placeholder="0,00" />
+                    </div>
+                  </div>
+                  <div className="import-create-actions">
+                    <button type="button" className="btn-primary" onClick={handleCreateSuggestedAccount} disabled={creatingTarget}>
+                      {creatingTarget ? 'Criando...' : 'Criar e usar esta conta'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {canImportOpeningBalanceOnly && (
               <label className="import-balance-only">

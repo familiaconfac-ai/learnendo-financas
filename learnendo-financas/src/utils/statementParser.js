@@ -217,7 +217,7 @@ function finalizeStatementSummary(rows, partial = {}) {
     closingInferred = true
   }
 
-  return {
+  const base = {
     kind: partial.kind || 'statement',
     layout: partial.layout || null,
     openingBalance,
@@ -228,6 +228,12 @@ function finalizeStatementSummary(rows, partial = {}) {
     openingInferred,
     closingInferred,
   }
+
+  const extras = Object.fromEntries(
+    Object.entries(partial).filter(([key]) => !(key in base)),
+  )
+
+  return { ...base, ...extras }
 }
 
 function attachStatementSummary(rows, partial = {}) {
@@ -741,6 +747,7 @@ async function parsePDF(file) {
   const layout = detectPdfLayout(lines)
   const structure = analyzePdfLines(lines)
   const balanceSummary = kind === 'statement' ? extractPdfBalanceSummary(lines) : {}
+  const headerSummary = extractPdfHeaderSummary(lines, kind, layout, file?.name || '')
   console.log(`[Parser] PDF kind: ${kind}`)
   console.log(`[PDF] layout: ${layout}`)
   console.log('[PDF] structure:', structure)
@@ -754,6 +761,7 @@ async function parsePDF(file) {
     kind,
     layout,
     ...balanceSummary,
+    ...headerSummary,
   })
 
   const lowConfidenceCount = rows.filter((row) => row.direction === 'unknown').length
@@ -930,6 +938,142 @@ function extractPdfBalanceSummary(lines) {
   }
 
   return { openingBalance, closingBalance }
+}
+
+function extractPdfHeaderSummary(lines, kind, layout, fileName = '') {
+  if (kind === 'invoice') {
+    return extractInvoiceHeaderSummary(lines, layout, fileName)
+  }
+
+  return extractAccountHeaderSummary(lines, layout, fileName)
+}
+
+function extractAccountHeaderSummary(lines, layout, fileName = '') {
+  const head = lines.slice(0, 40)
+  const holderName = findLikelyPersonName(head)
+  const institutionName = inferInstitutionName(head, layout, fileName)
+
+  let branchNumber = ''
+  let accountNumber = ''
+
+  for (let index = 0; index < head.length; index += 1) {
+    const line = String(head[index] || '')
+    const branchMatch = line.match(/ag[eê]ncia\s+(\d+)/i)
+    const inlineAccountMatch = line.match(/conta\s+([\d.\-]+)/i)
+
+    if (!branchNumber && branchMatch) branchNumber = branchMatch[1]
+    if (!accountNumber && inlineAccountMatch) accountNumber = inlineAccountMatch[1]
+
+    if (!accountNumber && /conta\s*$/i.test(line)) {
+      const nextLine = String(head[index + 1] || '').trim()
+      if (/^[\d.\-]+$/.test(nextLine)) {
+        accountNumber = nextLine
+      }
+    }
+  }
+
+  return {
+    institutionName,
+    holderName,
+    branchNumber,
+    accountNumber,
+    suggestedAccountName: buildSuggestedAccountName(institutionName, holderName, accountNumber),
+  }
+}
+
+function extractInvoiceHeaderSummary(lines, layout, fileName = '') {
+  const head = lines.slice(0, 80)
+  const holderName = findLikelyPersonName(head)
+  const institutionName = inferInstitutionName(head, layout, fileName)
+  const flag = inferCardFlag(head, fileName)
+  const dueDateLine = head.find((line) => /data de vencimento/i.test(line)) || ''
+  const dueDateMatch = dueDateLine.match(/(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/i)
+  const dueDate = dueDateMatch ? parseDateToISO(dueDateMatch[1]) : null
+  const dueDay = dueDate ? Number(dueDate.slice(8, 10)) : 0
+  const periodLine = head.find((line) => /periodo vigente/i.test(stripAccents(line.toLowerCase()))) || ''
+  const closingMatch = periodLine.match(/a\s+(\d{1,2}\s+[A-Za-z]{3})/i)
+  const closingDate = closingMatch ? parseDateToISO(closingMatch[1]) : null
+  const closingDay = closingDate ? Number(closingDate.slice(8, 10)) : 0
+  const amountLine = head.find((line) => /fatura.*R\$\s*\d/i.test(line)) || head.find((line) => /^R\$\s*\d/i.test(line)) || ''
+  const amountMatch = amountLine.match(/R\$\s*\d{1,3}(?:\.\d{3})*,\d{2}/i)
+  const currentInvoice = amountMatch ? normaliseBRAmount(amountMatch[0]) : null
+
+  return {
+    institutionName,
+    holderName,
+    flag,
+    dueDate,
+    dueDay,
+    closingDay,
+    currentInvoice: Number.isFinite(currentInvoice) ? currentInvoice : null,
+    suggestedCardName: buildSuggestedCardName(institutionName, flag, holderName),
+  }
+}
+
+function inferInstitutionName(lines, layout, fileName = '') {
+  const text = stripAccents(`${lines.join(' ')} ${fileName}`.toLowerCase())
+  if (layout === 'nubank_invoice' || layout === 'nubank_statement' || /\bnubank\b|\bnu pagamentos\b/.test(text)) {
+    return 'Nubank'
+  }
+  if (/\bbradesco\b/.test(text)) return 'Bradesco'
+  if (/\bsantander\b/.test(text)) return 'Santander'
+  if (/\bitau\b|\bita[uú]\b/.test(text)) return 'Itaú'
+  if (/\bbanco do brasil\b/.test(text)) return 'Banco do Brasil'
+  if (/\bcaixa\b/.test(text)) return 'Caixa Econômica Federal'
+  if (/\bmercado pago\b/.test(text)) return 'Mercado Pago'
+  return ''
+}
+
+function inferCardFlag(lines, fileName = '') {
+  const text = stripAccents(`${lines.join(' ')} ${fileName}`.toLowerCase())
+  if (/\bmastercard\b|\bmaster\b/.test(text)) return 'mastercard'
+  if (/\bvisa\b/.test(text)) return 'visa'
+  if (/\belo\b/.test(text)) return 'elo'
+  if (/\bhipercard\b/.test(text)) return 'hipercard'
+  if (/\bamerican express\b|\bamex\b/.test(text)) return 'amex'
+  return ''
+}
+
+function findLikelyPersonName(lines) {
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').trim()
+    if (!line || line.length < 6) continue
+    if (/\bcpf\b|\bfatura\b|\bextrato\b|\bagencia\b|\bconta\b|\bdata de vencimento\b/i.test(line)) continue
+    if (!/^[A-Za-zÀ-ÿ\s]+$/.test(line)) continue
+    const words = line.split(/\s+/).filter(Boolean)
+    if (words.length < 2) continue
+    return toTitleCase(line)
+  }
+  return ''
+}
+
+function buildSuggestedAccountName(institutionName, holderName, accountNumber) {
+  const suffix = holderName ? firstName(holderName) : accountNumber || ''
+  return [institutionName || 'Conta', suffix].filter(Boolean).join(' ')
+}
+
+function buildSuggestedCardName(institutionName, flag, holderName) {
+  const parts = [institutionName || 'Cartão']
+  if (flag) parts.push(capitalizeWord(flag))
+  if (holderName) parts.push(firstName(holderName))
+  return parts.join(' ')
+}
+
+function firstName(name) {
+  return String(name || '').trim().split(/\s+/)[0] || ''
+}
+
+function capitalizeWord(text) {
+  const value = String(text || '').trim()
+  if (!value) return ''
+  if (value.toLowerCase() === 'amex') return 'Amex'
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase()
+}
+
+function toTitleCase(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/\b\p{L}/gu, (match) => match.toUpperCase())
 }
 
 function parseDateTextFromLine(line, defaultYear = new Date().getFullYear()) {

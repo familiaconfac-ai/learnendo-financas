@@ -37,6 +37,9 @@ export async function addAccount(uid, data) {
     const ref = await addDoc(accCol(uid), {
       name:           data.name,
       bank:           data.bank           || '',
+      holderName:     data.holderName     || '',
+      branchNumber:   data.branchNumber   || '',
+      accountNumber:  data.accountNumber  || '',
       type:           data.type           || 'checking',
       balance:        Number(data.balance || 0),
       initialBalance: Number(data.balance || 0),
@@ -58,6 +61,7 @@ export async function updateAccount(uid, accId, data) {
   try {
     const payload = { ...data, updatedAt: serverTimestamp() }
     if (payload.balance !== undefined) payload.balance = Number(payload.balance)
+    if (payload.initialBalance !== undefined) payload.initialBalance = Number(payload.initialBalance)
     await updateDoc(doc(db, 'users', uid, 'accounts', accId), payload)
     console.log('[AccountService] ✅ Update succeeded')
   } catch (err) {
