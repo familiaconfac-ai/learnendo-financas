@@ -209,6 +209,22 @@ function recurringStartDateForTransaction(tx) {
   return tx?.date || ''
 }
 
+function buildSubcategoryId(name) {
+  const normalized = String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return `sub_${normalized || 'item'}_${Date.now().toString(36)}`
+}
+
+function defaultCategoryIcon(type) {
+  if (type === 'income') return '💰'
+  if (type === 'investment') return '📊'
+  return '📦'
+}
+
 export default function Lancamentos({ view = 'confirmed' }) {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -240,7 +256,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
   // Dados reais do Firestore — users/{uid}/transactions
   const { transactions: allTx, loading, error, add, update, remove } =
     useTransactions(selectedYear, selectedMonth)
-  const { categories } = useCategories()
+  const { categories, add: addCategory, update: updateCategory } = useCategories()
   const { accounts }   = useAccounts()
   const { cards: availableCards } = useCards()
   const { debts } = useDebts()
@@ -426,6 +442,58 @@ export default function Lancamentos({ view = 'confirmed' }) {
     }
   }
 
+  async function handleCreateCategoryFromInput() {
+    const name = String(form.newCategoryName || '').trim()
+    if (!name) return
+    try {
+      const newId = await addCategory({
+        name,
+        type: form.type || 'expense',
+        icon: defaultCategoryIcon(form.type),
+        subcategories: [],
+      })
+      setForm((f) => ({
+        ...f,
+        categoryId: newId,
+        subcategoryId: '',
+        newCategoryName: '',
+      }))
+    } catch (err) {
+      alert('Erro ao criar categoria: ' + err.message)
+    }
+  }
+
+  async function handleCreateSubcategoryFromInput() {
+    const category = categories.find((item) => item.id === form.categoryId)
+    const name = String(form.newSubcategoryName || '').trim()
+    if (!category || !name) return
+
+    const alreadyExists = (Array.isArray(category.subcategories) ? category.subcategories : [])
+      .some((subcategory) => String(subcategory.name || '').trim().toLowerCase() === name.toLowerCase())
+    if (alreadyExists) {
+      alert('Essa subcategoria já existe nessa categoria.')
+      return
+    }
+
+    const nextSubcategory = {
+      id: buildSubcategoryId(name),
+      name,
+    }
+
+    try {
+      await updateCategory(category.id, {
+        subcategories: [...(Array.isArray(category.subcategories) ? category.subcategories : []), nextSubcategory],
+      })
+      setForm((f) => ({
+        ...f,
+        subcategoryId: nextSubcategory.id,
+        newSubcategoryName: '',
+      }))
+    } catch (err) {
+      alert('Erro ao criar subcategoria: ' + err.message)
+    }
+  }
+
   function handleSelectNatureChip(natureId) {
     const selected = transactionNatures.find((nature) => nature.id === natureId)
     if (!selected) return
@@ -507,6 +575,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
       transactionNatureLabel: tx.transactionNatureLabel || '',
       contactId: tx.contactId || '',
       newContactName: '',
+      newCategoryName: '',
+      newSubcategoryName: '',
       debtId: tx.debtId || '',
       paymentMethod: tx.paymentMethod || '',
       cardId: tx.cardId || '',
@@ -1127,6 +1197,20 @@ transactions.length === 0 ? (
               </div>
             </>
           )}
+          {form.type !== 'transfer_internal' && !isInvoicePaymentNature(form) && permissions.canCreateGlobalCategories && (
+            <div className="form-group inline-add-row">
+              <input
+                name="newCategoryName"
+                type="text"
+                value={form.newCategoryName}
+                onChange={handleChange}
+                placeholder="Nova categoria, ex: Ferramentas de trabalho"
+              />
+              <button type="button" className="inline-add-btn" onClick={handleCreateCategoryFromInput}>
+                Adicionar categoria
+              </button>
+            </div>
+          )}
           {form.categoryId && !isInvoicePaymentNature(form) && categories.find((category) => category.id === form.categoryId)?.subcategories?.length > 0 && (
             <div className="form-group">
               <label>Subcategoria</label>
@@ -1139,6 +1223,20 @@ transactions.length === 0 ? (
                     <option key={subcategory.id} value={subcategory.id}>{subcategory.name}</option>
                   ))}
               </select>
+            </div>
+          )}
+          {form.categoryId && !isInvoicePaymentNature(form) && permissions.canCreateGlobalCategories && (
+            <div className="form-group inline-add-row">
+              <input
+                name="newSubcategoryName"
+                type="text"
+                value={form.newSubcategoryName}
+                onChange={handleChange}
+                placeholder="Nova subcategoria, ex: Imposto"
+              />
+              <button type="button" className="inline-add-btn" onClick={handleCreateSubcategoryFromInput}>
+                Adicionar subcategoria
+              </button>
             </div>
           )}
           {requiresCardSelection(form) && (
@@ -1350,6 +1448,7 @@ function defaultForm() {
     transactionNatureId: '', transactionNatureLabel: '',
     paymentMethod: '', cardId: '',
     contactId: '', newContactName: '',
+    newCategoryName: '', newSubcategoryName: '',
     debtId: '', subcategoryId: '',
     receiptDetailEnabled: false,
     receiptItems: [],

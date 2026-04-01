@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useWorkspace } from '../context/WorkspaceContext'
-import { fetchCategories, addCategory, deleteCategory } from '../services/categoryService'
+import { fetchCategories, addCategory, deleteCategory, updateCategory } from '../services/categoryService'
 import { MOCK_CATEGORIES } from '../utils/mockData'
 
 /**
@@ -59,5 +59,14 @@ export function useCategories() {
     await reload()
   }
 
-  return { categories, loading, error, reload, add, remove }
+  async function update(catId, data) {
+    if (!user?.uid) throw new Error('Usuário não autenticado')
+    if (!permissions.canCreateGlobalCategories) {
+      throw new Error('Seu papel não permite editar categorias neste workspace')
+    }
+    await updateCategory(user.uid, catId, { ...data, workspaceId: activeWorkspaceId }, { workspaceId: activeWorkspaceId })
+    await reload()
+  }
+
+  return { categories, loading, error, reload, add, update, remove }
 }

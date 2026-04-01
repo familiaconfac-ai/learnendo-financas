@@ -426,6 +426,15 @@
   align-items: center;
 }
 
+.inline-add-row {
+  flex-direction: row;
+  align-items: center;
+}
+
+.inline-add-row input {
+  flex: 1;
+}
+
 .inline-add-btn {
   border: 1px solid var(--color-primary);
   background: #eff6ff;

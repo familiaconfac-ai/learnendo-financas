@@ -10,12 +10,18 @@ import {
   doc,
   getDocs,
   serverTimestamp,
+  updateDoc,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
 
 function catCol(uid, workspaceId = null) {
   if (workspaceId) return collection(db, 'workspaces', workspaceId, 'categories')
   return collection(db, 'users', uid, 'categories')
+}
+
+function catDoc(uid, catId, workspaceId = null) {
+  if (workspaceId) return doc(db, 'workspaces', workspaceId, 'categories', catId)
+  return doc(db, 'users', uid, 'categories', catId)
 }
 
 export async function fetchCategories(uid, options = {}) {
@@ -51,6 +57,27 @@ export async function addCategory(uid, data, options = {}) {
     return ref.id
   } catch (err) {
     console.error('[CategoryService] ❌ Write failed:', err.code, err.message)
+    throw err
+  }
+}
+
+export async function updateCategory(uid, catId, data, options = {}) {
+  const workspaceId = options.workspaceId || data.workspaceId || null
+  const path = workspaceId
+    ? `workspaces/${workspaceId}/categories/${catId}`
+    : `users/${uid}/categories/${catId}`
+  console.log(`[CategoryService] ✏️ Updating ${path}`)
+  try {
+    await updateDoc(catDoc(uid, catId, workspaceId), {
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.icon !== undefined ? { icon: data.icon } : {}),
+      ...(data.type !== undefined ? { type: data.type } : {}),
+      ...(data.subcategories !== undefined ? { subcategories: Array.isArray(data.subcategories) ? data.subcategories : [] } : {}),
+      updatedAt: serverTimestamp(),
+    })
+    console.log('[CategoryService] ✅ Update succeeded')
+  } catch (err) {
+    console.error('[CategoryService] ❌ Update failed:', err.code, err.message)
     throw err
   }
 }
