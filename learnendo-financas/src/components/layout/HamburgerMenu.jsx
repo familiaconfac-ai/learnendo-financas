@@ -4,23 +4,22 @@ import { logoutUser } from '../../firebase/auth'
 import './HamburgerMenu.css'
 
 const MENU_LINKS = [
-  { to: '/dashboard',    label: 'Dashboard',        icon: '🏠' },
-  { to: '/lancar',       label: 'Lançar',           icon: '➕' },
-  { to: '/lancamentos',  label: 'Lançamentos',      icon: '📝' },
-  { to: '/contas',       label: 'Contas e Cartões', icon: '🏦' },
-  { to: '/dividas',      label: 'Dívidas',          icon: '📉' },
-  { to: '/importacao',   label: 'Importação',       icon: '📥' },
-  { to: '/reconciliacao',label: 'Reconciliação',    icon: '🔍' },
-  { to: '/orcamento',    label: 'Orçamento',        icon: '💰' },
-  { to: '/mensal',       label: 'Visão Mensal',     icon: '📅' },
-  { to: '/relatorios',   label: 'Relatórios',       icon: '📊' },
-  { to: '/familia',      label: 'Família',          icon: '🏡' },
-  { to: '/perfil',       label: 'Perfil',           icon: '👤' },
+  { to: '/dashboard', label: 'Dashboard', icon: '🏠' },
+  { to: '/contas', label: 'Contas', icon: '🏦' },
+  { to: '/lancar', label: 'Lançar', icon: '➕' },
+  { to: '/lancamentos', label: 'Lançamentos', icon: '📝' },
+  { to: '/dividas', label: 'Dívidas', icon: '📉' },
+  { to: '/reconciliacao', label: 'Reconciliação', icon: '🔍' },
+  { to: '/orcamento', label: 'Orçamento', icon: '💰' },
+  { to: '/mensal', label: 'Visão Mensal', icon: '📆' },
+  { to: '/relatorios', label: 'Relatórios', icon: '📊' },
+  { to: '/familia', label: 'Família', icon: '🏡' },
+  { to: '/perfil', label: 'Perfil', icon: '👤' },
 ]
 
 export default function HamburgerMenu({ isOpen, onClose }) {
   const navigate = useNavigate()
-  const { profile, isAdmin } = useAuth()
+  const { profile } = useAuth()
 
   async function handleLogout() {
     await logoutUser()
@@ -73,7 +72,6 @@ export default function HamburgerMenu({ isOpen, onClose }) {
               {link.label}
             </button>
           ))}
-          {/* /admin permanece disponível como ferramenta técnica, mas não aparece na nav */}
         </nav>
 
         <div className="menu-footer">

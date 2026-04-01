@@ -12,9 +12,12 @@ const MONTH_NAMES = [
 const PAGE_TITLES = {
   '/lancar': 'Lançar',
   '/lancamentos': 'Lançamentos',
+  '/contas': 'Contas',
   '/orcamento': 'Orçamento',
   '/mensal': 'Visão Mensal',
   '/relatorios': 'Relatórios',
+  '/dividas': 'Dívidas',
+  '/reconciliacao': 'Reconciliação',
   '/perfil': 'Perfil',
   '/admin': 'Painel Admin',
 }

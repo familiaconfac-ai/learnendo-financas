@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
-import { logoutUser } from '../../firebase/auth'
+import { NavLink } from 'react-router-dom'
 import './BottomNav.css'
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Inicio', icon: '🏠' },
   { to: '/lancar', label: 'Lancar', icon: '➕' },
+  { to: '/contas', label: 'Contas', icon: '🏦' },
   { to: '/orcamento', label: 'Orcamento', icon: '📊' },
   { to: '/familia', label: 'Familia', icon: '👨‍👩‍👧‍👦' },
 ]
 
 export default function BottomNav() {
-  const navigate = useNavigate()
   const [feedback, setFeedback] = useState('')
 
   useEffect(() => {
@@ -19,11 +18,6 @@ export default function BottomNav() {
     const timeoutId = window.setTimeout(() => setFeedback(''), 2200)
     return () => window.clearTimeout(timeoutId)
   }, [feedback])
-
-  async function handleLogout() {
-    await logoutUser()
-    navigate('/login')
-  }
 
   async function handleShare() {
     const url = window.location.origin
@@ -76,15 +70,6 @@ export default function BottomNav() {
         >
           <span className="bottom-nav-icon">📤</span>
           <span className="bottom-nav-label">Share</span>
-        </button>
-
-        <button
-          type="button"
-          className="bottom-nav-item bottom-nav-logout"
-          onClick={handleLogout}
-        >
-          <span className="bottom-nav-icon">🚪</span>
-          <span className="bottom-nav-label">Sair</span>
         </button>
       </nav>
     </>

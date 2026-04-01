@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useFinance } from '../../context/FinanceContext'
 import Card, { CardHeader } from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
@@ -53,6 +54,7 @@ const COMMON_BRAZILIAN_BANKS = [
 ]
 
 export default function Contas() {
+  const navigate = useNavigate()
   const [tab, setTab] = useState('contas') // 'contas' | 'cartoes'
   const { selectedMonth, selectedYear } = useFinance()
   const { accounts, add, remove } = useAccounts()
@@ -105,6 +107,24 @@ export default function Contas() {
           onClick={() => setTab('cartoes')}
         >
           💳 Cartões
+        </button>
+      </div>
+
+      <div className="contas-toolbar">
+        <div className="contas-toolbar-copy">
+          <strong>{tab === 'contas' ? 'Importe extratos das suas contas' : 'Importe as faturas dos seus cartões'}</strong>
+          <span>
+            {tab === 'contas'
+              ? 'Selecione o banco certo e traga os movimentos da conta para revisar depois em Lançar.'
+              : 'Traga a fatura do cartão para identificar compras, parcelas e pagamentos vinculados ao cartão correto.'}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="contas-import-btn"
+          onClick={() => navigate('/importacao')}
+        >
+          {tab === 'contas' ? 'Importar extrato' : 'Importar fatura'}
         </button>
       </div>
 

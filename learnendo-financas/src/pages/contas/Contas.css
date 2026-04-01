@@ -27,6 +27,47 @@
   border-bottom-color: var(--color-primary);
 }
 
+.contas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding: 0.9rem 1rem 0;
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.contas-toolbar-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.contas-toolbar-copy strong {
+  font-size: 0.9rem;
+  color: var(--color-text);
+}
+
+.contas-toolbar-copy span {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  line-height: 1.35;
+}
+
+.contas-import-btn {
+  border: none;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.84rem;
+  font-weight: 600;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .contas-content {
   display: flex;
   flex-direction: column;
@@ -218,6 +259,11 @@
 .negative { color: var(--color-danger); }
 
 @media (max-width: 640px) {
+  .contas-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .acc-meta,
   .acc-statement-header {
     flex-direction: column;

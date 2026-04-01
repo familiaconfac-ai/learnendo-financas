@@ -852,21 +852,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
     <div className="lancamentos-page">
 <MonthSelector />
 
-      {isPendingView ? (
-        <div className="import-highlight">
-          <button
-            className="import-highlight-btn"
-            onClick={() => navigate('/importacao')}
-            title="Importar extrato ou fatura"
-          >
-            📥 Importar
-          </button>
-          <p className="import-highlight-title">Importe movimentações para revisar e lançar mais rápido</p>
-          <p className="import-highlight-subtitle">
-            Você pode importar extrato bancário, fatura do cartão e arquivos com transações para categorizar automaticamente.
-          </p>
-        </div>
-      ) : (
+      {isPendingView ? null : (
         <>
           {/* Type chip navigation — primary filter */}
           <div className="type-filter">
@@ -879,13 +865,6 @@ export default function Lancamentos({ view = 'confirmed' }) {
                 {chip.label}
               </button>
             ))}
-            <button
-              className="filter-toggle-btn import-btn"
-              onClick={() => navigate('/importacao')}
-              title="Importar extrato"
-            >
-              📥 Importar
-            </button>
           </div>
 
           <div className="advanced-filters">
@@ -942,7 +921,7 @@ transactions.length === 0 ? (
                   {isPendingView ? 'Nenhuma pendência encontrada' : 'Nenhum lançamento confirmado encontrado'}
                 </p>
                 <p className="empty-hint">
-                  {isPendingView ? 'Use o botão Importar acima para trazer extratos e faturas para revisão automática.' : 'Toque em ➕ para adicionar um lançamento'}
+                  {isPendingView ? 'Importe extratos e faturas na tela de Contas para revisar aqui.' : 'Toque em ➕ para adicionar um lançamento'}
                 </p>
               </div>
             ) : (
