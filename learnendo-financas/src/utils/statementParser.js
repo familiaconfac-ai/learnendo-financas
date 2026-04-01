@@ -28,7 +28,7 @@ const MAX_SANITY_AMOUNT = 10_000_000
 export function normaliseBRAmount(raw) {
   if (raw === null || raw === undefined) return NaN
 
-  let s = String(raw).trim()
+  let s = String(raw).trim().replace(/[−–—]/g, '-')
   if (!s) return NaN
 
   const isParenNegative = s.startsWith('(') && s.endsWith(')')
@@ -740,14 +740,16 @@ async function parsePDF(file) {
   const kind = detectPdfKind(lines)
   const layout = detectPdfLayout(lines)
   const structure = analyzePdfLines(lines)
-  const balanceSummary = extractPdfBalanceSummary(lines)
+  const balanceSummary = kind === 'statement' ? extractPdfBalanceSummary(lines) : {}
   console.log(`[Parser] PDF kind: ${kind}`)
   console.log(`[PDF] layout: ${layout}`)
   console.log('[PDF] structure:', structure)
 
-  const parsedRows = layout === 'nubank_statement'
-    ? parseNubankPdf(lines)
-    : parseGenericPdf(lines, kind)
+  const parsedRows = layout === 'nubank_invoice'
+    ? parseNubankInvoicePdf(lines)
+    : layout === 'nubank_statement'
+      ? parseNubankPdf(lines)
+      : parseGenericPdf(lines, kind)
   const rows = attachStatementSummary(parsedRows, {
     kind,
     layout,
@@ -839,14 +841,36 @@ function groupPdfTextToLines(items) {
 
 function detectPdfKind(lines) {
   const head = stripAccents(lines.slice(0, 120).join(' ').toLowerCase())
-  if (/\bfatura\b|\bcartao\b|\bfechamento\b|\bvencimento\b/.test(head)) return 'invoice'
-  if (/\bextrato\b|\bsaldo\b|\bconta corrente\b|\bmovimentacao\b/.test(head)) return 'statement'
+  let statementScore = 0
+  let invoiceScore = 0
+
+  if (/\bextrato\b|\bmovimentacoes\b|\bmovimentacao\b/.test(head)) statementScore += 4
+  if (/\bsaldo inicial\b|\bsaldo final\b|\bsaldo do dia\b/.test(head)) statementScore += 3
+  if (/\btotal de entradas\b|\btotal de saidas\b/.test(head)) statementScore += 2
+  if (/\bagencia\b|\bconta\b|\bconta corrente\b/.test(head)) statementScore += 2
+
+  if (/\besta e a sua fatura\b|\bfatura no valor\b/.test(head)) invoiceScore += 4
+  if (/\blimite total do cartao de credito\b/.test(head)) invoiceScore += 3
+  if (/\bdata de vencimento\b|\bfechamento da proxima fatura\b|\bperiodo vigente\b/.test(head)) invoiceScore += 3
+  if (/\balternativas de pagamento\b|\bparcelar\b|\bpagamento minimo\b/.test(head)) invoiceScore += 2
+  if (/\bfatura\b/.test(head)) invoiceScore += 1
+  if (/\bcartao\b/.test(head)) invoiceScore += 1
+
+  if (statementScore === 0 && invoiceScore === 0) return 'unknown'
+  if (statementScore >= invoiceScore) return 'statement'
+  if (invoiceScore > statementScore) return 'invoice'
   return 'unknown'
 }
 
 function detectPdfLayout(lines) {
   const head = stripAccents(lines.slice(0, 180).join(' ').toLowerCase())
+  let invoiceScore = 0
   let nubankScore = 0
+
+  if (/\bfatura\b/.test(head)) invoiceScore += 2
+  if (/\btransacoes\b/.test(head)) invoiceScore += 2
+  if (/\blimite total do cartao de credito\b|\bpagamento minimo\b/.test(head)) invoiceScore += 2
+  if (/\bnu pagamentos\b/.test(head)) invoiceScore += 1
 
   if (/\bnubank\b|\bnu pagamentos\b/.test(head)) nubankScore += 3
   if (/\bcompra no debito\b/.test(head)) nubankScore += 2
@@ -855,6 +879,7 @@ function detectPdfLayout(lines) {
   if (/\btotal de entradas\b|\btotal de saidas\b/.test(head)) nubankScore += 1
   if (/\bchat do app\b|\bligue\b|\bcapitais e regioes\b/.test(head)) nubankScore += 1
 
+  if (invoiceScore >= 4) return 'nubank_invoice'
   if (nubankScore >= 3) return 'nubank_statement'
   return 'generic_statement'
 }
@@ -1048,6 +1073,57 @@ function buildNubankRowFromParts(sourceText, rawAmount, dateIso) {
     balance: null,
     rawLine: sourceText.slice(0, 180),
   }
+}
+
+function parseNubankInvoicePdf(lines) {
+  const rows = []
+  const meta = { ignoredLines: 0 }
+  const currentYear = new Date().getFullYear()
+  const transactionPattern = /^(\d{1,2}\s+[A-Za-z]{3})(?:\s+••••\s*\d{4})?\s+(.+?)\s+([−-]?R\$\s*\d{1,3}(?:\.\d{3})*,\d{2})$/i
+
+  for (const raw of lines) {
+    const line = String(raw || '').replace(/\s+/g, ' ').trim()
+    if (!line) continue
+
+    const match = line.match(transactionPattern)
+    if (!match) {
+      meta.ignoredLines += 1
+      continue
+    }
+
+    const isoDate = parseDateToISO(match[1], currentYear)
+    const rawAmount = match[3].replace(/[−–—]/g, '-')
+    const signed = normaliseBRAmount(rawAmount)
+    const description = match[2].trim()
+
+    if (!isoDate || !Number.isFinite(signed) || signed === 0 || shouldSkipInvoiceLine(description)) {
+      meta.ignoredLines += 1
+      continue
+    }
+
+    rows.push({
+      date: isoDate,
+      description,
+      amount: Math.abs(signed),
+      direction: signed < 0 ? 'credit' : 'debit',
+      balance: null,
+      rawLine: line.slice(0, 180),
+    })
+  }
+
+  Object.defineProperty(rows, '__meta', {
+    value: meta,
+    enumerable: false,
+    configurable: true,
+  })
+
+  return rows
+}
+
+function shouldSkipInvoiceLine(description) {
+  const normalized = stripAccents(String(description || '').toLowerCase())
+  if (!normalized) return true
+  return /\bpagamento recebido\b|\bpagamento em\b|\bfatura\b|\bsaldo\b/.test(normalized)
 }
 
 function parseGenericPdf(lines, kind) {

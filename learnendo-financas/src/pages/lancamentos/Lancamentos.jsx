@@ -171,6 +171,32 @@ function getTodayLocalISO() {
   return local.toISOString().slice(0, 10)
 }
 
+const ACCOUNT_TYPE_LABELS = {
+  checking: 'Conta Corrente',
+  savings: 'Poupança',
+  investment: 'Investimento',
+  credit: 'Cartão de Crédito',
+  wallet: 'Carteira',
+}
+
+function accountOptionLabel(account) {
+  if (!account) return ''
+  const type = ACCOUNT_TYPE_LABELS[account.type] || account.type || ''
+  return [account.name, account.bank, type].filter(Boolean).join(' • ')
+}
+
+function cardOptionLabel(card) {
+  if (!card) return ''
+  const flag = card.flag ? card.flag.toUpperCase() : 'CRÉDITO'
+  return `${card.name} • ${flag}`
+}
+
+function requiresBankAccount(formState) {
+  if (formState.type === 'transfer_internal') return true
+  if (isInvoicePaymentNature(formState)) return true
+  return formState.paymentMethod !== 'credit_card'
+}
+
 export default function Lancamentos({ view = 'confirmed' }) {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -402,6 +428,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
   function openNewModal(typeValue) {
     setEditingTx(null)
     const base = { ...defaultForm(), type: typeValue || 'expense' }
+    if (accounts.length === 1) {
+      base.accountId = accounts[0].id
+    }
     // FIX: se o mês selecionado for diferente do mês atual, usa o 1º dia do mês
     // selecionado como data padrão para que o lançamento apareça na lista correta.
     const todayISO = getTodayLocalISO()
@@ -508,6 +537,23 @@ export default function Lancamentos({ view = 'confirmed' }) {
       return
     }
 
+    if (requiresBankAccount(form) && !form.accountId && !editingTx?.accountId) {
+      alert(isInvoicePaymentNature(form)
+        ? 'Selecione a conta bancária usada para pagar a fatura.'
+        : 'Selecione a conta bancária deste lançamento.')
+      return
+    }
+
+    if (form.type === 'transfer_internal' && !form.toAccountId) {
+      alert('Selecione a conta de destino da transferência.')
+      return
+    }
+
+    if (form.type === 'transfer_internal' && form.accountId && form.accountId === form.toAccountId) {
+      alert('A conta de origem e a de destino precisam ser diferentes.')
+      return
+    }
+
     if (!editingTx && !permissions.canLaunch) {
       alert('Seu papel não permite lançar movimentações neste workspace.')
       return
@@ -566,9 +612,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
         ?.subcategories
         ?.find((subcategory) => subcategory.id === form.subcategoryId)
         ?.name || null)
-    const resolvedAccountId = isInternal
-      ? (form.accountId || editingTx?.accountId || null)
-      : (form.accountId || editingTx?.accountId || accounts[0]?.id || null)
+    const resolvedAccountId = form.accountId || editingTx?.accountId || null
 
     const payload = {
       type:        resolvedType,
@@ -724,7 +768,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const contactLabel = t.contactName || contacts.find((c) => c.id === t.contactId)?.name
     const debtLabel = t.debtName || debts.find((debt) => debt.id === t.debtId)?.name
     const paymentMethodLabel = getPaymentMethodLabel(t.paymentMethod)
-    const cardLabel = t.cardName || availableCards.find((card) => card.id === t.cardId)?.name
+    const cardLabel = t.cardName || cardOptionLabel(availableCards.find((card) => card.id === t.cardId))
     return (
       <div key={t.id} className={`transaction-item${normalizedTxStatus === 'pending' ? ' tx-pending' : ''}`}>
         <div className="tx-info">
@@ -974,6 +1018,25 @@ transactions.length === 0 ? (
           <input name="amount" type="text" inputMode="decimal"
               value={form.amount} onChange={handleChange} placeholder="0,00" required />
           </div>
+          {form.type !== 'transfer_internal' && requiresBankAccount(form) && (
+            <div className="form-group">
+              <label>{isInvoicePaymentNature(form) ? 'Conta usada para pagar a fatura' : 'Conta bancária'}</label>
+              <select name="accountId" value={form.accountId} onChange={handleChange}>
+                <option value="">Selecione…</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>
+                ))}
+              </select>
+              {accounts.length === 0 && (
+                <p className="form-help-text">Cadastre uma conta em Contas antes de salvar este lançamento.</p>
+              )}
+            </div>
+          )}
+          {form.type !== 'transfer_internal' && !requiresBankAccount(form) && requiresCardSelection(form) && (
+            <p className="form-help-text">
+              Compras no cartão ficam vinculadas ao cartão e não mexem no saldo da conta até o pagamento da fatura.
+            </p>
+          )}
           {form.type !== 'transfer_internal' && !isInvoicePaymentNature(form) ? (
             <div className="form-group">
               <label>Categoria</label>
@@ -994,7 +1057,7 @@ transactions.length === 0 ? (
                 <label>Conta de origem</label>
                 <select name="accountId" value={form.accountId} onChange={handleChange}>
                   <option value="">Selecione…</option>
-                  {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  {accounts.map((account) => <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>)}
                 </select>
               </div>
               <div className="form-group">
@@ -1002,8 +1065,8 @@ transactions.length === 0 ? (
                 <select name="toAccountId" value={form.toAccountId} onChange={handleChange}>
                   <option value="">Selecione…</option>
                   {accounts
-                    .filter((a) => a.id !== form.accountId)
-                    .map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    .filter((account) => account.id !== form.accountId)
+                    .map((account) => <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>)}
                 </select>
               </div>
             </>
@@ -1028,7 +1091,7 @@ transactions.length === 0 ? (
               <select name="cardId" value={form.cardId} onChange={handleChange}>
                 <option value="">Selecione…</option>
                 {availableCards.map((card) => (
-                  <option key={card.id} value={card.id}>{card.name}</option>
+                  <option key={card.id} value={card.id}>{cardOptionLabel(card)}</option>
                 ))}
               </select>
             </div>

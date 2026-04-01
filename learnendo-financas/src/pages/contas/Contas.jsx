@@ -36,6 +36,22 @@ function getMonthOpeningBalance(account, monthKey) {
   return Number.isFinite(Number(value)) ? Number(value) : null
 }
 
+const COMMON_BRAZILIAN_BANKS = [
+  'Nubank',
+  'Caixa Econômica Federal',
+  'Banco do Brasil',
+  'Itaú',
+  'Bradesco',
+  'Santander',
+  'Inter',
+  'C6 Bank',
+  'Sicredi',
+  'Sicoob',
+  'Mercado Pago',
+  'PicPay',
+  'PagBank',
+]
+
 export default function Contas() {
   const [tab, setTab] = useState('contas') // 'contas' | 'cartoes'
   const { selectedMonth, selectedYear } = useFinance()
@@ -202,8 +218,13 @@ export default function Contas() {
                 </div>
                 <div className="form-group">
                   <label>Banco</label>
-                  <input name="bank" type="text" value={form.bank} onChange={handleChange}
+                  <input name="bank" type="text" list="bank-suggestions" value={form.bank} onChange={handleChange}
                     placeholder="Ex: Itaú" />
+                  <datalist id="bank-suggestions">
+                    {COMMON_BRAZILIAN_BANKS.map((bankName) => (
+                      <option key={bankName} value={bankName} />
+                    ))}
+                  </datalist>
                 </div>
                 <div className="form-group">
                   <label>Tipo</label>
