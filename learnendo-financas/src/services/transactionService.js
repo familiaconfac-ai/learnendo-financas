@@ -36,6 +36,11 @@ function normalizeOrigin(origin) {
   return origin
 }
 
+function normalizeMonthKey(value) {
+  const raw = String(value || '').trim().slice(0, 7)
+  return /^\d{4}-\d{2}$/.test(raw) ? raw : null
+}
+
 function txCol(uid, workspaceId = null) {
   if (workspaceId) return collection(db, 'workspaces', workspaceId, 'transactions')
   return collection(db, 'users', uid, 'transactions')
@@ -119,6 +124,7 @@ export async function addTransaction(uid, data, options = {}) {
       contactName:     data.contactName || null,
       debtId:          data.debtId || null,
       debtName:        data.debtName || null,
+      salaryReferenceMonth: normalizeMonthKey(data.salaryReferenceMonth) || null,
       receiptDetailEnabled: !!data.receiptDetailEnabled,
       receiptDetailStatus: data.receiptDetailStatus || null,
       receiptDetailTotal: Number(data.receiptDetailTotal || 0),
@@ -201,6 +207,9 @@ export async function updateTransaction(uid, txId, data, options = {}) {
     if (payload.debtId !== undefined && !payload.debtId) {
       payload.debtId = null
       payload.debtName = null
+    }
+    if (payload.salaryReferenceMonth !== undefined) {
+      payload.salaryReferenceMonth = normalizeMonthKey(payload.salaryReferenceMonth)
     }
     if (payload.cardId !== undefined && !payload.cardId) {
       payload.cardId = null
@@ -307,6 +316,7 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
         cardName: raw.cardName || null,
         debtId: raw.debtId || null,
         debtName: raw.debtName || null,
+        salaryReferenceMonth: normalizeMonthKey(raw.salaryReferenceMonth) || null,
         receiptDetailEnabled: !!raw.receiptDetailEnabled,
         receiptDetailStatus: raw.receiptDetailStatus || null,
         receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
@@ -342,6 +352,7 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
           cardName: raw.cardName || null,
           debtId: raw.debtId || null,
           debtName: raw.debtName || null,
+          salaryReferenceMonth: normalizeMonthKey(raw.salaryReferenceMonth) || null,
           receiptDetailEnabled: !!raw.receiptDetailEnabled,
           receiptDetailStatus: raw.receiptDetailStatus || null,
           receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
@@ -371,4 +382,85 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
     console.error('[TransactionService] ❌ Fetch failed:', err.code, err.message)
     throw err
   }
+}
+
+export async function fetchTransactionsBySalaryReferenceMonth(uid, salaryReferenceMonth, options = {}) {
+  const normalizedReferenceMonth = normalizeMonthKey(salaryReferenceMonth)
+  if (!normalizedReferenceMonth) return []
+
+  const workspaceId = options.workspaceId || null
+  const q = query(txCol(uid, workspaceId), where('salaryReferenceMonth', '==', normalizedReferenceMonth))
+  const snap = await getDocs(q)
+  let docs = snap.docs.map((d) => {
+    const raw = d.data()
+    return {
+      id: d.id,
+      ...raw,
+      origin: normalizeOrigin(raw.origin),
+      status: normalizeStatus(raw.status),
+      transactionNatureId: raw.transactionNatureId || normalizeNatureId(raw.type, null),
+      transactionNatureKey: raw.transactionNatureKey || normalizeNatureKey(raw.transactionNatureKey, raw.transactionNatureId),
+      affectsBudget: typeof raw.affectsBudget === 'boolean' ? raw.affectsBudget : raw.balanceImpact !== false,
+      recurringInstanceMonth: raw.recurringInstanceMonth || monthKeyFromDate(raw.date),
+      subcategoryId: raw.subcategoryId || null,
+      subcategoryName: raw.subcategoryName || null,
+      paymentMethod: raw.paymentMethod || null,
+      cardId: raw.cardId || null,
+      cardName: raw.cardName || null,
+      debtId: raw.debtId || null,
+      debtName: raw.debtName || null,
+      salaryReferenceMonth: normalizeMonthKey(raw.salaryReferenceMonth) || null,
+      receiptDetailEnabled: !!raw.receiptDetailEnabled,
+      receiptDetailStatus: raw.receiptDetailStatus || null,
+      receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
+      receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
+      recurrenceType: raw.recurrenceType || null,
+      recurringStartDate: raw.recurringStartDate || null,
+      recurringEndDate: raw.recurringEndDate || null,
+      totalInstallments: Number.isFinite(Number(raw.totalInstallments)) ? Number(raw.totalInstallments) : null,
+      currentInstallment: Number.isFinite(Number(raw.currentInstallment)) ? Number(raw.currentInstallment) : null,
+      createdAt: raw.createdAt?.toDate?.().toISOString() ?? raw.createdAt ?? null,
+      updatedAt: raw.updatedAt?.toDate?.().toISOString() ?? raw.updatedAt ?? null,
+    }
+  })
+
+  if (workspaceId && options.includeLegacyPersonal !== false) {
+    const legacySnap = await getDocs(query(txCol(uid, null), where('salaryReferenceMonth', '==', normalizedReferenceMonth)))
+    const legacyDocs = legacySnap.docs.map((d) => {
+      const raw = d.data()
+      return {
+        id: d.id,
+        ...raw,
+        origin: normalizeOrigin(raw.origin),
+        status: normalizeStatus(raw.status),
+        transactionNatureId: raw.transactionNatureId || normalizeNatureId(raw.type, null),
+        transactionNatureKey: raw.transactionNatureKey || normalizeNatureKey(raw.transactionNatureKey, raw.transactionNatureId),
+        affectsBudget: typeof raw.affectsBudget === 'boolean' ? raw.affectsBudget : raw.balanceImpact !== false,
+        recurringInstanceMonth: raw.recurringInstanceMonth || monthKeyFromDate(raw.date),
+        subcategoryId: raw.subcategoryId || null,
+        subcategoryName: raw.subcategoryName || null,
+        paymentMethod: raw.paymentMethod || null,
+        cardId: raw.cardId || null,
+        cardName: raw.cardName || null,
+        debtId: raw.debtId || null,
+        debtName: raw.debtName || null,
+        salaryReferenceMonth: normalizeMonthKey(raw.salaryReferenceMonth) || null,
+        receiptDetailEnabled: !!raw.receiptDetailEnabled,
+        receiptDetailStatus: raw.receiptDetailStatus || null,
+        receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
+        receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
+        recurrenceType: raw.recurrenceType || null,
+        recurringStartDate: raw.recurringStartDate || null,
+        recurringEndDate: raw.recurringEndDate || null,
+        totalInstallments: Number.isFinite(Number(raw.totalInstallments)) ? Number(raw.totalInstallments) : null,
+        currentInstallment: Number.isFinite(Number(raw.currentInstallment)) ? Number(raw.currentInstallment) : null,
+        createdAt: raw.createdAt?.toDate?.().toISOString() ?? raw.createdAt ?? null,
+        updatedAt: raw.updatedAt?.toDate?.().toISOString() ?? raw.updatedAt ?? null,
+      }
+    }).filter((tx) => !tx.workspaceId)
+
+    docs = [...docs, ...legacyDocs]
+  }
+
+  return applyViewerScope(docs, options)
 }

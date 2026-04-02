@@ -1,5 +1,7 @@
 export const DEFAULT_TRANSACTION_NATURES = [
   { id: 'nature_income', key: 'renda', label: 'Renda', direction: 'income', affectsBudget: true, editable: true },
+  { id: 'nature_salary', key: 'salario', label: 'Salário', direction: 'income', affectsBudget: true, editable: true },
+  { id: 'nature_salary_advance', key: 'vale_adiantamento', label: 'Vale / Adiantamento salarial', direction: 'income', affectsBudget: true, editable: true },
   { id: 'nature_expense', key: 'despesa', label: 'Despesa', direction: 'expense', affectsBudget: true, editable: true },
   { id: 'nature_debt_payment', key: 'pagamento_divida', label: 'Pagamento de dívida', direction: 'expense', affectsBudget: false, editable: true },
   { id: 'nature_invoice_payment', key: 'pagamento_fatura', label: 'Pagamento de fatura', direction: 'expense', affectsBudget: false, editable: true },

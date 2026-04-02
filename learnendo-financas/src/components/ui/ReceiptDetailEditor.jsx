@@ -50,7 +50,11 @@ export default function ReceiptDetailEditor({
       if (patch.detailCategoryKey) {
         const category = RECEIPT_DETAIL_CATALOG.find((entry) => entry.key === patch.detailCategoryKey)
         const subcategory = getReceiptSubcategories(patch.detailCategoryKey)[0]
-        const suggestedBudgetCategoryId = suggestBudgetCategoryForReceiptItem(expenseCategories, patch.detailCategoryKey)
+        const suggestedBudgetCategoryId = suggestBudgetCategoryForReceiptItem(
+          expenseCategories,
+          patch.detailCategoryKey,
+          subcategory?.key,
+        )
         nextItem.detailCategoryLabel = category?.label || nextItem.detailCategoryLabel
         nextItem.detailSubcategoryKey = subcategory?.key || ''
         nextItem.detailSubcategoryLabel = subcategory?.label || ''

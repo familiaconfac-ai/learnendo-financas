@@ -24,6 +24,9 @@ function inferTypeFromDescription(description) {
     'rendimento',
     'rend liquido',
     'salario',
+    'adiantamento',
+    'vale salario',
+    'vale salarial',
     'prebenda',
     'oferta',
     'igreja batista central',
@@ -87,6 +90,9 @@ function categoryCandidatesFor(description, type) {
   }
 
   if (type === 'income') {
+    if (hasAny(text, ['salario', 'vale salario', 'vale salarial', 'adiantamento'])) {
+      return ['Renda', 'Salário', 'Vale / Adiantamento', 'Receitas diversas']
+    }
     if (hasAny(text, ['rendimento', 'rend liquido'])) {
       return ['Receitas Financeiras', 'Investimentos', 'Receitas diversas']
     }

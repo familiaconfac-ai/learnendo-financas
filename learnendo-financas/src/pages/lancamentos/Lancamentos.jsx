@@ -89,6 +89,8 @@ const PIX_TRANSFER_NATURE_IDS = [
 ]
 
 const TYPE_BY_NATURE_ID = {
+  nature_salary: 'income',
+  nature_salary_advance: 'income',
   nature_loan_received: 'income',
   nature_loan_given: 'expense',
   nature_loan_repayment: 'income',
@@ -105,6 +107,11 @@ const TYPE_BY_NATURE_ID = {
   nature_debt_payment: 'expense',
   nature_invoice_payment: 'expense',
 }
+
+const SALARY_LINKED_NATURE_IDS = new Set([
+  'nature_salary',
+  'nature_salary_advance',
+])
 
 const DEBT_LINKABLE_NATURE_IDS = new Set([
   'nature_debt_payment',
@@ -180,6 +187,25 @@ function getTodayLocalISO() {
   const now = new Date()
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
   return local.toISOString().slice(0, 10)
+}
+
+function monthKeyFromIsoDate(isoDate) {
+  return String(isoDate || '').slice(0, 7)
+}
+
+function addMonthsToMonthKey(monthKey, offset) {
+  const [year, month] = String(monthKey || '').split('-').map(Number)
+  if (!year || !month) return ''
+  const target = new Date(year, month - 1 + offset, 1)
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}`
+}
+
+function defaultSalaryReferenceMonth(formState) {
+  const baseMonth = monthKeyFromIsoDate(formState?.date || getTodayLocalISO())
+  if (formState?.transactionNatureId === 'nature_salary_advance') {
+    return addMonthsToMonthKey(baseMonth, 1)
+  }
+  return baseMonth
 }
 
 const ACCOUNT_TYPE_LABELS = {
@@ -430,6 +456,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
         categoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.categoryId,
         subcategoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.subcategoryId,
         debtId: DEBT_LINKABLE_NATURE_IDS.has(value) ? f.debtId : '',
+        salaryReferenceMonth: SALARY_LINKED_NATURE_IDS.has(value)
+          ? (f.salaryReferenceMonth || defaultSalaryReferenceMonth({ ...f, transactionNatureId: value }))
+          : '',
       }))
       setEditingNatureLabel(selected?.label || '')
       return
@@ -691,10 +720,11 @@ export default function Lancamentos({ view = 'confirmed' }) {
       newContactName: '',
       newCategoryName: '',
       newSubcategoryName: '',
-      debtId: tx.debtId || '',
-      paymentMethod: tx.paymentMethod || '',
-      cardId: tx.cardId || '',
-      receiptDetailEnabled: !!tx.receiptDetailEnabled,
+        debtId: tx.debtId || '',
+        salaryReferenceMonth: tx.salaryReferenceMonth || '',
+        paymentMethod: tx.paymentMethod || '',
+        cardId: tx.cardId || '',
+        receiptDetailEnabled: !!tx.receiptDetailEnabled,
       receiptItems: Array.isArray(tx.receiptItems) ? tx.receiptItems : [],
     })
     setEditingNatureLabel(tx.transactionNatureLabel || '')
@@ -892,6 +922,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
       : (isCardPurchase
           ? (buildCreditCardGuidance(form.date, selectedCard)?.competencyMonth || String(form.date || '').slice(0, 7))
           : String(form.date || editingTx?.date || '').slice(0, 7))
+    const resolvedSalaryReferenceMonth = SALARY_LINKED_NATURE_IDS.has(form.transactionNatureId)
+      ? (form.salaryReferenceMonth || defaultSalaryReferenceMonth(form) || resolvedCompetencyMonth)
+      : null
 
     const payload = {
       type:        resolvedType,
@@ -920,6 +953,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
       debtName: DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId)
         ? (debts.find((debt) => debt.id === form.debtId)?.name || null)
         : null,
+      salaryReferenceMonth: resolvedSalaryReferenceMonth,
       paymentMethod: form.paymentMethod || null,
       cardId: requiresCardSelection(form) ? (form.cardId || null) : null,
       cardName: requiresCardSelection(form)
@@ -1489,6 +1523,22 @@ transactions.length === 0 ? (
               </select>
             </div>
           )}
+          {SALARY_LINKED_NATURE_IDS.has(form.transactionNatureId) && (
+            <div className="form-group">
+              <label>Mês de referência do salário</label>
+              <input
+                name="salaryReferenceMonth"
+                type="month"
+                value={form.salaryReferenceMonth}
+                onChange={handleChange}
+              />
+              <p className="form-help-text">
+                {form.transactionNatureId === 'nature_salary_advance'
+                  ? 'Use o mês do salário que será abatido por este vale/adiantamento.'
+                  : 'Use o mês ao qual este salário pertence para conferência do bruto.'}
+              </p>
+            </div>
+          )}
           {transactionNatures.length > 0 && isPixOrTransferContext(form) && pixTransferNatureOptions.length > 0 && (
             <div className="form-group">
               <label>Seleção rápida para Pix/transferência</label>
@@ -1654,6 +1704,7 @@ function defaultForm() {
     recurrenceType: 'indefinite', recurringStartDate: today, recurringEndDate: '',
     totalInstallments: '12', currentInstallment: '1',
     transactionNatureId: '', transactionNatureLabel: '',
+    salaryReferenceMonth: '',
     paymentMethod: '', cardId: '',
     contactId: '', newContactName: '',
     newCategoryName: '', newSubcategoryName: '',

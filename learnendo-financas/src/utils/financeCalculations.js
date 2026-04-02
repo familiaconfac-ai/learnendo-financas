@@ -29,6 +29,18 @@ function receiptItemsForBudget(tx) {
   return tx.receiptItems.filter((item) => Number(item.amount || 0) > 0)
 }
 
+function monthKey(value) {
+  return String(value || '').slice(0, 7)
+}
+
+function isSalaryNature(tx) {
+  return tx?.transactionNatureId === 'nature_salary'
+}
+
+function isSalaryAdvanceNature(tx) {
+  return tx?.transactionNatureId === 'nature_salary_advance'
+}
+
 export function calculateMonthlySummary(transactions, debugTag = '') {
   const source = Array.isArray(transactions) ? transactions : []
   const confirmedTransactions = source.filter((t) => t.status === 'confirmed')
@@ -53,6 +65,12 @@ export function calculateMonthlySummary(transactions, debugTag = '') {
   const pendingCount = source.filter((t) => t.status === 'pending').length
 
   const recentTransactions = [...confirmedTransactions].slice(0, 6)
+  const salaryActual = confirmedTransactions
+    .filter((t) => t.type === 'income' && isSalaryNature(t))
+    .reduce((sum, t) => sum + toNumber(t.amount), 0)
+  const salaryAdvancesReceived = confirmedTransactions
+    .filter((t) => t.type === 'income' && isSalaryAdvanceNature(t))
+    .reduce((sum, t) => sum + toNumber(t.amount), 0)
 
   if (debugTag) {
     console.log(`[FinanceSummary:${debugTag}]`, {
@@ -63,6 +81,8 @@ export function calculateMonthlySummary(transactions, debugTag = '') {
       transferencias,
       saldo,
       pendingCount,
+      salaryActual,
+      salaryAdvancesReceived,
     })
   }
 
@@ -74,6 +94,35 @@ export function calculateMonthlySummary(transactions, debugTag = '') {
     saldo,
     pendingCount,
     recentTransactions,
+    salaryActual,
+    salaryAdvancesReceived,
+  }
+}
+
+export function buildSalaryInsight(currentMonthTransactions, linkedAdvanceTransactions = [], selectedMonthKey = '') {
+  const currentList = Array.isArray(currentMonthTransactions) ? currentMonthTransactions : []
+  const linkedList = Array.isArray(linkedAdvanceTransactions) ? linkedAdvanceTransactions : []
+  const referenceMonthKey = monthKey(selectedMonthKey)
+
+  const salaryReceived = currentList
+    .filter((tx) => tx.status === 'confirmed' && tx.type === 'income' && isSalaryNature(tx))
+    .filter((tx) => !referenceMonthKey || monthKey(tx.salaryReferenceMonth || tx.competencyMonth || tx.date) === referenceMonthKey)
+    .reduce((sum, tx) => sum + toNumber(tx.amount), 0)
+
+  const linkedAdvances = linkedList
+    .filter((tx) => tx.status === 'confirmed' && tx.type === 'income' && isSalaryAdvanceNature(tx))
+    .filter((tx) => !referenceMonthKey || monthKey(tx.salaryReferenceMonth) === referenceMonthKey)
+
+  const advanceAmount = linkedAdvances.reduce((sum, tx) => sum + toNumber(tx.amount), 0)
+  const grossSalary = salaryReceived + advanceAmount
+
+  return {
+    referenceMonth: referenceMonthKey,
+    salaryReceived,
+    advanceAmount,
+    grossSalary,
+    hasLinkedAdvance: linkedAdvances.length > 0,
+    linkedAdvanceCount: linkedAdvances.length,
   }
 }
 

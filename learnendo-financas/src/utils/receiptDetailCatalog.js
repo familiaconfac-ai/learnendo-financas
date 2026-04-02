@@ -1,60 +1,14 @@
-function normalizeText(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
-}
+import {
+  buildBudgetCategoryHints,
+  canonicalizeReceiptDetailCategoryKey,
+  canonicalizeReceiptDetailSubcategoryKey,
+  getReceiptDetailCatalog,
+  getReceiptDetailCategoryByKey,
+  getReceiptDetailSubcategory,
+  suggestBudgetCategoryFromReceiptDetail,
+} from './financeTaxonomy'
 
-export const RECEIPT_DETAIL_CATALOG = [
-  {
-    key: 'alimentacao',
-    label: 'Alimentação',
-    subcategories: [
-      { key: 'basico', label: 'Básico' },
-      { key: 'proteina', label: 'Proteína' },
-      { key: 'bebida', label: 'Bebida' },
-      { key: 'lanche', label: 'Lanche' },
-      { key: 'superfluo_alimentar', label: 'Supérfluo alimentar' },
-    ],
-  },
-  {
-    key: 'limpeza',
-    label: 'Limpeza',
-    subcategories: [
-      { key: 'roupa', label: 'Roupa' },
-      { key: 'cozinha', label: 'Cozinha' },
-      { key: 'casa', label: 'Casa' },
-    ],
-  },
-  {
-    key: 'higiene',
-    label: 'Higiene',
-    subcategories: [
-      { key: 'banho', label: 'Banho' },
-      { key: 'cabelo', label: 'Cabelo' },
-      { key: 'cuidados_pessoais', label: 'Cuidados pessoais' },
-    ],
-  },
-  {
-    key: 'uso_domestico',
-    label: 'Uso doméstico',
-    subcategories: [
-      { key: 'utensilios', label: 'Utensílios' },
-      { key: 'organizacao', label: 'Organização' },
-      { key: 'manutencao', label: 'Manutenção' },
-    ],
-  },
-  {
-    key: 'outros',
-    label: 'Outros',
-    subcategories: [
-      { key: 'geral', label: 'Geral' },
-      { key: 'pet', label: 'Pet' },
-      { key: 'imprevistos', label: 'Imprevistos' },
-    ],
-  },
-]
+export const RECEIPT_DETAIL_CATALOG = getReceiptDetailCatalog()
 
 export const RECEIPT_ITEM_IMPORTANCE_OPTIONS = [
   { key: 'essential', label: 'Essencial' },
@@ -63,46 +17,25 @@ export const RECEIPT_ITEM_IMPORTANCE_OPTIONS = [
 ]
 
 export function getReceiptCategory(categoryKey) {
-  return RECEIPT_DETAIL_CATALOG.find((category) => category.key === categoryKey) || RECEIPT_DETAIL_CATALOG[0]
+  return getReceiptDetailCategoryByKey(categoryKey)
 }
 
 export function getReceiptSubcategories(categoryKey) {
   return getReceiptCategory(categoryKey).subcategories
 }
 
-export function suggestBudgetCategoryForReceiptItem(expenseCategories, detailCategoryKey) {
-  const list = Array.isArray(expenseCategories) ? expenseCategories : []
-  const normalizedCategories = list.map((category) => ({
-    ...category,
-    normalizedName: normalizeText(category.name),
-  }))
-
-  const matchers = {
-    alimentacao: ['alimentacao', 'mercado', 'supermercado'],
-    limpeza: ['limpeza', 'casa', 'moradia'],
-    higiene: ['higiene', 'saude', 'farmacia'],
-    uso_domestico: ['casa', 'moradia', 'utilidades'],
-    outros: ['pet', 'outros', 'despesas diversas', 'casa'],
-  }
-
-  const candidates = matchers[detailCategoryKey] || []
-  for (const candidate of candidates) {
-    const match = normalizedCategories.find((category) => category.normalizedName.includes(candidate))
-    if (match) return match.id
-  }
-
-  return ''
-}
-
-function nextSubcategoryFor(categoryKey) {
-  const subcategories = getReceiptSubcategories(categoryKey)
-  return subcategories[0] || { key: '', label: '' }
+export function suggestBudgetCategoryForReceiptItem(expenseCategories, detailCategoryKey, detailSubcategoryKey = '') {
+  return suggestBudgetCategoryFromReceiptDetail(expenseCategories, detailCategoryKey, detailSubcategoryKey)
 }
 
 export function createEmptyReceiptItem(expenseCategories = []) {
   const category = RECEIPT_DETAIL_CATALOG[0]
-  const firstSubcategory = nextSubcategoryFor(category.key)
-  const budgetCategoryId = suggestBudgetCategoryForReceiptItem(expenseCategories, category.key)
+  const firstSubcategory = category.subcategories[0] || { key: '', label: '' }
+  const budgetCategoryId = suggestBudgetCategoryForReceiptItem(
+    expenseCategories,
+    category.key,
+    firstSubcategory.key,
+  )
 
   return {
     id: `receipt_item_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -115,6 +48,7 @@ export function createEmptyReceiptItem(expenseCategories = []) {
     detailSubcategoryLabel: firstSubcategory.label,
     budgetCategoryId,
     budgetCategoryName: '',
+    budgetCategoryHints: buildBudgetCategoryHints(category.key, firstSubcategory.key),
     importance: 'essential',
   }
 }
@@ -151,9 +85,13 @@ export function normalizeReceiptItems(items = [], expenseCategories = []) {
   const categoryMap = new Map((expenseCategories || []).map((category) => [category.id, category]))
 
   return (Array.isArray(items) ? items : []).map((item) => {
-    const detailCategory = getReceiptCategory(item.detailCategoryKey)
-    const detailSubcategory = getReceiptSubcategories(item.detailCategoryKey)
-      .find((subcategory) => subcategory.key === item.detailSubcategoryKey)
+    const detailCategoryKey = canonicalizeReceiptDetailCategoryKey(item.detailCategoryKey)
+    const detailSubcategoryKey = canonicalizeReceiptDetailSubcategoryKey(
+      detailCategoryKey,
+      item.detailSubcategoryKey,
+    )
+    const detailCategory = getReceiptCategory(detailCategoryKey)
+    const detailSubcategory = getReceiptDetailSubcategory(detailCategoryKey, detailSubcategoryKey)
     const budgetCategory = categoryMap.get(item.budgetCategoryId)
 
     return {
@@ -163,10 +101,13 @@ export function normalizeReceiptItems(items = [], expenseCategories = []) {
       quantity: item.quantity ? toNumber(item.quantity) : null,
       detailCategoryKey: detailCategory.key,
       detailCategoryLabel: detailCategory.label,
-      detailSubcategoryKey: detailSubcategory?.key || '',
-      detailSubcategoryLabel: detailSubcategory?.label || '',
+      detailSubcategoryKey: detailSubcategory.key,
+      detailSubcategoryLabel: detailSubcategory.label,
       budgetCategoryId: item.budgetCategoryId || null,
       budgetCategoryName: budgetCategory?.name || item.budgetCategoryName || null,
+      budgetCategoryHints: Array.isArray(item.budgetCategoryHints) && item.budgetCategoryHints.length > 0
+        ? [...item.budgetCategoryHints]
+        : buildBudgetCategoryHints(detailCategory.key, detailSubcategory.key),
       importance: item.importance === 'superfluous'
         ? 'superfluous'
         : item.importance === 'necessary'

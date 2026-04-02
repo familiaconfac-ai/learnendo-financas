@@ -2,48 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { useFinance } from '../../context/FinanceContext'
 import { useBudget } from '../../hooks/useBudget'
 import { formatCurrency } from '../../utils/formatCurrency'
+import { DEFAULT_EXPENSE_CATEGORY_PRESETS, DEFAULT_INCOME_CATEGORY_PRESETS } from '../../utils/categoryPresets'
 import './Orcamento.css'
 
-const INITIAL_INCOME_ITEMS = ['Salário', 'Renda extra']
-
-const PRESET_EXPENSE_CATEGORIES = [
-  {
-    name: 'Moradia',
-    items: ['Aluguel / Financiamento', 'Energia', 'Água', 'Internet', 'Gás', 'Condomínio', 'IPTU'],
-  },
-  {
-    name: 'Alimentação',
-    items: ['Supermercado', 'Padaria', 'Restaurante', 'Delivery'],
-  },
-  {
-    name: 'Transporte',
-    items: ['Combustível', 'Manutenção', 'Seguro', 'IPVA', 'Estacionamento', 'Transporte público', 'Apps (Uber)'],
-  },
-  {
-    name: 'Saúde',
-    items: ['Plano de saúde', 'Consultas', 'Exames', 'Medicamentos'],
-  },
-  {
-    name: 'Educação',
-    items: ['Escola', 'Cursos', 'Material'],
-  },
-  {
-    name: 'Pessoal',
-    items: ['Roupas', 'Beleza', 'Higiene'],
-  },
-  {
-    name: 'Lazer',
-    items: ['Viagens', 'Cinema', 'Assinaturas'],
-  },
-  {
-    name: 'Financeiro',
-    items: ['Juros', 'Tarifas', 'Multas'],
-  },
-  {
-    name: 'Doações',
-    items: ['Igreja', 'Doações'],
-  },
-]
+const TAXONOMY_INITIAL_INCOME_ITEMS = DEFAULT_INCOME_CATEGORY_PRESETS.flatMap((preset) => preset.items)
+const TAXONOMY_PRESET_EXPENSE_CATEGORIES = DEFAULT_EXPENSE_CATEGORY_PRESETS.map((preset) => ({
+  name: preset.name,
+  items: [...preset.items],
+}))
 
 function toAmount(value) {
   const normalized = String(value ?? '')
@@ -106,12 +72,12 @@ function buildStructuredModel(budgetItems) {
 
   const hasAnyPersistedRows = Array.isArray(budgetItems) && budgetItems.length > 0
   if (!hasAnyPersistedRows && income.length === 0) {
-    for (const defaultName of INITIAL_INCOME_ITEMS) {
+    for (const defaultName of TAXONOMY_INITIAL_INCOME_ITEMS) {
       income.push({ id: null, name: defaultName, amount: '0' })
     }
   }
 
-  const expenses = PRESET_EXPENSE_CATEGORIES.map((preset) => {
+  const expenses = TAXONOMY_PRESET_EXPENSE_CATEGORIES.map((preset) => {
     const existing = expenseByCategory.get(preset.name)
     const mergedItems = []
 

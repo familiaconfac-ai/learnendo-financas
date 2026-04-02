@@ -41,6 +41,10 @@ export default function Dashboard() {
     despesas: 0,
     investimentos: 0,
     saldo: 0,
+    salarioRecebido: 0,
+    salarioBruto: 0,
+    valesVinculados: 0,
+    possuiVinculoVale: false,
     orcado: 6000,
     pendingCount: 0,
     reconciled: false,
@@ -86,6 +90,14 @@ export default function Dashboard() {
           icon="📈"
           color="success"
         />
+        {summary.salarioBruto > 0 && (
+          <SummaryCard
+            label="Salario bruto"
+            value={formatCurrency(summary.salarioBruto)}
+            icon="💼"
+            color="success"
+          />
+        )}
         <SummaryCard
           label="Despesas"
           value={formatCurrency(summary.despesas)}
@@ -138,6 +150,26 @@ export default function Dashboard() {
 
       {/* Mantido calculado para uso futuro. */}
       {!!totalCardInvoices && null}
+
+      {summary.possuiVinculoVale && (
+        <Card className="dashboard-budget-card">
+          <CardHeader title="Conferencia salarial" subtitle="Salario real + vales vinculados" />
+          <div className="budget-progress">
+            <div className="budget-labels">
+              <span>Salario recebido</span>
+              <span>{formatCurrency(summary.salarioRecebido)}</span>
+            </div>
+            <div className="budget-labels">
+              <span>Vales vinculados</span>
+              <span>{formatCurrency(summary.valesVinculados)}</span>
+            </div>
+            <div className="budget-labels">
+              <span>Salario bruto</span>
+              <span>{formatCurrency(summary.salarioBruto)}</span>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <Card className="dashboard-budget-card">
         <CardHeader title="Orcado x Realizado" subtitle="Despesas do mes" />

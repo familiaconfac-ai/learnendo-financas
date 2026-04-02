@@ -1,3 +1,6 @@
+import { classifyReceiptItemByTaxonomy } from './financeTaxonomy'
+import { analyzeReceiptWithAiFallback, isReceiptAiFallbackConfigured } from '../services/receiptAiFallbackService'
+
 function normalize(text) {
   return String(text || '')
     .normalize('NFD')
@@ -255,6 +258,20 @@ function findTotalAmount(summary, itemTotal = 0) {
   return itemTotal
 }
 
+function shouldUseAiFallback(receiptItems, totalAmount) {
+  const items = Array.isArray(receiptItems) ? receiptItems : []
+  if (!isReceiptAiFallbackConfigured()) return false
+  if (items.length === 0) return true
+  if (!(Number(totalAmount) > 0)) return true
+
+  const genericCount = items.filter((item) =>
+    item.detailCategoryKey === 'outros'
+    || item.detailSubcategoryKey === 'geral'
+  ).length
+
+  return genericCount === items.length
+}
+
 function isReceiptNoise(line) {
   const normalized = normalize(line)
   if (!normalized) return true
@@ -389,22 +406,25 @@ function subcategoryLabelFor(key) {
 }
 
 function createReceiptItem(description, amount, quantity = '') {
-  const itemClass = classifyReceiptItem(description)
+  const itemClass = classifyReceiptItemByTaxonomy(description)
   return {
     id: createId('receipt_item'),
     description,
     amount,
     quantity,
     detailCategoryKey: itemClass.detailCategoryKey,
-    detailCategoryLabel: categoryLabelFor(itemClass.detailCategoryKey),
+    detailCategoryLabel: itemClass.detailCategoryLabel,
     detailSubcategoryKey: itemClass.detailSubcategoryKey,
-    detailSubcategoryLabel: subcategoryLabelFor(itemClass.detailSubcategoryKey),
+    detailSubcategoryLabel: itemClass.detailSubcategoryLabel,
     budgetCategoryHints: itemClass.budgetCategoryHints,
     budgetCategoryId: '',
     budgetCategoryName: '',
     importance: itemClass.importance,
   }
 }
+void classifyReceiptItem
+void categoryLabelFor
+void subcategoryLabelFor
 
 function buildReceiptItemKey(item) {
   return `${normalize(item?.description)}|${Number(item?.amount || 0).toFixed(2)}`
@@ -556,15 +576,40 @@ export async function parseReceiptImageFile(file) {
 
   const lines = rebuildReceiptLines(rawLines)
   const merchantName = findMerchantName(lines, file)
+  const purchaseDate = findReceiptDate(lines)
   const summary = parseReceiptSummary(lines)
   const expectedTotal = findTotalAmount(summary, 0)
-  const receiptItems = parseReceiptItems(lines, expectedTotal)
-  const itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
-  const totalAmount = findTotalAmount(summary, itemTotal)
+  let receiptItems = parseReceiptItems(lines, expectedTotal)
+  let itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  let totalAmount = findTotalAmount(summary, itemTotal)
+
+  if (shouldUseAiFallback(receiptItems, totalAmount)) {
+    try {
+      const aiFallback = await analyzeReceiptWithAiFallback({
+        ocrText,
+        fileName: file?.name,
+        localSummary: {
+          merchantName,
+          purchaseDate,
+          totalAmount,
+          localItemCount: receiptItems.length,
+        },
+      })
+
+      if (aiFallback?.items?.length) {
+        receiptItems = aiFallback.items
+        itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+        totalAmount = Number(aiFallback.totalAmount || totalAmount || itemTotal)
+      }
+    } catch (error) {
+      console.warn('[ReceiptAI] AI fallback unavailable, keeping local OCR result:', error.message)
+    }
+  }
+
   const topHints = [...new Set(receiptItems.flatMap((item) => item.budgetCategoryHints || []))].slice(0, 4)
 
   return [{
-    date: findReceiptDate(lines),
+    date: purchaseDate,
     description: merchantName ? `Cupom ${merchantName}` : 'Cupom importado por imagem',
     amount: totalAmount > 0 ? totalAmount : itemTotal,
     type: 'expense',
