@@ -284,6 +284,11 @@
   background: #fffdf0;
 }
 
+.tx-duplicate {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
 .tx-info { flex: 1; min-width: 0; }
 .tx-desc {
   display: block;
@@ -378,6 +383,11 @@
 .tx-badge--receipt {
   background: #eef6ff;
   color: #1d4ed8;
+}
+
+.tx-badge--duplicate {
+  background: #fff3d4;
+  color: #b45309;
 }
 
 /* ── Empty state ──────────────────────────────────────────────────────────── */

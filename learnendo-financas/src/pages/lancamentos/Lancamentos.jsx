@@ -14,7 +14,7 @@ import { useWorkspace } from '../../context/WorkspaceContext'
 import { useDebts } from '../../hooks/useDebts'
 import { fetchTransactions } from '../../services/transactionService'
 import { createRecurrenceRule } from '../../services/recurrenceService'
-import { findDuplicateMatches } from '../../utils/transactionDuplicates'
+import { buildDuplicateSignature, findDuplicateMatches } from '../../utils/transactionDuplicates'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { formatDateBR, formatFriendlyDate } from '../../utils/formatDate'
 import { suggestTypeAndCategory } from '../../utils/transactionAutoCategorizer'
@@ -225,6 +225,23 @@ function defaultCategoryIcon(type) {
   return '📦'
 }
 
+function duplicateLocationLabel(duplicateMeta, currentStatus) {
+  if (!duplicateMeta) return ''
+  const currentKey = normalizeStatus(currentStatus)
+  const pendingCount = Number(duplicateMeta.pendingCount || 0)
+  const confirmedCount = Number(duplicateMeta.confirmedCount || 0)
+
+  if (currentKey === 'pending' && confirmedCount > 0) {
+    return confirmedCount === 1 ? 'Tambem existe em Lancamentos' : `Tambem existem ${confirmedCount} em Lancamentos`
+  }
+
+  if (currentKey === 'confirmed' && pendingCount > 0) {
+    return pendingCount === 1 ? 'Tambem existe em Lancar' : `Tambem existem ${pendingCount} em Lancar`
+  }
+
+  return duplicateMeta.count > 1 ? `${duplicateMeta.count} lancamentos iguais neste mes` : ''
+}
+
 export default function Lancamentos({ view = 'confirmed' }) {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -291,6 +308,32 @@ export default function Lancamentos({ view = 'confirmed' }) {
   })
 
   const pendingCount = allTx.filter((t) => normalizeStatus(t.status) === 'pending').length
+  const duplicateMetaById = (() => {
+    const groups = new Map()
+    scopedTransactions.forEach((tx) => {
+      const signature = buildDuplicateSignature(tx)
+      if (!signature) return
+      const current = groups.get(signature) || []
+      current.push(tx)
+      groups.set(signature, current)
+    })
+
+    const metaById = {}
+    groups.forEach((items) => {
+      if (items.length < 2) return
+      const pendingCountInGroup = items.filter((item) => normalizeStatus(item.status) === 'pending').length
+      const confirmedCountInGroup = items.length - pendingCountInGroup
+      items.forEach((item) => {
+        metaById[item.id] = {
+          count: items.length,
+          pendingCount: pendingCountInGroup,
+          confirmedCount: confirmedCountInGroup,
+        }
+      })
+    })
+
+    return metaById
+  })()
 
   // ── Event handlers ────────────────────────────────────────────────────────
   function handleChange(e) {
@@ -928,11 +971,13 @@ export default function Lancamentos({ view = 'confirmed' }) {
       ? detectCardCommitment(t.description)
       : null
     const receiptItemCount = Array.isArray(t.receiptItems) ? t.receiptItems.length : 0
+    const duplicateMeta = duplicateMetaById[t.id] || null
+    const duplicateHint = duplicateLocationLabel(duplicateMeta, normalizedTxStatus)
     const competencyLabel = t.paymentMethod === 'credit_card' && t.competencyMonth
       ? monthKeyLabel(t.competencyMonth)
       : ''
     return (
-      <div key={t.id} className={`transaction-item${normalizedTxStatus === 'pending' ? ' tx-pending' : ''}`}>
+      <div key={t.id} className={`transaction-item${normalizedTxStatus === 'pending' ? ' tx-pending' : ''}${duplicateMeta ? ' tx-duplicate' : ''}`}>
         <div className="tx-info">
           <span className="tx-desc">
             {t.description}
@@ -944,9 +989,13 @@ export default function Lancamentos({ view = 'confirmed' }) {
             <span className="tx-date">
               {catName ? `${catName} • ` : ''}{formatFriendlyDate(t.date)}
             </span>
+            {duplicateMeta && (
+              <span className="tx-badge tx-badge--duplicate">Duplicado exato · {duplicateMeta.count}</span>
+            )}
             {t.receiptDetailEnabled && receiptItemCount > 0 && (
               <span className="tx-badge tx-badge--receipt">Cupom detalhado · {receiptItemCount} item(ns)</span>
             )}
+            {duplicateHint && <span className="tx-date">{duplicateHint}</span>}
             {commitmentHint && <span className="tx-date">{commitmentHint.reason}</span>}
             {competencyLabel && <span className="tx-date">Compete em {competencyLabel}</span>}
           </span>
