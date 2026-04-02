@@ -42,6 +42,7 @@ export async function addAccount(uid, data) {
       accountNumber:  data.accountNumber  || '',
       type:           data.type           || 'checking',
       balance:        Number(data.balance || 0),
+      current_balance: Number(data.current_balance ?? data.balance ?? 0),
       initialBalance: Number(data.balance || 0),
       color:          data.color          || '#1a56db',
       icon:           data.icon           || '🏦',
@@ -61,6 +62,7 @@ export async function updateAccount(uid, accId, data) {
   try {
     const payload = { ...data, updatedAt: serverTimestamp() }
     if (payload.balance !== undefined) payload.balance = Number(payload.balance)
+    if (payload.current_balance !== undefined) payload.current_balance = Number(payload.current_balance)
     if (payload.initialBalance !== undefined) payload.initialBalance = Number(payload.initialBalance)
     await updateDoc(doc(db, 'users', uid, 'accounts', accId), payload)
     console.log('[AccountService] ✅ Update succeeded')

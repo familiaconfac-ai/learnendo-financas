@@ -38,6 +38,11 @@ function getMonthOpeningBalance(account, monthKey) {
   return Number.isFinite(Number(value)) ? Number(value) : null
 }
 
+function getCurrentBalance(account) {
+  const value = account?.current_balance ?? account?.balance
+  return Number.isFinite(Number(value)) ? Number(value) : 0
+}
+
 const COMMON_BRAZILIAN_BANKS = [
   'Nubank',
   'Caixa Econômica Federal',
@@ -121,7 +126,7 @@ export default function Contas() {
   const selectedMonthLabel = formatMonthLabel(selectedYear, selectedMonth)
 
   const totalAccountsBalance = useMemo(
-    () => accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0),
+    () => accounts.reduce((sum, account) => sum + getCurrentBalance(account), 0),
     [accounts],
   )
   const totalCardInvoices = useMemo(
@@ -310,7 +315,8 @@ export default function Contas() {
               accounts.map((account) => {
                 const monthOpeningBalance = getMonthOpeningBalance(account, selectedMonthKey)
                 const baselineBalance = monthOpeningBalance ?? Number(account.initialBalance || 0)
-                const balanceDiff = Number(account.balance || 0) - baselineBalance
+                const currentBalance = getCurrentBalance(account)
+                const balanceDiff = currentBalance - baselineBalance
 
                 return (
                   <Card key={account.id} className="account-card">
@@ -337,8 +343,8 @@ export default function Contas() {
 
                     <div className="acc-balance">
                       <span className="acc-balance-label">Saldo atual</span>
-                      <span className={`acc-balance-value ${account.balance >= 0 ? 'positive' : 'negative'}`}>
-                        {formatCurrency(account.balance)}
+                      <span className={`acc-balance-value ${currentBalance >= 0 ? 'positive' : 'negative'}`}>
+                        {formatCurrency(currentBalance)}
                       </span>
                     </div>
 

@@ -11,6 +11,7 @@ import { parseStatementFile } from '../../utils/statementParser'
 import { classifyBatch } from '../../utils/transactionClassifier'
 import { buildDuplicateSignature, findDuplicateMatches } from '../../utils/transactionDuplicates'
 import { formatCurrency } from '../../utils/formatCurrency'
+import { handleImport } from '../../utils/importRules'
 import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
 import {
   buildCardCommitmentRecurringFields,
@@ -229,6 +230,7 @@ export default function Importacao() {
   const [fileName, setFileName]          = useState('')
   const [saveMessage, setSaveMessage]    = useState('')
   const [statementSummary, setStatementSummary] = useState(null)
+  const [balanceAdjustmentRows, setBalanceAdjustmentRows] = useState([])
   const [existingMonthTx, setExistingMonthTx] = useState([])
   const [duplicateAuditLoading, setDuplicateAuditLoading] = useState(false)
   const [importOnlyOpeningBalance, setImportOnlyOpeningBalance] = useState(false)
@@ -264,23 +266,31 @@ export default function Importacao() {
     setSuggestedCardForm(buildSuggestedCardForm(null))
     setShowCreateAccount(false)
     setShowCreateCard(false)
+    setBalanceAdjustmentRows([])
     setStep('parsing')
 
     try {
       const raw = await parseStatementFile(file)
-      const summary = raw?.__summary || null
-      setStatementSummary(summary)
-      setSuggestedAccountForm(buildSuggestedAccountForm(summary))
-      setSuggestedCardForm(buildSuggestedCardForm(summary))
+      const parsedSummary = raw?.__summary || null
 
       const hasImageRows = raw.some((row) => row.source === 'image_receipt')
       setReceiptPaymentTarget(hasImageRows && availableCards.length === 0 ? 'account' : 'credit_card')
-      const classified = (hasImageRows ? raw : classifyBatch(raw)).map((row, idx) => ({
+      const classifiedRows = (hasImageRows ? raw : classifyBatch(raw)).map((row) => ({
         ...row,
-        status: 'pending',
+        status: row.status || 'pending',
         classification: row.classification || { confidence: 'low', reason: 'image_receipt' },
+      }))
+      const handled = handleImport(classifiedRows, { statementSummary: parsedSummary })
+      const summary = handled.summary || parsedSummary
+      const classified = handled.rows.map((row, idx) => ({
+        ...row,
         id: `r-${idx}`,
       }))
+
+      setStatementSummary(summary)
+      setBalanceAdjustmentRows(handled.balanceAdjustments || [])
+      setSuggestedAccountForm(buildSuggestedAccountForm(summary))
+      setSuggestedCardForm(buildSuggestedCardForm(summary))
 
       setParsedRows(classified)
       setSelectedIds(new Set(classified.map((r) => r.id)))   // all pre-selected
@@ -288,6 +298,7 @@ export default function Importacao() {
     } catch (err) {
       console.error('[Importacao] Parse error:', err)
       setStatementSummary(null)
+      setBalanceAdjustmentRows([])
       setParseError(err.message || 'Não foi possível processar o arquivo.')
       setParsePreviewLines(Array.isArray(err.previewLines) ? err.previewLines : [])
       setStep('idle')
@@ -419,6 +430,12 @@ export default function Importacao() {
           lastStatementNetMovement: Number(statementSummary.netMovement || 0),
           lastStatementImportedAt: new Date().toISOString(),
           lastStatementFileName: fileName || '',
+          ...(hasCurrencyValue(statementSummary?.closingBalance)
+            ? {
+                current_balance: Number(statementSummary.closingBalance),
+                balance: Number(statementSummary.closingBalance),
+              }
+            : {}),
           ...(selectedAccount?.bank ? {} : (statementSummary?.institutionName ? { bank: statementSummary.institutionName } : {})),
           ...(selectedAccount?.holderName ? {} : (statementSummary?.holderName ? { holderName: statementSummary.holderName } : {})),
           ...(selectedAccount?.branchNumber ? {} : (statementSummary?.branchNumber ? { branchNumber: statementSummary.branchNumber } : {})),
@@ -456,6 +473,8 @@ export default function Importacao() {
             [selectedMonthKey]: closingBalance,
           },
           monthlyOpeningBalanceMonth: selectedMonthKey,
+          current_balance: closingBalance,
+          balance: closingBalance,
           ...(statementSnapshotPayload || {}),
         }
 
@@ -482,6 +501,23 @@ export default function Importacao() {
 
     const toSave = parsedRows.filter((r) => selectedIds.has(r.id))
     if (toSave.length === 0) {
+      if (!isInvoiceImport && !isReceiptImport && statementSnapshotPayload) {
+        try {
+          await updateAccount(accountId, statementSnapshotPayload)
+          setSavedCount(0)
+          setSkippedCount(balanceAdjustmentRows.length)
+          setBalanceOnlyApplied(true)
+          setSaveMessage(balanceAdjustmentRows.length > 0
+            ? `Saldo atual vinculado a conta e ${balanceAdjustmentRows.length} ajuste(s) de saldo foram ignorados na lista de despesas.`
+            : 'Saldo atual vinculado a conta com sucesso.')
+          setStep('done')
+        } catch (err) {
+          console.error('[Importacao] Could not persist balance snapshot:', err.message)
+          setSaveError(err.message || 'Nao foi possivel atualizar o saldo atual desta conta.')
+          setStep('done')
+        }
+        return
+      }
       setSaveError('Selecione ao menos um lancamento para salvar.')
       setStep('preview')
       return
@@ -546,13 +582,13 @@ export default function Importacao() {
 
         try {
           const receiptItems = hydrateImportedReceiptItems(row.receiptItems, categories)
-          const transactionNatureId = row.type === 'income'
+          const transactionNatureId = row.transactionNatureId || (row.type === 'income'
             ? 'nature_income'
             : row.type === 'investment'
               ? 'nature_investment'
               : row.type === 'transfer_internal'
                 ? 'nature_internal_transfer'
-                : 'nature_expense'
+                : 'nature_expense')
           const recurringSeed = importUsesCard
             ? buildCardCommitmentRecurringFields(row.description, resolvedCompetencyMonth)
             : null
@@ -586,9 +622,11 @@ export default function Importacao() {
               totalInstallments: recurringSeed?.totalInstallments ?? matchedTx.totalInstallments ?? null,
               currentInstallment: recurringSeed?.currentInstallment ?? matchedTx.currentInstallment ?? null,
               installmentNumber: recurringSeed?.installmentNumber ?? matchedTx.installmentNumber ?? null,
+              ...(typeof row.affectsBudget === 'boolean' ? { affectsBudget: row.affectsBudget } : {}),
+              ...(typeof row.balanceImpact === 'boolean' ? { balanceImpact: row.balanceImpact } : {}),
               ...(matchedTx.categoryId ? {} : {
                 categoryId: hintedCategory?.id || null,
-                categoryName: hintedCategory?.name || null,
+                categoryName: hintedCategory?.name || row.categoryName || null,
               }),
             }, { workspaceId: activeWorkspaceId })
             reconciledIds.add(matchedTx.id)
@@ -605,18 +643,18 @@ export default function Importacao() {
             cardId:                   importUsesCard ? (cardId || null) : null,
             cardName:                 importUsesCard ? (selectedCard?.name || null) : null,
             categoryId:               hintedCategory?.id || null,
-            categoryName:             hintedCategory?.name || null,
+            categoryName:             hintedCategory?.name || row.categoryName || null,
             notes:                    '',
-            paymentMethod:            importUsesCard ? 'credit_card' : null,
+            paymentMethod:            row.paymentMethod || (importUsesCard ? 'credit_card' : null),
             origin:                   row.source === 'image_receipt' ? 'manual' : (isInvoiceImport ? 'credit_card_import' : 'bank_import'),
-            status:                   'pending',
+            status:                   row.status || 'pending',
             workspaceId:              activeWorkspaceId,
             createdBy:                user.uid,
             userId:                   user.uid,
             transactionNatureId,
             transactionNatureLabel:   transactionNatures.find((n) => n.id === transactionNatureId)?.label || null,
-            affectsBudget:            true,
-            balanceImpact:            importUsesCard ? false : row.type !== 'transfer_internal',
+            affectsBudget:            typeof row.affectsBudget === 'boolean' ? row.affectsBudget : true,
+            balanceImpact:            typeof row.balanceImpact === 'boolean' ? row.balanceImpact : (importUsesCard ? false : row.type !== 'transfer_internal'),
             importBatchId:            batchId,
             classificationConfidence: row.classification?.confidence ?? 'low',
             receiptDetailEnabled:     row.receiptDetailEnabled && receiptItems.length > 0,
@@ -702,6 +740,7 @@ export default function Importacao() {
     setSaveMessage('')
     setFileName('')
     setStatementSummary(null)
+    setBalanceAdjustmentRows([])
     setExistingMonthTx([])
     setImportOnlyOpeningBalance(false)
     setBalanceOnlyApplied(false)
@@ -857,7 +896,9 @@ export default function Importacao() {
     .reduce((sum, r) => sum + (r.direction === 'credit' ? r.amount : -r.amount), 0)
   const saveDisabledReason = !targetSelected
     ? (isInvoiceImport ? 'Selecione ou crie o cartão da fatura para liberar o salvamento.' : 'Selecione ou crie a conta do extrato para liberar o salvamento.')
-    : !openingBalanceOnlySelected && selectedNonExactCount === 0
+    : !openingBalanceOnlySelected
+      && selectedNonExactCount === 0
+      && !(balanceAdjustmentRows.length > 0 && hasCurrencyValue(statementSummary?.closingBalance))
       ? 'Nao ha lancamentos novos selecionados para salvar.'
       : ''
 
@@ -1008,6 +1049,18 @@ export default function Importacao() {
                 </strong>
               </div>
             </div>
+          </Card>
+        )}
+
+        {balanceAdjustmentRows.length > 0 && (
+          <Card>
+            <CardHeader
+              title="Ajustes de saldo detectados"
+              subtitle={`${balanceAdjustmentRows.length} linha(s) foram separadas para atualizar apenas o saldo da conta.`}
+            />
+            <p className="import-target-hint">
+              Esses valores nao entrarao na lista de despesas nem nos graficos do mes.
+            </p>
           </Card>
         )}
 
@@ -1265,6 +1318,10 @@ export default function Importacao() {
           <p className="import-action-hint">
             Apenas o saldo inicial de {selectedMonthLabel} sera registrado para esta conta.
           </p>
+        ) : (balanceAdjustmentRows.length > 0 && selectedNonExactCount === 0) ? (
+          <p className="import-action-hint">
+            Apenas o saldo atual da conta sera atualizado; nenhum gasto sera criado com esses ajustes.
+          </p>
         ) : (
           <p className="import-action-hint">Os itens salvos entram em Lancamentos para revisao.</p>
         )}
@@ -1279,7 +1336,9 @@ export default function Importacao() {
           >
             {openingBalanceOnlySelected
               ? `Salvar saldo inicial de ${selectedMonthLabel}`
-              : `Salvar em Lancamentos ${selectedNonExactCount > 0 ? `(${selectedNonExactCount})` : ''}`}
+              : (balanceAdjustmentRows.length > 0 && selectedNonExactCount === 0)
+                ? 'Atualizar saldo da conta'
+                : `Salvar em Lancamentos ${selectedNonExactCount > 0 ? `(${selectedNonExactCount})` : ''}`}
           </button>
         </div>
       </>

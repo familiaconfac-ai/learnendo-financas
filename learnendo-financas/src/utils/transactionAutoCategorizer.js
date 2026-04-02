@@ -21,6 +21,8 @@ function inferTypeFromDescription(description) {
     'recebido',
     'entrada',
     'credito',
+    'rendimento',
+    'rend liquido',
     'salario',
     'prebenda',
     'oferta',
@@ -31,6 +33,9 @@ function inferTypeFromDescription(description) {
     'compra no debito',
     'compra',
     'pagamento',
+    'pagamento de fatura',
+    'pagt fatura',
+    'pgto fatura',
     'debito',
     'fatura',
     'cartao',
@@ -71,6 +76,9 @@ function categoryCandidatesFor(description, type) {
     if (hasAny(text, ['uber', ' 99 ', '99pop', 'combustivel', 'posto'])) {
       return ['Transporte', 'Mobilidade']
     }
+    if (hasAny(text, ['pagamento de fatura', 'pagt fatura', 'pgto fatura'])) {
+      return ['Cartão de Crédito', 'Cartao de Credito', 'Cartão', 'Cartao', 'Fatura']
+    }
     if (hasAny(text, ['fatura', 'cartao'])) {
       return ['Cartão', 'Cartao', 'Fatura']
     }
@@ -79,6 +87,9 @@ function categoryCandidatesFor(description, type) {
   }
 
   if (type === 'income') {
+    if (hasAny(text, ['rendimento', 'rend liquido'])) {
+      return ['Receitas Financeiras', 'Investimentos', 'Receitas diversas']
+    }
     if (hasAny(text, ['pix recebido', 'transferencia recebida', 'recebido'])) {
       return ['Transferências recebidas', 'Transferencias recebidas', 'Receitas diversas']
     }
