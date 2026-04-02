@@ -149,6 +149,16 @@
 }
 .parse-error-box strong { display: block; margin-bottom: 0.2rem; }
 .parse-error-box p      { margin: 0; }
+.parse-warning-box {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: #92400e;
+}
+.parse-warning-box strong { display: block; margin-bottom: 0.2rem; }
+.parse-warning-box p      { margin: 0; }
 .parse-error-note {
   margin-top: 0.55rem !important;
   color: #7f1d1d;

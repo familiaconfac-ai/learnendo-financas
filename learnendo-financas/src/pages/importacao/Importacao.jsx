@@ -250,6 +250,14 @@ export default function Importacao() {
     () => availableCards.find((card) => card.id === cardId) || null,
     [availableCards, cardId],
   )
+  const aiWarnings = useMemo(
+    () => [...new Set(
+      parsedRows
+        .map((row) => String(row?.aiWarningMessage || '').trim())
+        .filter(Boolean),
+    )],
+    [parsedRows],
+  )
 
   // ── File handling ─────────────────────────────────────────────────────────
 
@@ -1003,6 +1011,12 @@ export default function Importacao() {
   function renderPreview() {
     return (
       <>
+        {aiWarnings.length > 0 && (
+          <div className="parse-warning-box">
+            <strong>Scanner inteligente:</strong>
+            {aiWarnings.map((warning) => <p key={warning}>{warning}</p>)}
+          </div>
+        )}
         {/* Top summary */}
         <div className="preview-summary-bar">
           <div className="psb-info">

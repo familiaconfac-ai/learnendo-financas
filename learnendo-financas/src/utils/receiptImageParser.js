@@ -1,5 +1,10 @@
 import { classifyReceiptItemByTaxonomy } from './financeTaxonomy'
-import { analyzeReceiptWithAiFallback, isReceiptAiFallbackConfigured } from '../services/receiptAiFallbackService'
+import {
+  analyzeReceiptWithAiFallback,
+  hydrateReceiptItemsFromCache,
+  isReceiptAiFallbackConfigured,
+  isGeminiRateLimitError,
+} from '../services/receiptAiFallbackService'
 
 function normalize(text) {
   return String(text || '')
@@ -579,13 +584,15 @@ export async function parseReceiptImageFile(file) {
   const purchaseDate = findReceiptDate(lines)
   const summary = parseReceiptSummary(lines)
   const expectedTotal = findTotalAmount(summary, 0)
-  let receiptItems = parseReceiptItems(lines, expectedTotal)
+  let receiptItems = hydrateReceiptItemsFromCache(parseReceiptItems(lines, expectedTotal))
   let itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   let totalAmount = findTotalAmount(summary, itemTotal)
+  let aiWarningMessage = ''
 
   if (shouldUseAiFallback(receiptItems, totalAmount)) {
     try {
       const aiFallback = await analyzeReceiptWithAiFallback({
+        file,
         ocrText,
         fileName: file?.name,
         localSummary: {
@@ -593,6 +600,12 @@ export async function parseReceiptImageFile(file) {
           purchaseDate,
           totalAmount,
           localItemCount: receiptItems.length,
+          localItems: receiptItems.slice(0, 25).map((item) => ({
+            description: item.description,
+            amount: item.amount,
+            detailCategoryKey: item.detailCategoryKey,
+            detailSubcategoryKey: item.detailSubcategoryKey,
+          })),
         },
       })
 
@@ -602,6 +615,9 @@ export async function parseReceiptImageFile(file) {
         totalAmount = Number(aiFallback.totalAmount || totalAmount || itemTotal)
       }
     } catch (error) {
+      if (isGeminiRateLimitError(error)) {
+        aiWarningMessage = error.message
+      }
       console.warn('[ReceiptAI] AI fallback unavailable, keeping local OCR result:', error.message)
     }
   }
@@ -621,6 +637,7 @@ export async function parseReceiptImageFile(file) {
     requiresReview: true,
     receiptDetailEnabled: receiptItems.length > 0,
     receiptItems,
+    aiWarningMessage,
     ocrPreviewLines: lines.slice(0, 30),
   }]
 }
