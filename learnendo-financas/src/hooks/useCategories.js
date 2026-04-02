@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useWorkspace } from '../context/WorkspaceContext'
 import { fetchCategories, addCategory, deleteCategory, updateCategory } from '../services/categoryService'
-import { MOCK_CATEGORIES } from '../utils/mockData'
+import { mergeCategoriesWithDefaults } from '../utils/categoryPresets'
 
 /**
  * Hook para categorias do usuário.
@@ -25,14 +25,12 @@ export function useCategories() {
       if (data.length === 0) {
         // Nenhuma categoria no Firestore — usa lista padrão como referência visual
         console.log('[useCategories] Nenhuma categoria cadastrada — usando defaults visuais')
-        setCategories(MOCK_CATEGORIES)
-      } else {
-        setCategories(data)
       }
+      setCategories(mergeCategoriesWithDefaults(data))
     } catch (err) {
       console.error('[useCategories] Error:', err.message)
       setError(err.message)
-      setCategories(MOCK_CATEGORIES)  // fallback seguro
+      setCategories(mergeCategoriesWithDefaults([]))  // fallback seguro
     } finally {
       setLoading(false)
     }
