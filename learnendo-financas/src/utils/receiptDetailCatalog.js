@@ -58,6 +58,7 @@ export const RECEIPT_DETAIL_CATALOG = [
 
 export const RECEIPT_ITEM_IMPORTANCE_OPTIONS = [
   { key: 'essential', label: 'Essencial' },
+  { key: 'necessary', label: 'Necessário' },
   { key: 'superfluous', label: 'Supérfluo' },
 ]
 
@@ -81,7 +82,7 @@ export function suggestBudgetCategoryForReceiptItem(expenseCategories, detailCat
     limpeza: ['limpeza', 'casa', 'moradia'],
     higiene: ['higiene', 'saude', 'farmacia'],
     uso_domestico: ['casa', 'moradia', 'utilidades'],
-    outros: ['outros', 'despesas diversas', 'casa'],
+    outros: ['pet', 'outros', 'despesas diversas', 'casa'],
   }
 
   const candidates = matchers[detailCategoryKey] || []
@@ -166,7 +167,11 @@ export function normalizeReceiptItems(items = [], expenseCategories = []) {
       detailSubcategoryLabel: detailSubcategory?.label || '',
       budgetCategoryId: item.budgetCategoryId || null,
       budgetCategoryName: budgetCategory?.name || item.budgetCategoryName || null,
-      importance: item.importance === 'superfluous' ? 'superfluous' : 'essential',
+      importance: item.importance === 'superfluous'
+        ? 'superfluous'
+        : item.importance === 'necessary'
+          ? 'necessary'
+          : 'essential',
     }
   })
 }

@@ -21,6 +21,12 @@ export default function ReceiptDetailEditor({
   const [expandedId, setExpandedId] = useState(null)
   const summary = useMemo(() => summarizeReceiptDetail(items, totalAmount), [items, totalAmount])
 
+  function importanceLabel(value) {
+    if (value === 'superfluous') return 'Supérfluo'
+    if (value === 'necessary') return 'Necessário'
+    return 'Essencial'
+  }
+
   function updateItems(nextItems) {
     onChange(nextItems)
   }
@@ -102,7 +108,7 @@ export default function ReceiptDetailEditor({
           </div>
 
           <p className="receipt-detail-hint">
-            Cada item precisa de categoria analítica, subcategoria, marcação essencial/supérfluo e categoria real de orçamento.
+            Cada item precisa de categoria analítica, subcategoria, marcação essencial/necessário/supérfluo e categoria real de orçamento.
           </p>
 
           <div className="receipt-item-list">
@@ -124,7 +130,7 @@ export default function ReceiptDetailEditor({
                         <span className="receipt-item-meta">
                           {item.detailCategoryLabel || 'Categoria'}
                           {item.detailSubcategoryLabel ? ` · ${item.detailSubcategoryLabel}` : ''}
-                          {item.importance === 'superfluous' ? ' · Supérfluo' : ' · Essencial'}
+                          {` · ${importanceLabel(item.importance)}`}
                         </span>
                       </div>
                       <span>{formatCurrency(item.amount || 0)}</span>

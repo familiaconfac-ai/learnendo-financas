@@ -31,12 +31,27 @@ export const DEFAULT_EXPENSE_CATEGORY_PRESETS = [
   {
     name: 'Educação',
     icon: '📚',
-    items: ['Escola', 'Cursos', 'Material'],
+    items: ['Escola', 'Faculdade', 'Cursos', 'Material'],
+  },
+  {
+    name: 'Casa',
+    icon: '🏡',
+    items: ['Eletrodoméstico', 'Móveis', 'Utensílios', 'Decoração'],
+  },
+  {
+    name: 'Tecnologia',
+    icon: '📱',
+    items: ['Celular', 'Computador', 'Equipamentos', 'Acessórios', 'Eletrônicos'],
   },
   {
     name: 'Pessoal',
     icon: '🧴',
     items: ['Roupas', 'Beleza', 'Higiene'],
+  },
+  {
+    name: 'Pet',
+    icon: '🐾',
+    items: ['Ração', 'Veterinário', 'Higiene pet', 'Acessórios pet'],
   },
   {
     name: 'Lazer',
@@ -51,7 +66,7 @@ export const DEFAULT_EXPENSE_CATEGORY_PRESETS = [
   {
     name: 'Trabalho',
     icon: '💼',
-    items: ['Ferramentas', 'Software', 'Serviços', 'Impostos'],
+    items: ['Ferramentas', 'Software', 'Serviços', 'Equipamentos', 'Impostos'],
   },
   {
     name: 'Doações',
