@@ -14,7 +14,11 @@ import { useWorkspace } from '../../context/WorkspaceContext'
 import { useDebts } from '../../hooks/useDebts'
 import { fetchTransactions } from '../../services/transactionService'
 import { createRecurrenceRule } from '../../services/recurrenceService'
-import { buildDuplicateSignature, findDuplicateMatches } from '../../utils/transactionDuplicates'
+import {
+  buildDuplicateSignature,
+  findDuplicateMatches,
+  isPossibleDuplicate,
+} from '../../utils/transactionDuplicates'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { formatDateBR, formatFriendlyDate } from '../../utils/formatDate'
 import { suggestTypeAndCategory } from '../../utils/transactionAutoCategorizer'
@@ -243,6 +247,22 @@ function duplicateLocationLabel(duplicateMeta, currentStatus) {
   return duplicateMeta.count > 1 ? `${duplicateMeta.count} lancamentos iguais neste mes` : ''
 }
 
+function repeatedAmountGroupKey(tx) {
+  const targetKey = tx?.cardId
+    ? `card:${tx.cardId}`
+    : (tx?.accountId ? `account:${tx.accountId}` : '')
+  return [
+    sectionKey(tx?.type),
+    Number(tx?.amount || 0).toFixed(2),
+    targetKey,
+  ].join('::')
+}
+
+function duplicateSortKey(tx, duplicateMeta) {
+  if (duplicateMeta?.groupKey) return `dup::${duplicateMeta.groupKey}::${String(tx.date || '')}::${tx.id || ''}`
+  return `std::${String(tx.date || '')}::${tx.id || ''}`
+}
+
 function shouldPreserveInvoiceCompetency(tx) {
   return tx?.origin === 'credit_card_import' || !!tx?.reconciledWithInvoice
 }
@@ -338,7 +358,44 @@ export default function Lancamentos({ view = 'confirmed' }) {
       const confirmedCountInGroup = items.length - pendingCountInGroup
       items.forEach((item) => {
         metaById[item.id] = {
+          kind: 'exact',
           count: items.length,
+          pendingCount: pendingCountInGroup,
+          confirmedCount: confirmedCountInGroup,
+          groupKey: signature,
+        }
+      })
+    })
+
+    return metaById
+  })()
+  const repeatedAmountMetaById = (() => {
+    const exactIds = new Set(Object.keys(duplicateMetaById))
+    const amountGroups = new Map()
+
+    scopedTransactions.forEach((tx) => {
+      if (exactIds.has(tx.id)) return
+      const key = repeatedAmountGroupKey(tx)
+      const current = amountGroups.get(key) || []
+      current.push(tx)
+      amountGroups.set(key, current)
+    })
+
+    const metaById = {}
+    amountGroups.forEach((items, key) => {
+      if (items.length < 2) return
+      const comparable = items.filter((item) =>
+        items.some((other) => other.id !== item.id && isPossibleDuplicate(item, other)),
+      )
+      const highlighted = comparable.length >= 2 ? comparable : items
+      const pendingCountInGroup = highlighted.filter((item) => normalizeStatus(item.status) === 'pending').length
+      const confirmedCountInGroup = highlighted.length - pendingCountInGroup
+
+      highlighted.forEach((item) => {
+        metaById[item.id] = {
+          kind: comparable.length >= 2 ? 'possible' : 'amount',
+          groupKey: key,
+          count: highlighted.length,
           pendingCount: pendingCountInGroup,
           confirmedCount: confirmedCountInGroup,
         }
@@ -1038,13 +1095,16 @@ export default function Lancamentos({ view = 'confirmed' }) {
       ? detectCardCommitment(t.description)
       : null
     const receiptItemCount = Array.isArray(t.receiptItems) ? t.receiptItems.length : 0
-    const duplicateMeta = duplicateMetaById[t.id] || null
+    const duplicateMeta = duplicateMetaById[t.id] || repeatedAmountMetaById[t.id] || null
     const duplicateHint = duplicateLocationLabel(duplicateMeta, normalizedTxStatus)
     const competencyLabel = t.paymentMethod === 'credit_card' && t.competencyMonth
       ? monthKeyLabel(t.competencyMonth)
       : ''
     return (
-      <div key={t.id} className={`transaction-item${normalizedTxStatus === 'pending' ? ' tx-pending' : ''}${duplicateMeta ? ' tx-duplicate' : ''}`}>
+      <div
+        key={t.id}
+        className={`transaction-item${normalizedTxStatus === 'pending' ? ' tx-pending' : ''}${duplicateMeta ? ` ${duplicateMeta.kind === 'exact' ? 'tx-duplicate' : 'tx-duplicate-soft'}` : ''}`}
+      >
         <div className="tx-info">
           <span className="tx-desc">
             {t.description}
@@ -1056,8 +1116,14 @@ export default function Lancamentos({ view = 'confirmed' }) {
             <span className="tx-date">
               {catName ? `${catName} • ` : ''}{formatFriendlyDate(t.date)}
             </span>
-            {duplicateMeta && (
+            {duplicateMeta?.kind === 'exact' && (
               <span className="tx-badge tx-badge--duplicate">Duplicado exato · {duplicateMeta.count}</span>
+            )}
+            {duplicateMeta?.kind === 'possible' && (
+              <span className="tx-badge tx-badge--duplicate-soft">Parecido / valor repetido · {duplicateMeta.count}</span>
+            )}
+            {duplicateMeta?.kind === 'amount' && (
+              <span className="tx-badge tx-badge--duplicate-soft">Valor repetido · {duplicateMeta.count}</span>
             )}
             {t.receiptDetailEnabled && receiptItemCount > 0 && (
               <span className="tx-badge tx-badge--receipt">Cupom detalhado · {receiptItemCount} item(ns)</span>
@@ -1087,7 +1153,13 @@ export default function Lancamentos({ view = 'confirmed' }) {
 
   function renderSection(key) {
     const meta  = SECTION_META[key]
-    const group = transactions.filter((t) => sectionKey(t.type) === key)
+    const group = transactions
+      .filter((t) => sectionKey(t.type) === key)
+      .sort((a, b) => {
+        const aMeta = duplicateMetaById[a.id] || repeatedAmountMetaById[a.id] || null
+        const bMeta = duplicateMetaById[b.id] || repeatedAmountMetaById[b.id] || null
+        return duplicateSortKey(a, aMeta).localeCompare(duplicateSortKey(b, bMeta))
+      })
     // In "Tudo" view, hide empty sections; in focused view always show (to display empty state)
     if (activeType === '' && group.length === 0) return null
     const total = sectionSum(transactions, key)
