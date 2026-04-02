@@ -10,6 +10,7 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  arrayUnion,
   serverTimestamp,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
@@ -64,6 +65,24 @@ export async function updateAccount(uid, accId, data) {
     if (payload.balance !== undefined) payload.balance = Number(payload.balance)
     if (payload.current_balance !== undefined) payload.current_balance = Number(payload.current_balance)
     if (payload.initialBalance !== undefined) payload.initialBalance = Number(payload.initialBalance)
+    if (Array.isArray(payload.adjustmentAuditEntries) && payload.adjustmentAuditEntries.length > 0) {
+      const entries = payload.adjustmentAuditEntries.map((entry) => ({
+        type: entry.type || 'auto_balance_adjustment',
+        label: entry.label || 'Ajuste Automático',
+        description: entry.description || 'Ajuste de saldo',
+        amount: Number(entry.amount || 0),
+        rawAmount: Number(entry.rawAmount || 0),
+        rawBalance: entry.rawBalance === null || entry.rawBalance === undefined ? null : Number(entry.rawBalance),
+        date: entry.date || null,
+        source: entry.source || 'bank_import',
+        importRule: entry.importRule || 'balance_adjustment',
+        adjustmentReason: entry.adjustmentReason || 'manual_balance_adjustment',
+        createdAtIso: new Date().toISOString(),
+      }))
+      payload.balanceAdjustmentAuditLog = arrayUnion(...entries)
+      payload.lastBalanceAdjustmentAt = new Date().toISOString()
+      delete payload.adjustmentAuditEntries
+    }
     await updateDoc(doc(db, 'users', uid, 'accounts', accId), payload)
     console.log('[AccountService] ✅ Update succeeded')
   } catch (err) {

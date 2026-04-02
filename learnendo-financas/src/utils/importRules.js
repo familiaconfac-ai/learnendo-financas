@@ -44,6 +44,13 @@ function resolveBalanceAdjustmentValue(row) {
   return null
 }
 
+function resolveBalanceAdjustmentReason(row, holderName) {
+  const normalizedDescription = normalize(row?.description)
+  if (hasHolderNameMatch(row?.description, holderName)) return 'holder_name_match'
+  if (hasAnyKeyword(normalizedDescription, BALANCE_ADJUSTMENT_KEYWORDS)) return 'financial_balance_line'
+  return 'manual_balance_adjustment'
+}
+
 const BALANCE_ADJUSTMENT_KEYWORDS = [
   'rendimento liquido',
   'rend liquido',
@@ -83,10 +90,13 @@ export function handleImport(data, options = {}) {
 
     if (isBalanceAdjustment) {
       const balanceValue = resolveBalanceAdjustmentValue(row)
+      const reason = resolveBalanceAdjustmentReason(row, holderName)
       if (hasCurrencyValue(balanceValue)) currentBalance = Number(balanceValue)
       balanceAdjustments.push({
         ...row,
         importRule: 'balance_adjustment',
+        adjustmentReason: reason,
+        convertedBalance: hasCurrencyValue(balanceValue) ? Number(balanceValue) : null,
       })
       return
     }
@@ -153,5 +163,17 @@ export function handleImport(data, options = {}) {
     summary,
     currentBalance,
     balanceAdjustments,
+    auditEntries: balanceAdjustments.map((row) => ({
+      type: 'auto_balance_adjustment',
+      label: 'Ajuste Automático',
+      source: row.source || 'bank_import',
+      importRule: row.importRule || 'balance_adjustment',
+      adjustmentReason: row.adjustmentReason || 'manual_balance_adjustment',
+      description: row.description || 'Ajuste de saldo',
+      date: row.date || null,
+      amount: hasCurrencyValue(row.convertedBalance) ? Number(row.convertedBalance) : Number(row.amount || 0),
+      rawAmount: Number(row.amount || 0),
+      rawBalance: hasCurrencyValue(row.balance) ? Number(row.balance) : null,
+    })),
   }
 }

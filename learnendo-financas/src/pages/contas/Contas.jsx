@@ -22,6 +22,13 @@ function formatImportDate(value) {
   return parsed.toLocaleDateString('pt-BR')
 }
 
+function formatImportDateTime(value) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return parsed.toLocaleString('pt-BR')
+}
+
 function buildMonthKey(year, month) {
   return `${year}-${String(month).padStart(2, '0')}`
 }
@@ -317,6 +324,7 @@ export default function Contas() {
                 const baselineBalance = monthOpeningBalance ?? Number(account.initialBalance || 0)
                 const currentBalance = getCurrentBalance(account)
                 const balanceDiff = currentBalance - baselineBalance
+                const currentBalanceUpdatedAt = account.lastBalanceAdjustmentAt || account.lastStatementImportedAt
 
                 return (
                   <Card key={account.id} className="account-card">
@@ -347,6 +355,12 @@ export default function Contas() {
                         {formatCurrency(currentBalance)}
                       </span>
                     </div>
+
+                    {formatImportDateTime(currentBalanceUpdatedAt) && (
+                      <div className="acc-meta">
+                        <span>Ultima atualizacao do saldo: {formatImportDateTime(currentBalanceUpdatedAt)}</span>
+                      </div>
+                    )}
 
                     <div className="acc-meta">
                       <span>
