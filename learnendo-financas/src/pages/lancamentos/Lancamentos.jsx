@@ -595,12 +595,17 @@ export default function Lancamentos({ view = 'confirmed' }) {
       const inferred = suggestTypeAndCategory(tx.description, categories, tx.type)
       const resolvedType = natureDrivenType || (isInternal ? 'transfer_internal' : (inferred.suggestedType || tx.type))
       const isInvoicePayment = tx.transactionNatureId === 'nature_invoice_payment'
+      const selectedCard = availableCards.find((card) => card.id === tx.cardId)
+      const isCardPurchase = tx.paymentMethod === 'credit_card' && !isInvoicePayment
       const resolvedCategoryId = isInternal || isInvoicePayment
         ? null
         : (tx.categoryId || inferred.suggestedCategoryId || null)
       const resolvedCategoryName = isInternal
         ? null
         : (categories.find((c) => c.id === resolvedCategoryId)?.name || null)
+      const resolvedCompetencyMonth = isCardPurchase
+        ? (buildCreditCardGuidance(tx.date, selectedCard)?.competencyMonth || String(tx.date || '').slice(0, 7))
+        : String(tx.date || '').slice(0, 7)
 
       await update(tx.id, {
         type: resolvedType,
@@ -609,6 +614,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
         categoryName: resolvedCategoryName,
         subcategoryId: isInvoicePayment ? null : tx.subcategoryId || null,
         subcategoryName: isInvoicePayment ? null : tx.subcategoryName || null,
+        competencyMonth: resolvedCompetencyMonth,
         status: 'confirmed',
       })
     } catch (err) {
@@ -718,7 +724,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const isCardPurchase = form.paymentMethod === 'credit_card' && !invoicePayment
     const resolvedCompetencyMonth = isCardPurchase
       ? (buildCreditCardGuidance(form.date, selectedCard)?.competencyMonth || String(form.date || '').slice(0, 7))
-      : (editingTx?.competencyMonth || String(form.date || '').slice(0, 7))
+      : String(form.date || editingTx?.date || '').slice(0, 7)
 
     const payload = {
       type:        resolvedType,
