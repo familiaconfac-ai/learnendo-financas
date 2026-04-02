@@ -242,6 +242,10 @@ function duplicateLocationLabel(duplicateMeta, currentStatus) {
   return duplicateMeta.count > 1 ? `${duplicateMeta.count} lancamentos iguais neste mes` : ''
 }
 
+function shouldPreserveInvoiceCompetency(tx) {
+  return tx?.origin === 'credit_card_import' || !!tx?.reconciledWithInvoice
+}
+
 export default function Lancamentos({ view = 'confirmed' }) {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -646,9 +650,12 @@ export default function Lancamentos({ view = 'confirmed' }) {
       const resolvedCategoryName = isInternal
         ? null
         : (categories.find((c) => c.id === resolvedCategoryId)?.name || null)
-      const resolvedCompetencyMonth = isCardPurchase
-        ? (buildCreditCardGuidance(tx.date, selectedCard)?.competencyMonth || String(tx.date || '').slice(0, 7))
-        : String(tx.date || '').slice(0, 7)
+      const preservedCompetencyMonth = String(tx.competencyMonth || '').slice(0, 7)
+      const resolvedCompetencyMonth = shouldPreserveInvoiceCompetency(tx)
+        ? (preservedCompetencyMonth || String(tx.date || '').slice(0, 7))
+        : (isCardPurchase
+            ? (buildCreditCardGuidance(tx.date, selectedCard)?.competencyMonth || String(tx.date || '').slice(0, 7))
+            : String(tx.date || '').slice(0, 7))
 
       await update(tx.id, {
         type: resolvedType,
@@ -765,9 +772,12 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const resolvedAccountId = form.accountId || editingTx?.accountId || null
     const selectedCard = availableCards.find((card) => card.id === form.cardId)
     const isCardPurchase = form.paymentMethod === 'credit_card' && !invoicePayment
-    const resolvedCompetencyMonth = isCardPurchase
-      ? (buildCreditCardGuidance(form.date, selectedCard)?.competencyMonth || String(form.date || '').slice(0, 7))
-      : String(form.date || editingTx?.date || '').slice(0, 7)
+    const preservedCompetencyMonth = String(editingTx?.competencyMonth || '').slice(0, 7)
+    const resolvedCompetencyMonth = shouldPreserveInvoiceCompetency(editingTx)
+      ? (preservedCompetencyMonth || String(form.date || editingTx?.date || '').slice(0, 7))
+      : (isCardPurchase
+          ? (buildCreditCardGuidance(form.date, selectedCard)?.competencyMonth || String(form.date || '').slice(0, 7))
+          : String(form.date || editingTx?.date || '').slice(0, 7))
 
     const payload = {
       type:        resolvedType,
