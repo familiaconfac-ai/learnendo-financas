@@ -96,6 +96,54 @@ export function detectCardCommitment(description) {
   return null
 }
 
+export function buildCardCommitmentRecurringFields(description, competencyMonth, existing = {}) {
+  const hint = detectCardCommitment(description)
+  const normalizedMonth = String(competencyMonth || '').slice(0, 7)
+
+  if (!hint) {
+    return {
+      hint: null,
+      recurring: Boolean(existing?.recurring),
+      recurrenceType: existing?.recurrenceType || null,
+      recurringStartDate: existing?.recurringStartDate || null,
+      recurringEndDate: existing?.recurringEndDate || null,
+      totalInstallments: Number.isFinite(Number(existing?.totalInstallments))
+        ? Number(existing.totalInstallments)
+        : null,
+      currentInstallment: Number.isFinite(Number(existing?.currentInstallment))
+        ? Number(existing.currentInstallment)
+        : null,
+      installmentNumber: Number.isFinite(Number(existing?.installmentNumber))
+        ? Number(existing.installmentNumber)
+        : null,
+    }
+  }
+
+  const recurringStartDate = existing?.recurringStartDate || (normalizedMonth ? `${normalizedMonth}-01` : null)
+  const currentInstallment = Number.isFinite(Number(existing?.currentInstallment))
+    ? Number(existing.currentInstallment)
+    : Number(hint.currentInstallment || 1)
+  const totalInstallments = hint.recurrenceType === 'fixed'
+    ? (Number.isFinite(Number(existing?.totalInstallments))
+        ? Number(existing.totalInstallments)
+        : Number(hint.totalInstallments || currentInstallment))
+    : null
+  const recurringEndDate = hint.recurrenceType === 'fixed' && normalizedMonth && totalInstallments && currentInstallment
+    ? `${addMonthsToMonthKey(normalizedMonth, totalInstallments - currentInstallment)}-01`
+    : null
+
+  return {
+    hint,
+    recurring: true,
+    recurrenceType: hint.recurrenceType,
+    recurringStartDate,
+    recurringEndDate: existing?.recurringEndDate || recurringEndDate,
+    totalInstallments,
+    currentInstallment,
+    installmentNumber: hint.recurrenceType === 'fixed' ? currentInstallment : null,
+  }
+}
+
 export function buildCreditCardGuidance(dateIso, card) {
   if (!dateIso || !card?.closingDay) return null
 

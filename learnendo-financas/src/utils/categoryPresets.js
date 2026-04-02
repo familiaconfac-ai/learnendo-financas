@@ -46,7 +46,7 @@ export const DEFAULT_EXPENSE_CATEGORY_PRESETS = [
   {
     name: 'Pessoal',
     icon: '🧴',
-    items: ['Roupas', 'Beleza', 'Higiene'],
+    items: ['Roupas', 'Beleza', 'Higiene', 'Cabeleireiro'],
   },
   {
     name: 'Pet',
@@ -61,7 +61,7 @@ export const DEFAULT_EXPENSE_CATEGORY_PRESETS = [
   {
     name: 'Financeiro',
     icon: '💸',
-    items: ['Juros', 'Tarifas', 'Multas', 'Impostos'],
+    items: ['Juros', 'Tarifas', 'Multas', 'Impostos', 'Empréstimos'],
   },
   {
     name: 'Trabalho',

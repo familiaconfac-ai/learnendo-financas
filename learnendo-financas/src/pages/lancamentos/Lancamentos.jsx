@@ -22,6 +22,7 @@ import { resolveNatureAffectsBudget } from '../../constants/transactionNatures'
 import { TRANSACTION_PAYMENT_METHODS, getPaymentMethodLabel } from '../../constants/transactionPaymentMethods'
 import { normalizeReceiptItems, summarizeReceiptDetail } from '../../utils/receiptDetailCatalog'
 import {
+  buildCardCommitmentRecurringFields,
   buildCardPlanningSnapshot,
   buildCreditCardGuidance,
   detectCardCommitment,
@@ -244,6 +245,14 @@ function duplicateLocationLabel(duplicateMeta, currentStatus) {
 
 function shouldPreserveInvoiceCompetency(tx) {
   return tx?.origin === 'credit_card_import' || !!tx?.reconciledWithInvoice
+}
+
+function shouldCreateFutureRecurrence(recurrenceType, currentInstallment, totalInstallments) {
+  if (recurrenceType === 'indefinite') return true
+  if (recurrenceType !== 'fixed') return false
+  const current = Number(currentInstallment || 0)
+  const total = Number(totalInstallments || 0)
+  return total > 0 && current > 0 && current < total
 }
 
 export default function Lancamentos({ view = 'confirmed' }) {
@@ -591,9 +600,10 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const suggestion = suggestTypeAndCategory(tx.description || '', categories, tx.type || 'expense')
     const typeFromNature = TYPE_BY_NATURE_ID[tx.transactionNatureId]
     const suggestedType = typeFromNature || (tx.type === 'transfer_internal' ? 'transfer_internal' : suggestion.suggestedType)
-    const importedCardHint = (tx.origin === 'credit_card_import' || tx.paymentMethod === 'credit_card')
-      ? detectCardCommitment(tx.description)
+    const recurringSeed = (tx.origin === 'credit_card_import' || tx.paymentMethod === 'credit_card')
+      ? buildCardCommitmentRecurringFields(tx.description, tx.competencyMonth, tx)
       : null
+    const importedCardHint = recurringSeed?.hint || null
 
     setEditingTx(tx)
     setForm({
@@ -606,18 +616,18 @@ export default function Lancamentos({ view = 'confirmed' }) {
       categoryId:  tx.categoryId || (tx.type === 'transfer_internal' ? '' : suggestion.suggestedCategoryId || ''),
       subcategoryId: tx.subcategoryId || '',
       notes:       tx.notes       || '',
-      recurring:   tx.recurring || !!tx.recurringId || !!importedCardHint,
-      recurrenceType: tx.recurrenceType || importedCardHint?.recurrenceType || 'indefinite',
-      recurringStartDate: tx.recurringStartDate || recurringStartDateForTransaction(tx),
-      recurringEndDate: tx.recurringEndDate || '',
+      recurring:   !!tx.recurrenceType || !!tx.recurringId || !!importedCardHint,
+      recurrenceType: tx.recurrenceType || recurringSeed?.recurrenceType || 'indefinite',
+      recurringStartDate: tx.recurringStartDate || recurringSeed?.recurringStartDate || recurringStartDateForTransaction(tx),
+      recurringEndDate: tx.recurringEndDate || recurringSeed?.recurringEndDate || '',
       totalInstallments: tx.totalInstallments
         ? String(tx.totalInstallments)
-        : (importedCardHint?.totalInstallments ? String(importedCardHint.totalInstallments) : '12'),
+        : (recurringSeed?.totalInstallments ? String(recurringSeed.totalInstallments) : '12'),
       currentInstallment: tx.currentInstallment
         ? String(tx.currentInstallment)
         : (tx.installmentNumber
           ? String(tx.installmentNumber)
-          : (importedCardHint?.currentInstallment ? String(importedCardHint.currentInstallment) : '1')),
+          : (recurringSeed?.currentInstallment ? String(recurringSeed.currentInstallment) : '1')),
       transactionNatureId: tx.transactionNatureId || '',
       transactionNatureLabel: tx.transactionNatureLabel || '',
       contactId: tx.contactId || '',
@@ -656,6 +666,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
         : (isCardPurchase
             ? (buildCreditCardGuidance(tx.date, selectedCard)?.competencyMonth || String(tx.date || '').slice(0, 7))
             : String(tx.date || '').slice(0, 7))
+      const recurringSeed = (tx.origin === 'credit_card_import' || tx.paymentMethod === 'credit_card')
+        ? buildCardCommitmentRecurringFields(tx.description, resolvedCompetencyMonth, tx)
+        : null
 
       await update(tx.id, {
         type: resolvedType,
@@ -665,8 +678,52 @@ export default function Lancamentos({ view = 'confirmed' }) {
         subcategoryId: isInvoicePayment ? null : tx.subcategoryId || null,
         subcategoryName: isInvoicePayment ? null : tx.subcategoryName || null,
         competencyMonth: resolvedCompetencyMonth,
+        recurrenceType: recurringSeed?.recurrenceType || tx.recurrenceType || null,
+        recurringStartDate: recurringSeed?.recurringStartDate || tx.recurringStartDate || null,
+        recurringEndDate: recurringSeed?.recurringEndDate || tx.recurringEndDate || null,
+        totalInstallments: recurringSeed?.totalInstallments ?? tx.totalInstallments ?? null,
+        currentInstallment: recurringSeed?.currentInstallment ?? tx.currentInstallment ?? null,
+        installmentNumber: recurringSeed?.installmentNumber ?? tx.installmentNumber ?? null,
         status: 'confirmed',
       })
+
+      const recurrenceType = recurringSeed?.recurrenceType || tx.recurrenceType || null
+      const currentInstallment = recurringSeed?.currentInstallment ?? tx.currentInstallment ?? tx.installmentNumber ?? null
+      const totalInstallments = recurringSeed?.totalInstallments ?? tx.totalInstallments ?? null
+      const recurringStartDate = recurringSeed?.recurringStartDate || tx.recurringStartDate || `${resolvedCompetencyMonth}-01`
+      const recurringEndDate = recurringSeed?.recurringEndDate || tx.recurringEndDate || null
+
+      if (!tx.recurringId && shouldCreateFutureRecurrence(recurrenceType, currentInstallment, totalInstallments)) {
+        const recurrence = await createRecurrenceRule(user.uid, {
+          ...tx,
+          type: resolvedType,
+          categoryId: resolvedCategoryId,
+          categoryName: resolvedCategoryName,
+          subcategoryId: isInvoicePayment ? null : tx.subcategoryId || null,
+          subcategoryName: isInvoicePayment ? null : tx.subcategoryName || null,
+          competencyMonth: resolvedCompetencyMonth,
+          recurringInstanceMonth: resolvedCompetencyMonth,
+        }, {
+          recurrenceType,
+          startDate: recurringStartDate,
+          endDate: recurrenceType === 'fixed' ? recurringEndDate : null,
+          totalInstallments,
+          startInstallment: currentInstallment,
+          currentInstallment,
+          active: true,
+        }, { workspaceId: activeWorkspaceId })
+
+        await update(tx.id, {
+          recurringId: recurrence.id,
+          recurringType: recurrenceType,
+          recurringStartDate,
+          recurringEndDate: recurrenceType === 'fixed' ? recurringEndDate : null,
+          totalInstallments,
+          currentInstallment,
+          recurringInstanceMonth: resolvedCompetencyMonth,
+          installmentNumber: recurrenceType === 'fixed' ? currentInstallment : null,
+        })
+      }
     } catch (err) {
       alert('Erro ao confirmar: ' + err.message)
     }
@@ -872,7 +929,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
     try {
       if (editingTx) {
         await update(editingTx.id, payload)
-        if (form.recurring && !editingTx.recurringId) {
+        if (form.recurring && !editingTx.recurringId && shouldCreateFutureRecurrence(form.recurrenceType, form.currentInstallment, form.totalInstallments)) {
           const recurrenceType = form.recurrenceType === 'fixed' ? 'fixed' : 'indefinite'
           const recurringStartDate = form.recurringStartDate || `${resolvedCompetencyMonth}-01`
           const currentInstallment = recurrenceType === 'fixed' ? Number(form.currentInstallment || 1) : 1
@@ -905,7 +962,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
         const txId = await add(payload)
         console.log('[Lancamentos] handleSubmit: lançamento criado com sucesso, id=', txId)
 
-        if (form.recurring) {
+        if (form.recurring && shouldCreateFutureRecurrence(form.recurrenceType, form.currentInstallment, form.totalInstallments)) {
           const recurrenceType = form.recurrenceType === 'fixed' ? 'fixed' : 'indefinite'
           const recurringStartDate = form.recurringStartDate || `${resolvedCompetencyMonth}-01`
           const currentInstallment = recurrenceType === 'fixed' ? Number(form.currentInstallment || 1) : 1

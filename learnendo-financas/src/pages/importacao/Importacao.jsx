@@ -12,7 +12,10 @@ import { classifyBatch } from '../../utils/transactionClassifier'
 import { buildDuplicateSignature, findDuplicateMatches } from '../../utils/transactionDuplicates'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
-import { computeCreditCardCompetencyMonth } from '../../utils/creditCardPlanning'
+import {
+  buildCardCommitmentRecurringFields,
+  computeCreditCardCompetencyMonth,
+} from '../../utils/creditCardPlanning'
 import { findReceiptInvoiceReconciliationCandidate } from '../../utils/receiptInvoiceReconciliation'
 import Card, { CardHeader } from '../../components/ui/Card'
 import './Importacao.css'
@@ -550,6 +553,9 @@ export default function Importacao() {
               : row.type === 'transfer_internal'
                 ? 'nature_internal_transfer'
                 : 'nature_expense'
+          const recurringSeed = importUsesCard
+            ? buildCardCommitmentRecurringFields(row.description, resolvedCompetencyMonth)
+            : null
           const receiptInvoiceMatch = isInvoiceImport
             ? findReceiptInvoiceReconciliationCandidate(
                 row,
@@ -573,6 +579,13 @@ export default function Importacao() {
               reconciledInvoiceDate: row.date,
               reconciledInvoiceDescription: row.description,
               reconciledInvoiceAmount: Number(row.amount || 0),
+              recurring: recurringSeed?.recurring || matchedTx.recurring || false,
+              recurrenceType: recurringSeed?.recurrenceType || matchedTx.recurrenceType || null,
+              recurringStartDate: recurringSeed?.recurringStartDate || matchedTx.recurringStartDate || null,
+              recurringEndDate: recurringSeed?.recurringEndDate || matchedTx.recurringEndDate || null,
+              totalInstallments: recurringSeed?.totalInstallments ?? matchedTx.totalInstallments ?? null,
+              currentInstallment: recurringSeed?.currentInstallment ?? matchedTx.currentInstallment ?? null,
+              installmentNumber: recurringSeed?.installmentNumber ?? matchedTx.installmentNumber ?? null,
               ...(matchedTx.categoryId ? {} : {
                 categoryId: hintedCategory?.id || null,
                 categoryName: hintedCategory?.name || null,
@@ -608,6 +621,13 @@ export default function Importacao() {
             classificationConfidence: row.classification?.confidence ?? 'low',
             receiptDetailEnabled:     row.receiptDetailEnabled && receiptItems.length > 0,
             receiptItems,
+            recurring:                recurringSeed?.recurring || false,
+            recurrenceType:           recurringSeed?.recurrenceType || null,
+            recurringStartDate:       recurringSeed?.recurringStartDate || null,
+            recurringEndDate:         recurringSeed?.recurringEndDate || null,
+            totalInstallments:        recurringSeed?.totalInstallments ?? null,
+            currentInstallment:       recurringSeed?.currentInstallment ?? null,
+            installmentNumber:        recurringSeed?.installmentNumber ?? null,
           }, { workspaceId: activeWorkspaceId })
           knownSignatures.add(signature)
           count++
