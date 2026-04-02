@@ -911,6 +911,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const commitmentHint = (t.origin === 'credit_card_import' || t.paymentMethod === 'credit_card')
       ? detectCardCommitment(t.description)
       : null
+    const receiptItemCount = Array.isArray(t.receiptItems) ? t.receiptItems.length : 0
     const competencyLabel = t.paymentMethod === 'credit_card' && t.competencyMonth
       ? monthKeyLabel(t.competencyMonth)
       : ''
@@ -927,6 +928,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
             <span className="tx-date">
               {catName ? `${catName} • ` : ''}{formatFriendlyDate(t.date)}
             </span>
+            {t.receiptDetailEnabled && receiptItemCount > 0 && (
+              <span className="tx-badge tx-badge--receipt">Cupom detalhado · {receiptItemCount} item(ns)</span>
+            )}
             {commitmentHint && <span className="tx-date">{commitmentHint.reason}</span>}
             {competencyLabel && <span className="tx-date">Compete em {competencyLabel}</span>}
           </span>

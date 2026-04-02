@@ -1,3 +1,12 @@
+function parseIsoAsLocalDate(value) {
+  const iso = String(value || '').slice(0, 10)
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return null
+
+  const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
 /**
  * Formata uma string ISO ou Date para dd/mm/yyyy.
  * @param {string|Date} value
@@ -5,7 +14,9 @@
  */
 export function formatDateBR(value) {
   if (!value) return '—'
-  const date = typeof value === 'string' ? new Date(value) : value
+  const date = typeof value === 'string'
+    ? (parseIsoAsLocalDate(value) || new Date(value))
+    : value
   return date.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
 }
 

@@ -12,6 +12,37 @@ function createId(prefix) {
 
 const AMOUNT_PATTERN_SOURCE = String.raw`\d{1,3}(?:[.\s]\d{3})*,\d{2}|\d+(?:,\d{2})|\d{1,3}(?:,\d{3})*\.\d{2}`
 const AMOUNT_PATTERN = new RegExp(AMOUNT_PATTERN_SOURCE, 'g')
+const RECEIPT_DATE_PATTERN = /\b(\d{2})[\/.-](\d{2})[\/.-](\d{2,4})\b/g
+
+function todayLocalIso() {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
+
+function buildIsoDate(day, month, year) {
+  const numericDay = Number(day)
+  const numericMonth = Number(month)
+  const fullYear = Number(String(year).length === 2 ? `20${year}` : year)
+  if (!Number.isInteger(numericDay) || !Number.isInteger(numericMonth) || !Number.isInteger(fullYear)) {
+    return null
+  }
+
+  const iso = `${String(fullYear).padStart(4, '0')}-${String(numericMonth).padStart(2, '0')}-${String(numericDay).padStart(2, '0')}`
+  const parsed = new Date(`${iso}T12:00:00`)
+  if (Number.isNaN(parsed.getTime())) return null
+  if (parsed.getUTCFullYear() !== fullYear || parsed.getUTCMonth() + 1 !== numericMonth || parsed.getUTCDate() !== numericDay) {
+    return null
+  }
+  return iso
+}
+
+function diffDaysBetween(leftIso, rightIso) {
+  const left = new Date(`${String(leftIso).slice(0, 10)}T12:00:00`)
+  const right = new Date(`${String(rightIso).slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(left.getTime()) || Number.isNaN(right.getTime())) return Number.POSITIVE_INFINITY
+  return Math.round((left.getTime() - right.getTime()) / 86400000)
+}
 
 function parseAmount(value) {
   const raw = String(value || '').trim()
@@ -59,13 +90,46 @@ function extractLineAmounts(line) {
 }
 
 function findReceiptDate(lines) {
-  for (const line of lines) {
-    const match = line.match(/\b(\d{2})[\/.-](\d{2})[\/.-](\d{2,4})\b/)
-    if (!match) continue
-    const year = match[3].length === 2 ? `20${match[3]}` : match[3]
-    return `${year}-${match[2]}-${match[1]}`
-  }
-  return new Date().toISOString().slice(0, 10)
+  const todayIso = todayLocalIso()
+  const candidates = []
+
+  lines.forEach((line, lineIndex) => {
+    const normalizedLine = normalize(line)
+    for (const match of String(line || '').matchAll(RECEIPT_DATE_PATTERN)) {
+      const iso = buildIsoDate(match[1], match[2], match[3])
+      if (!iso) continue
+
+      const dayDistance = diffDaysBetween(iso, todayIso)
+      const year = Number(iso.slice(0, 4))
+      let score = 0
+
+      if (lineIndex <= 6) score += 4 - (lineIndex * 0.45)
+      else if (lineIndex <= 14) score += 0.5
+
+      if (/\b(data|emissao|emissao|compra|movimento|transacao|cupom)\b/.test(normalizedLine)) score += 4
+      if (/\b(vencimento|fechamento|validade)\b/.test(normalizedLine)) score -= 3
+
+      if (dayDistance <= 7) score += 4
+      else if (dayDistance <= 45) score += 3
+      else if (dayDistance <= 400) score += 2
+      else if (dayDistance <= 900) score += 0.5
+      else score -= 1.5
+
+      if (year < 2020 || year > new Date().getFullYear() + 1) score -= 4
+
+      candidates.push({ iso, score, lineIndex })
+    }
+  })
+
+  if (candidates.length === 0) return todayIso
+
+  candidates.sort((left, right) => (
+    right.score - left.score
+    || left.lineIndex - right.lineIndex
+    || Math.abs(diffDaysBetween(left.iso, todayIso)) - Math.abs(diffDaysBetween(right.iso, todayIso))
+  ))
+
+  return candidates[0].iso
 }
 
 function findMerchantName(lines, file) {
@@ -342,6 +406,10 @@ function createReceiptItem(description, amount, quantity = '') {
   }
 }
 
+function buildReceiptItemKey(item) {
+  return `${normalize(item?.description)}|${Number(item?.amount || 0).toFixed(2)}`
+}
+
 function applyDiscountToItems(items, discountAmount) {
   if (!Array.isArray(items) || items.length === 0 || discountAmount <= 0) return false
 
@@ -393,7 +461,36 @@ function parseReceiptSummary(lines) {
   return summary
 }
 
-function parseReceiptItems(lines) {
+function trimLikelyOcrDuplicates(items, expectedTotal) {
+  if (!Array.isArray(items) || items.length <= 1 || !(expectedTotal > 0)) return items
+
+  let runningTotal = items.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  if (runningTotal <= expectedTotal * 1.2) return items
+
+  const firstIndexByKey = new Map()
+  items.forEach((item, index) => {
+    const key = buildReceiptItemKey(item)
+    if (!firstIndexByKey.has(key)) firstIndexByKey.set(key, index)
+  })
+
+  const nextItems = [...items]
+  for (let index = nextItems.length - 1; index >= 0 && runningTotal > expectedTotal * 1.08; index -= 1) {
+    const item = nextItems[index]
+    const key = buildReceiptItemKey(item)
+    const previous = nextItems[index - 1]
+    const isImmediateRepeat = previous && buildReceiptItemKey(previous) === key
+    const isLaterDuplicate = firstIndexByKey.get(key) !== index
+
+    if (!isImmediateRepeat && !isLaterDuplicate) continue
+
+    runningTotal = Number((runningTotal - Number(item.amount || 0)).toFixed(2))
+    nextItems.splice(index, 1)
+  }
+
+  return nextItems
+}
+
+function parseReceiptItems(lines, expectedTotal = 0) {
   const items = []
   let carriedDiscountTotal = 0
 
@@ -431,17 +528,7 @@ function parseReceiptItems(lines) {
     applyDiscountToItems(items, carriedDiscountTotal)
   }
 
-  return dedupeReceiptItems(items)
-}
-
-function dedupeReceiptItems(items) {
-  const seen = new Set()
-  return items.filter((item) => {
-    const key = `${normalize(item.description)}|${Number(item.amount).toFixed(2)}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  return trimLikelyOcrDuplicates(items, expectedTotal)
 }
 
 async function extractTextWithOcr(file) {
@@ -470,7 +557,8 @@ export async function parseReceiptImageFile(file) {
   const lines = rebuildReceiptLines(rawLines)
   const merchantName = findMerchantName(lines, file)
   const summary = parseReceiptSummary(lines)
-  const receiptItems = parseReceiptItems(lines)
+  const expectedTotal = findTotalAmount(summary, 0)
+  const receiptItems = parseReceiptItems(lines, expectedTotal)
   const itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   const totalAmount = findTotalAmount(summary, itemTotal)
   const topHints = [...new Set(receiptItems.flatMap((item) => item.budgetCategoryHints || []))].slice(0, 4)

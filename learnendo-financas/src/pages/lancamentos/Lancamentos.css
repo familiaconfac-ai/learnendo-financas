@@ -364,6 +364,22 @@
 .tx-cat  { color: var(--color-text-muted); }
 .tx-date { color: var(--color-text-muted); }
 
+.tx-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.12rem 0.48rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.tx-badge--receipt {
+  background: #eef6ff;
+  color: #1d4ed8;
+}
+
 /* ── Empty state ──────────────────────────────────────────────────────────── */
 .empty-state {
   flex: 1;
