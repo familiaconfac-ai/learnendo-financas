@@ -792,6 +792,16 @@ export default function Lancamentos({ view = 'confirmed' }) {
     })
 
     if (duplicates.isExactDuplicate) {
+      const proceed = window.confirm(
+        `Ja existe ${duplicates.exact.length} lancamento(s) com a mesma data, valor, descricao e conta/cartao. Deseja salvar mesmo assim?`,
+      )
+      if (!proceed) {
+        return // finally reseta saving
+      }
+      duplicates.isExactDuplicate = false
+    }
+
+    if (duplicates.isExactDuplicate) {
       alert('Lançamento duplicado detectado. Revise data, valor, descrição e conta antes de salvar.')
       return // finally reseta saving
     }
