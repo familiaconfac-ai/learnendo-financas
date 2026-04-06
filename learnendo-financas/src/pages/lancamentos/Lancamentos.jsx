@@ -366,6 +366,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
     return matchOrigin
   })
 
+  // DEBUG VISUAL: log ao carregar lançamentos
+  console.log('LANÇAMENTOS CARREGADOS:', transactions)
+
   const pendingCount = allTx.filter((t) => normalizeStatus(t.status) === 'pending').length
   const duplicateMetaById = (() => {
     const groups = new Map()
@@ -378,7 +381,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
     })
 
     const metaById = {}
-    groups.forEach((items) => {
+    groups.forEach((items, signature) => {
       if (items.length < 2) return
       const pendingCountInGroup = items.filter((item) => normalizeStatus(item.status) === 'pending').length
       const confirmedCountInGroup = items.length - pendingCountInGroup
@@ -1145,6 +1148,10 @@ export default function Lancamentos({ view = 'confirmed' }) {
             {normalizedTxStatus !== 'confirmed' && (
               <span className={`tx-status ${statusMeta.cls}`}>{statusMeta.label}</span>
             )}
+          </span>
+          {/* DEBUG VISUAL: origem, status, tipo */}
+          <span className="tx-debug" style={{ fontSize: '0.85em', color: '#888', marginLeft: 8 }}>
+            [origem: {t.origem || t.origin || '-'} | status: {t.status} | tipo: {t.tipo || t.type}]
           </span>
           <span className="tx-meta">
             <span className="tx-date">

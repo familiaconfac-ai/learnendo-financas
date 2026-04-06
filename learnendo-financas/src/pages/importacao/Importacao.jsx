@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useFinance } from '../../context/FinanceContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
@@ -29,6 +29,65 @@ const TYPE_META = {
   transfer_internal: { label: 'Transf.',   icon: '↔', cls: 'type-transfer'   },
   investment:        { label: 'Investim.', icon: '▲', cls: 'type-investment' },
 }
+
+const IMPORT_MODE_META = {
+  bank: {
+    title: 'Importar extrato',
+    subtitle: 'OFX, CSV ou PDF de conta bancária. Tudo entra em Lançar como pendente.',
+    icon: '🏦',
+    accept: '.csv,.ofx,.qfx,.txt,.pdf',
+    fileHint: 'Formatos suportados: OFX, QFX, CSV, TXT e PDF.',
+    selectLabel: 'Selecionar extrato',
+  },
+  invoice: {
+    title: 'Importar fatura',
+    subtitle: 'Vincule a um cartão cadastrado e envie as compras para Lançar como pendentes.',
+    icon: '💳',
+    accept: '.csv,.pdf,.txt',
+    fileHint: 'Formatos suportados: CSV, TXT e PDF da fatura.',
+    selectLabel: 'Selecionar fatura',
+  },
+  receipt: {
+    title: 'Importar nota/cupom',
+    subtitle: 'OCR próprio para cupom, quebrando itens em linhas pendentes para revisão.',
+    icon: '🧾',
+    accept: '.pdf,.jpg,.jpeg,.png,.webp,image/*',
+    fileHint: 'Formatos suportados: imagem e PDF do cupom/nota.',
+    selectLabel: 'Selecionar nota/cupom',
+  },
+}
+
+const RECEIPT_DOCUMENT_TYPES = [
+  { value: 'supermercado', label: 'Supermercado' },
+  { value: 'loja', label: 'Loja' },
+  { value: 'farmacia', label: 'Farmácia' },
+  { value: 'material_ferramentas', label: 'Material/Ferramentas' },
+  { value: 'outros', label: 'Outros' },
+]
+
+const RECEIPT_PAYMENT_METHODS = [
+  { value: 'account', label: 'Conta' },
+  { value: 'card', label: 'Cartão' },
+  { value: 'cash', label: 'Dinheiro' },
+]
+
+const CASH_ORIGIN_TYPES = [
+  { value: 'caixa', label: 'Caixa' },
+  { value: 'oferta', label: 'Oferta' },
+  { value: 'ajuda_custo', label: 'Ajuda de custo' },
+  { value: 'bico', label: 'Bico' },
+  { value: 'outro', label: 'Outro' },
+]
+
+const RECEIPT_DOCUMENT_TYPE_HINTS = {
+  supermercado: ['Alimentação', 'Supermercado', 'Mercado', 'Limpeza', 'Higiene'],
+  loja: ['Vestuário', 'Utilidades', 'Eletrônicos', 'Pessoal', 'Casa'],
+  farmacia: ['Saúde', 'Farmácia', 'Medicamentos', 'Higiene'],
+  material_ferramentas: ['Manutenção', 'Ferramentas', 'Casa', 'Trabalho'],
+  outros: [],
+}
+
+const RECEIPT_PARSE_TIMEOUT_MS = 45000
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -97,22 +156,110 @@ function findCategoryByHints(categories, type, hints = []) {
   return null
 }
 
-function hydrateImportedReceiptItems(items, categories) {
+function buildReceiptDocumentTypeHints(receiptDocumentType) {
+  return RECEIPT_DOCUMENT_TYPE_HINTS[receiptDocumentType] || []
+}
+
+function applyReceiptDocumentTypeContext(row, receiptDocumentType) {
+  if (!receiptDocumentType) return row
+  const documentTypeHints = buildReceiptDocumentTypeHints(receiptDocumentType)
+  const mergedHints = [...new Set([...(Array.isArray(row?.categoryHints) ? row.categoryHints : []), ...documentTypeHints])]
+  return {
+    ...row,
+    receiptDocumentType,
+    categoryHints: mergedHints,
+  }
+}
+
+function hydrateImportedReceiptItems(items, categories, receiptDocumentType = '') {
   const prepared = (Array.isArray(items) ? items : []).map((item) => {
+    const documentTypeHints = buildReceiptDocumentTypeHints(receiptDocumentType)
+    const combinedHints = [
+      ...(Array.isArray(item.budgetCategoryHints) ? item.budgetCategoryHints : []),
+      ...documentTypeHints,
+      ...[item.budgetCategoryName].filter(Boolean),
+    ]
     const hintedBudgetCategory = findCategoryByHints(
       categories,
       'expense',
-      item.budgetCategoryHints || [item.budgetCategoryName].filter(Boolean),
+      combinedHints,
     )
 
     return {
       ...item,
+      receiptDocumentType,
       budgetCategoryId: hintedBudgetCategory?.id || item.budgetCategoryId || '',
       budgetCategoryName: hintedBudgetCategory?.name || item.budgetCategoryName || '',
+      budgetCategoryHints: [...new Set(combinedHints)].filter(Boolean),
     }
   })
 
-  return normalizeReceiptItems(prepared, categories.filter((category) => category.type === 'expense'))
+  return normalizeReceiptItems(prepared, categories.filter((category) => category.type === 'expense')).map((item) => ({
+    ...item,
+    receiptDocumentType,
+  }))
+}
+
+function isReceiptImportSource(source) {
+  return source === 'image_receipt' || source === 'image_receipt_item'
+}
+
+function expandReceiptImportRows(rows, categories, receiptDocumentType) {
+  return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+    if (row?.source !== 'image_receipt') return [row]
+
+    const contextualRow = applyReceiptDocumentTypeContext(row, receiptDocumentType)
+    const receiptItems = hydrateImportedReceiptItems(contextualRow.receiptItems, categories, receiptDocumentType)
+    if (receiptItems.length === 0) return [contextualRow]
+
+    return receiptItems.map((item, index) => ({
+      ...contextualRow,
+      id: `${row.id || 'receipt'}-item-${item.id || index}`,
+      description: item.description || row.description,
+      amount: hasCurrencyValue(item.amount) ? Number(item.amount) : '',
+      type: 'expense',
+      direction: 'debit',
+      status: item.status || 'partial',
+      source: 'image_receipt_item',
+      categoryName: item.budgetCategoryName || contextualRow.categoryName || '',
+      categoryHints: Array.isArray(item.budgetCategoryHints) && item.budgetCategoryHints.length > 0
+        ? item.budgetCategoryHints
+        : contextualRow.categoryHints,
+      receiptDetailEnabled: false,
+      receiptItems: [],
+      receiptItemStatus: item.status || 'partial',
+      quantity: item.quantity || '',
+      detailCategoryKey: item.detailCategoryKey,
+      detailSubcategoryKey: item.detailSubcategoryKey,
+      budgetCategoryHints: item.budgetCategoryHints,
+      budgetCategoryId: item.budgetCategoryId || '',
+      budgetCategoryName: item.budgetCategoryName || '',
+      receiptDocumentType,
+      parentReceiptDescription: row.description,
+    }))
+  })
+}
+
+function withTimeout(promise, timeoutMs, timeoutMessage) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
+    }),
+  ])
+}
+
+function detectImportMode(rawRows, summary) {
+  if ((Array.isArray(rawRows) ? rawRows : []).some((row) => isReceiptImportSource(row?.source))) return 'receipt'
+  if (summary?.kind === 'invoice') return 'invoice'
+  return 'bank'
+}
+
+function getImportModeError(selectedMode, detectedMode) {
+  if (!selectedMode || selectedMode === detectedMode) return ''
+  if (selectedMode === 'bank') return 'Este arquivo parece ser uma fatura/cartão ou cupom. Use o fluxo correto de importação.'
+  if (selectedMode === 'invoice') return 'Este arquivo não parece ser uma fatura de cartão. Use Importar extrato ou Importar nota/cupom.'
+  return 'Este arquivo não parece ser uma nota/cupom OCR. Use um arquivo de cupom ou selecione o fluxo correto.'
 }
 
 function hasCurrencyValue(value) {
@@ -205,6 +352,7 @@ function findMatchingCardId(cards, summary) {
 
 export default function Importacao() {
   const navigate                         = useNavigate()
+  const [searchParams, setSearchParams]  = useSearchParams()
   const { user }                         = useAuth()
   const { selectedMonth, selectedYear }  = useFinance()
   const { activeWorkspaceId, myRole, permissions, transactionNatures } = useWorkspace()
@@ -217,6 +365,7 @@ export default function Importacao() {
   // ── State ────────────────────────────────────────────────────────────────
 
   const [step, setStep]                  = useState('idle')   // idle|parsing|preview|saving|done
+  const [importMode, setImportMode]      = useState(searchParams.get('tipo') || '')
   const [parsedRows, setParsedRows]      = useState([])
   const [selectedIds, setSelectedIds]    = useState(new Set())
   const [accountId, setAccountId]        = useState('')
@@ -241,7 +390,9 @@ export default function Importacao() {
   const [showCreateAccount, setShowCreateAccount] = useState(false)
   const [showCreateCard, setShowCreateCard] = useState(false)
   const [creatingTarget, setCreatingTarget] = useState(false)
-  const [receiptPaymentTarget, setReceiptPaymentTarget] = useState('credit_card')
+  const [receiptPaymentMethod, setReceiptPaymentMethod] = useState('card')
+  const [receiptDocumentType, setReceiptDocumentType] = useState('supermercado')
+  const [cashOriginType, setCashOriginType] = useState('')
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.id === accountId) || null,
     [accounts, accountId],
@@ -258,10 +409,41 @@ export default function Importacao() {
     )],
     [parsedRows],
   )
+  const isSavingImportRef = useRef(false)
+  const isParsingImportRef = useRef(false)
+  const importModeMeta = IMPORT_MODE_META[importMode] || null
+
+  const isInvoiceImport = importMode === 'invoice'
+  const isReceiptImport = importMode === 'receipt'
+  const isReceiptCardImport = isReceiptImport && receiptPaymentMethod === 'card'
+  const importUsesCard = isInvoiceImport || isReceiptCardImport
+  const targetSelected = isReceiptImport
+    ? (receiptPaymentMethod === 'card' ? !!cardId : receiptPaymentMethod === 'cash' ? !!cashOriginType : !!accountId)
+    : (importUsesCard ? !!cardId : !!accountId)
+
+  useEffect(() => {
+    const queryMode = searchParams.get('tipo') || ''
+    if (queryMode && IMPORT_MODE_META[queryMode]) {
+      setImportMode(queryMode)
+    }
+  }, [searchParams])
 
   // ── File handling ─────────────────────────────────────────────────────────
 
+  function handleSelectImportMode(mode) {
+    setImportMode(mode)
+    setSearchParams(mode ? { tipo: mode } : {})
+    setParseError(null)
+    setSaveError(null)
+  }
+
   async function handleFile(file) {
+    if (isParsingImportRef.current) return
+    if (!importMode) {
+      setParseError('Escolha primeiro qual fluxo deseja importar: extrato, fatura ou nota/cupom.')
+      return
+    }
+    isParsingImportRef.current = true
     setParseError(null)
     setParsePreviewLines([])
     setSaveError(null)
@@ -280,22 +462,46 @@ export default function Importacao() {
     setStep('parsing')
 
     try {
-      const raw = await parseStatementFile(file)
+      if (importMode === 'receipt') {
+        console.log('[Importacao][receipt] parse start', {
+          fileName: file.name,
+          receiptDocumentType,
+        })
+      }
+      const raw = await withTimeout(
+        parseStatementFile(file),
+        importMode === 'receipt' ? RECEIPT_PARSE_TIMEOUT_MS : 120000,
+        importMode === 'receipt'
+          ? 'A leitura do cupom demorou mais do que o esperado. Tente novamente com uma imagem mais nítida.'
+          : 'A leitura do arquivo demorou mais do que o esperado.',
+      )
       const parsedSummary = raw?.__summary || null
+      const detectedMode = detectImportMode(raw, parsedSummary)
+      const modeError = getImportModeError(importMode, detectedMode)
+      if (modeError) {
+        setParseError(modeError)
+        setStatementSummary(null)
+        setStep('idle')
+        return
+      }
 
       const hasImageRows = raw.some((row) => row.source === 'image_receipt')
-      setReceiptPaymentTarget(hasImageRows && availableCards.length === 0 ? 'account' : 'credit_card')
-      const classifiedRows = (hasImageRows ? raw : classifyBatch(raw)).map((row) => ({
+      setReceiptPaymentMethod(hasImageRows && availableCards.length === 0 ? 'account' : 'card')
+      const classifiedRows = ((importMode === 'receipt' || hasImageRows) ? raw : classifyBatch(raw)).map((row) => applyReceiptDocumentTypeContext({
         ...row,
-        status: row.status || 'pending',
-        classification: row.classification || { confidence: 'low', reason: 'image_receipt' },
-      }))
+        status: 'pending',
+        classification: row.classification || { confidence: importMode === 'receipt' ? 'low' : 'medium', reason: `${importMode || 'import'}_import` },
+      }, importMode === 'receipt' ? receiptDocumentType : ''))
       const handled = handleImport(classifiedRows, { statementSummary: parsedSummary })
       const summary = handled.summary || parsedSummary
       const classified = handled.rows.map((row, idx) => ({
-        ...row,
+        ...applyReceiptDocumentTypeContext(row, importMode === 'receipt' ? receiptDocumentType : ''),
         id: `r-${idx}`,
+        receiptDocumentType: importMode === 'receipt' ? receiptDocumentType : null,
       }))
+      const previewRows = importMode === 'receipt'
+        ? expandReceiptImportRows(classified, categories, receiptDocumentType)
+        : classified
 
       setStatementSummary(summary)
       setBalanceAdjustmentRows(handled.balanceAdjustments || [])
@@ -303,9 +509,21 @@ export default function Importacao() {
       setSuggestedAccountForm(buildSuggestedAccountForm(summary))
       setSuggestedCardForm(buildSuggestedCardForm(summary))
 
-      setParsedRows(classified)
-      setSelectedIds(new Set(classified.map((r) => r.id)))   // all pre-selected
+      setParsedRows(previewRows)
+      setSelectedIds(new Set(previewRows.map((r) => r.id)))   // all pre-selected
       setStep('preview')
+      if (importMode === 'receipt') {
+        console.log('[Importacao][receipt] parse finish', {
+          receiptDocumentType,
+          parsedRowsLength: previewRows.length,
+          rows: previewRows.map((row) => ({
+            id: row.id,
+            description: row.description,
+            receiptDocumentType: row.receiptDocumentType,
+            categoryHints: row.categoryHints,
+          })),
+        })
+      }
     } catch (err) {
       console.error('[Importacao] Parse error:', err)
       setStatementSummary(null)
@@ -314,6 +532,18 @@ export default function Importacao() {
       setParseError(err.message || 'Não foi possível processar o arquivo.')
       setParsePreviewLines(Array.isArray(err.previewLines) ? err.previewLines : [])
       setStep('idle')
+    } finally {
+      isParsingImportRef.current = false
+      if (importMode === 'receipt') {
+        console.log('[Importacao][receipt] parsing finally', {
+          importMode,
+          receiptDocumentType,
+          receiptPaymentMethod,
+          accountId,
+          cardId,
+          lockReleased: !isParsingImportRef.current,
+        })
+      }
     }
   }
 
@@ -329,6 +559,40 @@ export default function Importacao() {
     if (file) handleFile(file)
     // reset input so the same file can be re-selected after cancel
     e.target.value = ''
+  }
+
+  function handleReset() {
+    isSavingImportRef.current = false
+    isParsingImportRef.current = false
+    setStep('idle')
+    setParsedRows([])
+    setSelectedIds(new Set())
+    setAccountId('')
+    setCardId('')
+    setParseError(null)
+    setParsePreviewLines([])
+    setSavedCount(0)
+    setSkippedCount(0)
+    setSaveError(null)
+    setSaveMessage('')
+    setFileName('')
+    setStatementSummary(null)
+    setBalanceAdjustmentRows([])
+    setBalanceAuditEntries([])
+    setExistingMonthTx([])
+    setImportOnlyOpeningBalance(false)
+    setBalanceOnlyApplied(false)
+    setSuggestedAccountForm(buildSuggestedAccountForm(null))
+    setSuggestedCardForm(buildSuggestedCardForm(null))
+    setShowCreateAccount(false)
+    setShowCreateCard(false)
+    setCreatingTarget(false)
+    setReceiptPaymentMethod('card')
+    setReceiptDocumentType('supermercado')
+    setCashOriginType('')
+    setDragOver(false)
+    setImportMode('')
+    setSearchParams({})
   }
 
   // ── Row selection ─────────────────────────────────────────────────────────
@@ -410,12 +674,10 @@ export default function Importacao() {
   // ── Confirm & save ────────────────────────────────────────────────────────
 
   async function handleConfirmImport() {
+    if (isSavingImportRef.current) return
     if (!user?.uid) return
-    const isInvoiceImport = statementSummary?.kind === 'invoice'
-    const isReceiptImport = parsedRows.some((row) => row.source === 'image_receipt')
-    const isReceiptCardImport = isReceiptImport && receiptPaymentTarget === 'credit_card'
-    const importUsesCard = isInvoiceImport || isReceiptCardImport
-    const isCreditAccountImport = !importUsesCard && selectedAccount?.type === 'credit'
+    const isCreditAccountImport = !isReceiptImport && !importUsesCard && selectedAccount?.type === 'credit'
+    const receiptOriginAccountId = receiptPaymentMethod === 'cash' ? null : accountId
     const canSaveBalanceOnly = !isInvoiceImport
       && !isReceiptImport
       && importOnlyOpeningBalance
@@ -430,6 +692,22 @@ export default function Importacao() {
         : 'Selecione uma conta antes de continuar.')
       return
     }
+
+    // Log para depuração
+    console.log('[Importacao] Itens a salvar:', parsedRows)
+    if (isReceiptImport) {
+      console.log('[Importacao][receipt] before save', {
+        importMode,
+        receiptPaymentMethod,
+        accountId,
+        cardId,
+        cashOriginType,
+        targetSelected,
+        saveDisabledReason: null,
+        selectedSize: selectedIds.size,
+      })
+    }
+    isSavingImportRef.current = true
 
     setSaveError(null)
     setSaveMessage('')
@@ -511,6 +789,8 @@ export default function Importacao() {
         console.error('[Importacao] Could not persist opening balance:', err.message)
         setSaveError(err.message || 'Nao foi possivel registrar o saldo inicial deste mes.')
         setStep('done')
+      } finally {
+        isSavingImportRef.current = false
       }
       return
     }
@@ -531,11 +811,14 @@ export default function Importacao() {
           console.error('[Importacao] Could not persist balance snapshot:', err.message)
           setSaveError(err.message || 'Nao foi possivel atualizar o saldo atual desta conta.')
           setStep('done')
+        } finally {
+          isSavingImportRef.current = false
         }
         return
       }
       setSaveError('Selecione ao menos um lancamento para salvar.')
       setStep('preview')
+      isSavingImportRef.current = false
       return
     }
     const batchId = Date.now().toString(36)
@@ -576,6 +859,7 @@ export default function Importacao() {
         existingTransactions.map((tx) => buildDuplicateSignature(tx)),
       )
       const reconciledIds = new Set()
+      const savedReceiptItemKeys = new Set()
 
       for (const row of toSave) {
         const rowAudit = duplicateMapByRowId[row.id]
@@ -597,7 +881,7 @@ export default function Importacao() {
         }
 
         try {
-          const receiptItems = hydrateImportedReceiptItems(row.receiptItems, categories)
+          const receiptItems = hydrateImportedReceiptItems(row.receiptItems, categories, row.receiptDocumentType || receiptDocumentType)
           const transactionNatureId = row.transactionNatureId || (row.type === 'income'
             ? 'nature_income'
             : row.type === 'investment'
@@ -625,6 +909,7 @@ export default function Importacao() {
               competencyMonth: resolvedCompetencyMonth,
               balanceImpact: typeof row.balanceImpact === 'boolean' ? row.balanceImpact : false,
               affectsBudget: typeof row.affectsBudget === 'boolean' ? row.affectsBudget : true,
+              status: 'pending',
               reconciledWithInvoice: true,
               reconciledAt: new Date().toISOString(),
               reconciledImportBatchId: batchId,
@@ -649,21 +934,28 @@ export default function Importacao() {
             reconciledCount += 1
             continue
           }
+          if (row.source === 'image_receipt_item') {
+            const receiptItemKey = `${row.id}::${row.description || 'item'}::${row.amount || ''}`
+            if (savedReceiptItemKeys.has(receiptItemKey)) continue
+            savedReceiptItemKeys.add(receiptItemKey)
+          }
           await addTransaction(user.uid, {
             type:                     row.type,
             description:              row.description,
             amount:                   row.amount,
             date:                     row.date,
             competencyMonth:          resolvedCompetencyMonth,
-            accountId:                importUsesCard ? null : accountId,
+            accountId:                importUsesCard ? null : (isReceiptImport ? receiptOriginAccountId : accountId),
             cardId:                   importUsesCard ? (cardId || null) : null,
             cardName:                 importUsesCard ? (selectedCard?.name || null) : null,
             categoryId:               hintedCategory?.id || null,
             categoryName:             hintedCategory?.name || row.categoryName || null,
             notes:                    '',
-            paymentMethod:            row.paymentMethod || (importUsesCard || isCreditAccountImport ? 'credit_card' : null),
-            origin:                   row.source === 'image_receipt' ? 'manual' : (isInvoiceImport ? 'credit_card_import' : 'bank_import'),
-            status:                   row.status || 'pending',
+            paymentMethod:            isReceiptImport
+              ? (receiptPaymentMethod === 'card' ? 'credit_card' : receiptPaymentMethod === 'cash' ? 'cash' : 'debit_card')
+              : (row.paymentMethod || (importUsesCard || isCreditAccountImport ? 'credit_card' : null)),
+            origin:                   isReceiptImportSource(row.source) ? 'manual' : (isInvoiceImport ? 'credit_card_import' : 'bank_import'),
+            status:                   'pending',
             workspaceId:              activeWorkspaceId,
             createdBy:                user.uid,
             userId:                   user.uid,
@@ -673,6 +965,9 @@ export default function Importacao() {
             balanceImpact:            typeof row.balanceImpact === 'boolean' ? row.balanceImpact : (importUsesCard || isCreditAccountImport ? false : row.type !== 'transfer_internal'),
             importBatchId:            batchId,
             classificationConfidence: row.classification?.confidence ?? 'low',
+            receiptDocumentType:      importMode === 'receipt' ? (row.receiptDocumentType || receiptDocumentType) : null,
+            receiptPaymentMethod:     isReceiptImport ? receiptPaymentMethod : null,
+            cashOriginType:           isReceiptImport && receiptPaymentMethod === 'cash' ? cashOriginType : null,
             receiptDetailEnabled:     row.receiptDetailEnabled && receiptItems.length > 0,
             receiptItems,
             recurring:                recurringSeed?.recurring || false,
@@ -685,89 +980,67 @@ export default function Importacao() {
           }, { workspaceId: activeWorkspaceId })
           knownSignatures.add(signature)
           count++
+          if (isReceiptImport) {
+            console.log('[Importacao][receipt] saved row', {
+              description: row.description,
+              amount: row.amount,
+              accountId: importUsesCard ? null : receiptOriginAccountId,
+              cardId: importUsesCard ? (cardId || null) : null,
+              cashOriginType,
+              receiptPaymentMethod,
+              status: 'pending',
+              receiptDocumentType: row.receiptDocumentType || receiptDocumentType,
+            })
+          }
         } catch (err) {
           console.error('[Importacao] Save failed for:', row.description, err.message)
           failed.push(row.description)
         }
       }
 
-      if (!isInvoiceImport && !isReceiptImport && count > 0 && statementSnapshotPayload) {
+      if (!isInvoiceImport && !isReceiptImport && statementSnapshotPayload) {
         try {
           await updateAccount(accountId, statementSnapshotPayload)
         } catch (err) {
-          console.error('[Importacao] Could not persist statement summary on account:', err.message)
-          accountSummaryError = 'Os lancamentos foram salvos, mas o resumo de saldo nao pode ser vinculado a conta.'
+          console.error('[Importacao] Could not persist balance snapshot after import:', err.message)
+          accountSummaryError = err.message || 'Nao foi possivel atualizar o saldo atual desta conta.'
         }
       }
 
-      if (isInvoiceImport && (count > 0 || reconciledCount > 0) && invoiceSnapshotPayload) {
+      if (isInvoiceImport && invoiceSnapshotPayload) {
         try {
           await updateCard(cardId, invoiceSnapshotPayload)
         } catch (err) {
-          console.error('[Importacao] Could not persist invoice summary on card:', err.message)
-          accountSummaryError = 'Os lançamentos foram salvos, mas a fatura não pôde ser vinculada ao cartão.'
+          console.error('[Importacao] Could not persist invoice snapshot after import:', err.message)
+          accountSummaryError = err.message || 'Nao foi possivel atualizar os dados da fatura/cartao.'
         }
       }
 
-      setSavedCount(count + reconciledCount)
+      setSavedCount(count)
       setSkippedCount(skipped)
-      if (failed.length > 0) {
-        setSaveError(`${failed.length} lançamento(s) não puderam ser salvos.`)
-      }
-      if (skipped > 0) {
-        setSaveMessage(`${skipped} lançamento(s) duplicado(s) foram ignorados.`)
-      } else if (count > 0) {
-        setSaveMessage('Lançamentos salvos no Firestore com sucesso.')
-      }
-      if (failed.length > 0 && accountSummaryError) {
-        setSaveError(`${failed.length} lancamento(s) nao puderam ser salvos. ${accountSummaryError}`)
-      } else if (failed.length === 0 && accountSummaryError) {
-        setSaveError(accountSummaryError)
-      }
-
-      if ((count > 0 || reconciledCount > 0) && failed.length === 0 && skipped === 0) {
-        setSaveMessage(isInvoiceImport
-          ? (reconciledCount > 0
-              ? `Lancamentos da fatura conciliados com sucesso (${reconciledCount} cupom(ns) reaproveitado(s)).`
-              : 'Lancamentos da fatura salvos com sucesso.')
-          : (isReceiptImport
-              ? 'Cupom salvo com sucesso em Lancamentos.'
-              : 'Lancamentos do extrato salvos com sucesso.'))
-      }
-
+      setSaveMessage(reconciledCount > 0
+        ? `${count} lancamento(s) enviados para Lançar e ${reconciledCount} compra(s) conciliada(s) com a fatura.`
+        : `${count} lancamento(s) enviados para Lançar com sucesso.`)
+      setSaveError(accountSummaryError)
       setStep('done')
     } catch (err) {
-      console.error('[Importacao] Unexpected save error:', err)
-      setSaveError(err.message || 'Não foi possível concluir a importação.')
+      console.error('[Importacao] Import save failed:', err)
+      setSaveError(err.message || 'Nao foi possivel concluir a importacao.')
       setStep('done')
+    } finally {
+      isSavingImportRef.current = false
+      if (isReceiptImport) {
+        console.log('[Importacao][receipt] saving finally', {
+          importMode,
+          receiptPaymentMethod,
+          accountId,
+          cardId,
+          targetSelected,
+          selectedSize: selectedIds.size,
+          lockReleased: !isSavingImportRef.current,
+        })
+      }
     }
-  }
-
-  function handleReset() {
-    setParsedRows([])
-    setSelectedIds(new Set())
-    setAccountId('')
-    setCardId('')
-    setParseError(null)
-    setParsePreviewLines([])
-    setSavedCount(0)
-    setSkippedCount(0)
-    setSaveError(null)
-    setSaveMessage('')
-    setFileName('')
-    setStatementSummary(null)
-    setBalanceAdjustmentRows([])
-    setBalanceAuditEntries([])
-    setExistingMonthTx([])
-    setImportOnlyOpeningBalance(false)
-    setBalanceOnlyApplied(false)
-    setSuggestedAccountForm(buildSuggestedAccountForm(null))
-    setSuggestedCardForm(buildSuggestedCardForm(null))
-    setShowCreateAccount(false)
-    setShowCreateCard(false)
-    setCreatingTarget(false)
-    setReceiptPaymentTarget('credit_card')
-    setStep('idle')
   }
 
   useEffect(() => {
@@ -781,8 +1054,8 @@ export default function Importacao() {
 
       setDuplicateAuditLoading(true)
       try {
-        const isReceiptImport = parsedRows.some((row) => row.source === 'image_receipt')
-        const isReceiptCardImport = isReceiptImport && receiptPaymentTarget === 'credit_card'
+        const isReceiptImport = importMode === 'receipt'
+        const isReceiptCardImport = isReceiptImport && receiptPaymentMethod === 'card'
         const monthKeys = [...new Set(
           parsedRows
             .map((row) => computeImportCompetencyMonth(row, {
@@ -817,13 +1090,8 @@ export default function Importacao() {
 
     loadExistingTransactions()
     return () => { cancelled = true }
-  }, [step, user?.uid, parsedRows, statementSummary?.kind, selectedMonthKey, activeWorkspaceId, myRole, receiptPaymentTarget, selectedCard])
+  }, [step, user?.uid, parsedRows, importMode, selectedMonthKey, activeWorkspaceId, myRole, receiptPaymentMethod, selectedCard])
 
-  const isInvoiceImport = statementSummary?.kind === 'invoice'
-  const isReceiptImport = parsedRows.some((row) => row.source === 'image_receipt')
-  const isReceiptCardImport = isReceiptImport && receiptPaymentTarget === 'credit_card'
-  const importUsesCard = isInvoiceImport || isReceiptCardImport
-  const targetSelected = importUsesCard ? !!cardId : !!accountId
   const canImportOpeningBalanceOnly = !isInvoiceImport && !isReceiptImport && hasCurrencyValue(statementSummary?.closingBalance)
   const matchedAccountId = useMemo(
     () => findMatchingAccountId(accounts, statementSummary),
@@ -914,12 +1182,32 @@ export default function Importacao() {
     .filter((r) => selectedIds.has(r.id))
     .reduce((sum, r) => sum + (r.direction === 'credit' ? r.amount : -r.amount), 0)
   const saveDisabledReason = !targetSelected
-    ? (isInvoiceImport ? 'Selecione ou crie o cartão da fatura para liberar o salvamento.' : 'Selecione ou crie a conta do extrato para liberar o salvamento.')
+    ? (isInvoiceImport
+      ? 'Selecione ou crie o cartão da fatura para liberar o envio para Lançar.'
+      : isReceiptImport
+        ? 'Selecione a origem do pagamento do cupom para liberar o envio para Lançar.'
+        : 'Selecione ou crie a conta do extrato para liberar o envio para Lançar.')
     : !openingBalanceOnlySelected
       && selectedNonExactCount === 0
       && !(balanceAdjustmentRows.length > 0 && hasCurrencyValue(statementSummary?.closingBalance))
-      ? 'Nao ha lancamentos novos selecionados para salvar.'
+      ? 'Nao ha lancamentos novos selecionados para enviar para Lançar.'
       : ''
+
+  useEffect(() => {
+    if (!isReceiptImport) return
+    console.log('[Importacao][receipt] state', {
+      importMode,
+      receiptPaymentMethod,
+      accountId,
+      cardId,
+      targetSelected,
+      saveDisabledReason,
+      selectedSize: selectedIds.size,
+      receiptDocumentType,
+      cashOriginType,
+      step,
+    })
+  }, [isReceiptImport, importMode, receiptPaymentMethod, accountId, cardId, targetSelected, saveDisabledReason, selectedIds, receiptDocumentType, cashOriginType, step])
 
   // ── Step renders ──────────────────────────────────────────────────────────
 
@@ -942,25 +1230,74 @@ export default function Importacao() {
           </div>
         )}
 
-        <div
-          className={`dropzone${dragOver ? ' dragover' : ''}`}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true)  }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <span className="dropzone-icon">📁</span>
-          <p className="dropzone-title">Arraste o extrato ou clique para selecionar</p>
-          <p className="dropzone-sub">Formatos suportados: <strong>CSV</strong>, <strong>OFX / QFX</strong>, <strong>PDF</strong> e <strong>JPG / PNG</strong></p>
-          <label className="dropzone-btn">
-            Selecionar arquivo
-            <input
-              type="file"
-              accept=".csv,.ofx,.qfx,.txt,.pdf,.jpg,.jpeg,.png,.webp,image/*"
-              style={{ display: 'none' }}
-              onChange={handleFileInput}
-            />
-          </label>
-        </div>
+        {!importMode && (
+          <Card>
+            <CardHeader title="Escolha o tipo de importação" subtitle="Cada fluxo usa validações e revisão próprias antes de enviar itens para Lançar." />
+            <div className="import-mode-grid">
+              {Object.entries(IMPORT_MODE_META).map(([mode, meta]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className="import-mode-card"
+                  onClick={() => handleSelectImportMode(mode)}
+                >
+                  <span className="import-mode-icon">{meta.icon}</span>
+                  <strong>{meta.title}</strong>
+                  <span>{meta.subtitle}</span>
+                </button>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {importMode && (
+          <div className="import-mode-header">
+            <div>
+              <span className="import-mode-kicker">Fluxo selecionado</span>
+              <h2>{importModeMeta.title}</h2>
+              <p>{importModeMeta.subtitle}</p>
+            </div>
+            <button type="button" className="btn-secondary" onClick={handleReset}>Trocar fluxo</button>
+          </div>
+        )}
+
+        {importMode === 'receipt' && (
+          <div className="account-select-row">
+            <label className="account-select-label">Tipo da nota/cupom</label>
+            <select
+              className="account-select"
+              value={receiptDocumentType}
+              onChange={(e) => setReceiptDocumentType(e.target.value)}
+            >
+              {RECEIPT_DOCUMENT_TYPES.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <p className="import-target-hint">Esse tipo ajuda a organizar a revisão do cupom sem alterar o OCR.</p>
+          </div>
+        )}
+
+        {importMode && (
+          <div
+            className={`dropzone${dragOver ? ' dragover' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+          >
+            <span className="dropzone-icon">{importModeMeta.icon}</span>
+            <p className="dropzone-title">{importModeMeta.title}</p>
+            <p className="dropzone-sub">{importModeMeta.fileHint}</p>
+            <label className="dropzone-btn">
+              {importModeMeta.selectLabel}
+              <input
+                type="file"
+                accept={importModeMeta.accept}
+                style={{ display: 'none' }}
+                onChange={handleFileInput}
+              />
+            </label>
+          </div>
+        )}
 
         <Card>
           <CardHeader title="Como funciona" />
@@ -969,28 +1306,28 @@ export default function Importacao() {
               <span className="how-icon">🏦</span>
               <div>
                 <strong>Extrato bancário (OFX)</strong>
-                <p>Exporte no internet banking como OFX/QFX. Itaú, Bradesco, BB, Nubank e outros.</p>
+                <p>Selecione a conta antes de salvar. Tudo entra em Lançar como pendente para revisão.</p>
               </div>
             </div>
             <div className="how-item">
-              <span className="how-icon">📄</span>
+              <span className="how-icon">💳</span>
               <div>
-                <strong>Planilha CSV</strong>
-                <p>Baixe o extrato como CSV. As colunas são detectadas automaticamente.</p>
+                <strong>Fatura de cartão</strong>
+                <p>Selecione o cartão antes de salvar. As compras respeitam a competência e vão primeiro para Lançar.</p>
               </div>
             </div>
             <div className="how-item">
               <span className="how-icon">🧾</span>
               <div>
-                <strong>PDF e imagem com OCR</strong>
-                <p>Extratos em PDF com texto são lidos automaticamente. Fotos de cupom tentam extrair itens e separar categorias para revisão.</p>
+                <strong>Nota/cupom OCR</strong>
+                <p>Escolha o tipo da nota, a forma de pagamento e revise item por item antes de enviar para Lançar.</p>
               </div>
             </div>
             <div className="how-item">
               <span className="how-icon">🔍</span>
               <div>
                 <strong>Revisão antes de salvar</strong>
-                <p>Lançamentos duvidosos ficam destacados. Você confirma ou desmarca antes de salvar.</p>
+                <p>Nenhuma importação cai direto em Lançamentos. Primeiro tudo fica pendente em Lançar.</p>
               </div>
             </div>
           </div>
@@ -1022,7 +1359,7 @@ export default function Importacao() {
           <div className="psb-info">
             <span className="psb-file">{fileName}</span>
             <span className="psb-meta">
-              {parsedRows.length} transações
+              {parsedRows.length} {importMode === 'receipt' ? 'itens' : 'transações'}
               {reviewCount > 0 && (
                 <span className="badge badge-warn"> · {reviewCount} para revisar</span>
               )}
@@ -1112,29 +1449,26 @@ export default function Importacao() {
           </Card>
         )}
 
-        {/* Account selector */}
+        {/* Payment selector */}
         {isReceiptImport && (
-          <div className="import-target-mode">
-            <button
-              type="button"
-              className={`import-target-pill${receiptPaymentTarget === 'credit_card' ? ' active' : ''}`}
-              onClick={() => setReceiptPaymentTarget('credit_card')}
+          <div className="account-select-row">
+            <label className="account-select-label">Forma de pagamento</label>
+            <select
+              className="account-select"
+              value={receiptPaymentMethod}
+              onChange={(e) => setReceiptPaymentMethod(e.target.value)}
             >
-              Cupom no cartao
-            </button>
-            <button
-              type="button"
-              className={`import-target-pill${receiptPaymentTarget === 'account' ? ' active' : ''}`}
-              onClick={() => setReceiptPaymentTarget('account')}
-            >
-              Conta / debito / Pix
-            </button>
+              {RECEIPT_PAYMENT_METHODS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <p className="import-target-hint">Escolha como a nota foi paga. Isso não altera o tipo da nota/cupom.</p>
           </div>
         )}
         {importUsesCard && (
           <>
             <div className="account-select-row">
-              <label className="account-select-label">{isInvoiceImport ? 'Cartao da fatura' : 'Cartao usado no cupom'}</label>
+              <label className="account-select-label">{isInvoiceImport ? 'Cartão da fatura' : 'Cartão usado no pagamento'}</label>
               <select
                 className="account-select"
                 value={cardId}
@@ -1147,8 +1481,8 @@ export default function Importacao() {
               </select>
               <p className="import-target-hint">
                 {isInvoiceImport
-                  ? 'Escolha o cartao correto para que a fatura entre nos Lancamentos sem afetar o saldo da conta.'
-                  : 'Ao salvar este cupom no cartao, a fatura futura podera reaproveitar esse lancamento em vez de duplicar.'}
+                  ? 'Escolha o cartao correto para que a fatura entre em Lançar sem afetar o saldo da conta.'
+                  : 'Selecione o cartão usado no pagamento para vincular corretamente os itens importados do cupom.'}
               </p>
             </div>
 
@@ -1210,10 +1544,10 @@ export default function Importacao() {
           </>
         )}
 
-        {!importUsesCard && (
+        {!importUsesCard && !isReceiptImport && (
           <>
             <div className="account-select-row">
-              <label className="account-select-label">Conta de importação</label>
+              <label className="account-select-label">{isReceiptImport ? 'Conta usada no pagamento' : 'Conta de importação'}</label>
               <select
                 className="account-select"
                 value={accountId}
@@ -1228,7 +1562,9 @@ export default function Importacao() {
             </div>
 
             <p className="import-target-hint">
-              Escolha a conta para salvar os lancamentos e vincular o saldo anterior/atual deste extrato.
+              {isReceiptImport
+                ? 'Selecione a conta usada no pagamento para vincular corretamente os itens importados do cupom.'
+                : 'Escolha a conta para enviar os lançamentos pendentes para Lançar e vincular o saldo anterior/atual deste extrato.'}
             </p>
 
             {selectedAccount?.type === 'credit' && (
@@ -1300,6 +1636,41 @@ export default function Importacao() {
               </label>
             )}
           </>
+        )}
+
+        {isReceiptImport && receiptPaymentMethod === 'account' && (
+          <div className="account-select-row">
+            <label className="account-select-label">Conta usada no pagamento</label>
+            <select
+              className="account-select"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              disabled={loadingAccounts}
+            >
+              <option value="">Selecione uma conta…</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>{accountLabel(account)}</option>
+              ))}
+            </select>
+            <p className="import-target-hint">Selecione a conta usada no pagamento desta nota/cupom.</p>
+          </div>
+        )}
+
+        {isReceiptImport && receiptPaymentMethod === 'cash' && (
+          <div className="account-select-row">
+            <label className="account-select-label">Origem do dinheiro</label>
+            <select
+              className="account-select"
+              value={cashOriginType}
+              onChange={(e) => setCashOriginType(e.target.value)}
+            >
+              <option value="">Selecione a origem do dinheiro…</option>
+              {CASH_ORIGIN_TYPES.map((origin) => (
+                <option key={origin.value} value={origin.value}>{origin.label}</option>
+              ))}
+            </select>
+            <p className="import-target-hint">Informe de onde veio o dinheiro usado no pagamento, sem vincular a contas bancárias.</p>
+          </div>
         )}
 
         {/* Bulk controls */}
@@ -1377,7 +1748,7 @@ export default function Importacao() {
             Apenas o saldo atual da conta sera atualizado; nenhum gasto sera criado com esses ajustes.
           </p>
         ) : (
-          <p className="import-action-hint">Os itens salvos entram em Lancamentos para revisao.</p>
+          <p className="import-action-hint">Os itens salvos entram em Lançar para revisão, em amarelo, antes de aparecerem em Lançamentos.</p>
         )}
 
         {/* Action bar */}
@@ -1392,7 +1763,7 @@ export default function Importacao() {
               ? `Salvar saldo inicial de ${selectedMonthLabel}`
               : (balanceAdjustmentRows.length > 0 && selectedNonExactCount === 0)
                 ? 'Atualizar saldo da conta'
-                : `Salvar em Lancamentos ${selectedNonExactCount > 0 ? `(${selectedNonExactCount})` : ''}`}
+                : `Enviar para Lançar ${selectedNonExactCount > 0 ? `(${selectedNonExactCount})` : ''}`}
           </button>
         </div>
       </>
@@ -1406,7 +1777,7 @@ export default function Importacao() {
         <p>
           {openingBalanceOnlySelected
             ? `Registrando o saldo inicial de ${selectedMonthLabel}...`
-            : <>Salvando <strong>{selectedIds.size}</strong> lançamentos…</>}
+            : <>Enviando <strong>{selectedIds.size}</strong> itens para Lançar…</>}
         </p>
       </div>
     )
@@ -1419,7 +1790,7 @@ export default function Importacao() {
         <p className="import-done-title">
           {balanceOnlyApplied
             ? `Saldo inicial de ${selectedMonthLabel} configurado!`
-            : `${savedCount} lançamento${savedCount !== 1 ? 's' : ''} importado${savedCount !== 1 ? 's' : ''}!`}
+            : `${savedCount} lançamento${savedCount !== 1 ? 's' : ''} enviado${savedCount !== 1 ? 's' : ''} para Lançar!`}
         </p>
         {saveMessage && <p className="import-done-note">{saveMessage}</p>}
         {skippedCount > 0 && (
@@ -1439,6 +1810,7 @@ export default function Importacao() {
 
   // ── Main render ───────────────────────────────────────────────────────────
 
+
   return (
     <div className="importacao-page">
       {step === 'idle'    && renderIdle()}
@@ -1448,4 +1820,4 @@ export default function Importacao() {
       {step === 'done'    && renderDone()}
     </div>
   )
-}
+  }

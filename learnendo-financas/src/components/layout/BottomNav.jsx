@@ -5,7 +5,7 @@ import './BottomNav.css'
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Inicio', icon: '🏠' },
   { to: '/lancar', label: 'Lancar', icon: '➕' },
-  { to: '/contas', label: 'Contas', icon: '🏦' },
+  { to: '/importacao', label: 'Importacao', icon: '🏦' },
   { to: '/orcamento', label: 'Orcamento', icon: '📊' },
   { to: '/familia', label: 'Familia', icon: '👨‍👩‍👧‍👦' },
 ]

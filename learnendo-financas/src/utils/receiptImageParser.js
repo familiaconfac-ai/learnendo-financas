@@ -521,7 +521,7 @@ function parseReceiptItems(lines, expectedTotal = 0) {
 
   for (const rawLine of lines) {
     const line = cleanLine(rawLine)
-    if (!line || isReceiptNoise(line) || !lineHasAmount(line)) continue
+    if (!line || isReceiptNoise(line)) continue
 
     if (isTotalLine(line) || isSubtotalLine(line)) continue
 
@@ -535,18 +535,34 @@ function parseReceiptItems(lines, expectedTotal = 0) {
     }
 
     const amounts = extractLineAmounts(line)
-    if (amounts.length === 0) continue
+    let finalAmount = 0
+    if (amounts.length > 0) {
+      finalAmount = amounts[amounts.length - 1]?.value || 0
+    }
 
-    const finalAmount = amounts[amounts.length - 1]?.value || 0
-    if (!Number.isFinite(finalAmount) || finalAmount <= 0) continue
-
-    const description = cleanItemDescription(line.slice(0, amounts[amounts.length - 1].index))
+    // Melhor extração de descrição: se não houver valor, tenta pegar a linha toda
+    let description = ''
+    if (amounts.length > 0) {
+      description = cleanItemDescription(line.slice(0, amounts[amounts.length - 1].index))
+    } else {
+      // Tenta extrair nome de produto mesmo sem valor
+      description = cleanItemDescription(line)
+    }
     if (!description || description.length < 2) continue
 
     const normalized = normalize(description)
     if (hasSummaryKeyword(normalized)) continue
 
-    items.push(createReceiptItem(description, finalAmount, extractQuantity(line)))
+    // Permite criar item mesmo sem valor
+    let status = 'identified'
+    if (!(Number.isFinite(finalAmount) && finalAmount > 0)) {
+      finalAmount = ''
+      status = 'partial'
+    }
+
+    const item = createReceiptItem(description, finalAmount, extractQuantity(line))
+    item.status = status
+    items.push(item)
   }
 
   if (carriedDiscountTotal > 0) {

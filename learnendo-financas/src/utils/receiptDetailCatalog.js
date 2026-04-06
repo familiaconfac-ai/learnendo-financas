@@ -50,6 +50,7 @@ export function createEmptyReceiptItem(expenseCategories = []) {
     budgetCategoryName: '',
     budgetCategoryHints: buildBudgetCategoryHints(category.key, firstSubcategory.key),
     importance: 'essential',
+    status: 'partial',
   }
 }
 

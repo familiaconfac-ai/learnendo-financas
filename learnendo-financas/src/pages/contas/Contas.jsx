@@ -304,7 +304,7 @@ export default function Contas() {
         <button
           type="button"
           className="contas-import-btn"
-          onClick={() => navigate('/importacao')}
+          onClick={() => navigate(tab === 'contas' ? '/importacao?tipo=bank' : '/importacao?tipo=invoice')}
         >
           {tab === 'contas' ? 'Importar extrato' : 'Importar fatura'}
         </button>
