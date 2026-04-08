@@ -13,7 +13,7 @@ const PAGE_TITLES = {
   '/lancar': 'Lançar',
   '/lancamentos': 'Lançamentos',
   '/contas': 'Contas',
-  '/importacao': 'Importação',
+  '/importacao': 'Cupom',
   '/orcamento': 'Orçamento',
   '/mensal': 'Visão Mensal',
   '/relatorios': 'Relatórios',

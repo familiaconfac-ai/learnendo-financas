@@ -275,6 +275,14 @@ export default function Contas() {
     }
   }
 
+  function openAccountImport(account) {
+    navigate(`/importacao?tipo=bank&accountId=${account.id}`)
+  }
+
+  function openCardImport(card) {
+    navigate(`/importacao?tipo=invoice&cardId=${card.id}`)
+  }
+
   return (
     <div className="contas-page">
       <div className="tabs-row">
@@ -306,7 +314,7 @@ export default function Contas() {
           className="contas-import-btn"
           onClick={() => navigate(tab === 'contas' ? '/importacao?tipo=bank' : '/importacao?tipo=invoice')}
         >
-          {tab === 'contas' ? 'Importar extrato' : 'Importar fatura'}
+          {tab === 'contas' ? 'Importar sem escolher conta' : 'Importar sem escolher cartão'}
         </button>
       </div>
 
@@ -344,6 +352,9 @@ export default function Contas() {
                         )}
                       </div>
                       <div className="item-actions">
+                        <button className="item-action-btn item-action-btn--primary" onClick={() => openAccountImport(account)} title="Importar extrato">
+                          Importar
+                        </button>
                         <button className="item-action-btn" onClick={() => openEditAccountModal(account)} title="Editar conta">✏️</button>
                         <button className="item-action-btn item-action-btn--danger" onClick={() => handleDeleteAccount(account)} title="Excluir conta">🗑️</button>
                       </div>
@@ -451,6 +462,9 @@ export default function Contas() {
                         {card.issuerBank && <span className="cc-issuer">{card.issuerBank}</span>}
                       </div>
                       <div className="item-actions">
+                        <button className="item-action-btn item-action-btn--primary" onClick={() => openCardImport(card)} title="Importar fatura">
+                          Importar
+                        </button>
                         <button className="item-action-btn" onClick={() => openEditCardModal(card)} title="Editar cartão">✏️</button>
                         <button className="item-action-btn item-action-btn--danger" onClick={() => handleDeleteCard(card)} title="Excluir cartão">🗑️</button>
                       </div>

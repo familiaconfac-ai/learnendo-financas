@@ -6,7 +6,7 @@ const NAV_ITEMS = [
   { to: '/dashboard', label: 'Início', icon: '🏠' },
   { to: '/contas', label: 'Contas', icon: '💰' }, 
   { to: '/lancar', label: 'Lançar', icon: '➕' },
-  { to: '/importacao', label: 'Importar', icon: '🏦' },
+  { to: '/importacao', label: 'Cupom', icon: '🧾' },
   { to: '/orcamento', label: 'Metas', icon: '📊' },
 ]
 

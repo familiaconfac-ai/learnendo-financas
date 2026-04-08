@@ -154,6 +154,13 @@
   font-size: 0.9rem;
 }
 
+.item-action-btn--primary {
+  border-color: var(--color-primary);
+  background: #eff6ff;
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
 .item-action-btn--danger {
   color: var(--color-danger);
 }
