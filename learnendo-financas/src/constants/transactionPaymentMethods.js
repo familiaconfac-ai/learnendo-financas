@@ -7,6 +7,22 @@ export const TRANSACTION_PAYMENT_METHODS = [
   { id: 'transfer', label: 'Transferência' },
 ]
 
+export function normalizePaymentMethodId(paymentMethod) {
+  const normalized = String(paymentMethod || '').trim().toLowerCase()
+  if (!normalized) return null
+
+  const aliases = {
+    debit_card: 'debit',
+    credit: 'credit_card',
+    cartao_credito: 'credit_card',
+    cartao_de_credito: 'credit_card',
+    transferencia: 'transfer',
+  }
+
+  return aliases[normalized] || normalized
+}
+
 export function getPaymentMethodLabel(paymentMethod) {
-  return TRANSACTION_PAYMENT_METHODS.find((item) => item.id === paymentMethod)?.label || 'Não informado'
+  const normalized = normalizePaymentMethodId(paymentMethod)
+  return TRANSACTION_PAYMENT_METHODS.find((item) => item.id === normalized)?.label || 'Não informado'
 }

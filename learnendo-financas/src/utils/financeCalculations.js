@@ -206,6 +206,61 @@ export function buildReceiptDetailAnalysis(transactions, debugTag = '') {
   return { byDetailCategory, byImportance }
 }
 
+export function buildReceiptBudgetImportanceBreakdown(transactions, debugTag = '') {
+  const source = Array.isArray(transactions) ? transactions.filter((tx) => tx.status === 'confirmed') : []
+  const totalsByImportance = {
+    essential: 0,
+    necessary: 0,
+    superfluous: 0,
+  }
+  const categories = new Map()
+
+  source.forEach((tx) => {
+    receiptItemsForBudget(tx).forEach((item) => {
+      const amount = Math.abs(toNumber(item.amount))
+      if (!amount) return
+
+      const importance = item.importance === 'superfluous'
+        ? 'superfluous'
+        : item.importance === 'necessary'
+          ? 'necessary'
+          : 'essential'
+      const name = item.budgetCategoryName || tx.categoryName || 'Sem categoria'
+      const key = normalizeText(item.budgetCategoryId || name) || 'sem_categoria'
+      const current = categories.get(key) || {
+        key,
+        name,
+        total: 0,
+        essential: 0,
+        necessary: 0,
+        superfluous: 0,
+      }
+
+      current.total += amount
+      current[importance] += amount
+      categories.set(key, current)
+      totalsByImportance[importance] += amount
+    })
+  })
+
+  const sortedCategories = [...categories.values()].sort((a, b) => b.total - a.total)
+  const totalDetailed = sortedCategories.reduce((sum, item) => sum + item.total, 0)
+
+  if (debugTag) {
+    console.log(`[ReceiptBudgetImportance:${debugTag}]`, {
+      txCount: source.length,
+      categories: sortedCategories.length,
+      totalDetailed,
+    })
+  }
+
+  return {
+    categories: sortedCategories,
+    totalsByImportance,
+    totalDetailed,
+  }
+}
+
 export function normalizedCategoryName(value) {
   return normalizeText(value)
 }

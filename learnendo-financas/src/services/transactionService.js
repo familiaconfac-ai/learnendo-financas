@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
 import { NATURE_DEFAULT_BY_TYPE } from '../constants/transactionNatures'
+import { normalizePaymentMethodId } from '../constants/transactionPaymentMethods'
 import { syncDebtBalancesForTransactionChange } from './debtService'
 
 function normalizeStatus(status) {
@@ -39,6 +40,22 @@ function normalizeOrigin(origin) {
 function normalizeMonthKey(value) {
   const raw = String(value || '').trim().slice(0, 7)
   return /^\d{4}-\d{2}$/.test(raw) ? raw : null
+}
+
+function normalizeReceiptPaymentMethod(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'account' || normalized === 'card' || normalized === 'cash') return normalized
+  return null
+}
+
+function normalizeReceiptDocumentType(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized || null
+}
+
+function normalizeCashOriginType(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized || null
 }
 
 function txCol(uid, workspaceId = null) {
@@ -117,7 +134,7 @@ export async function addTransaction(uid, data, options = {}) {
       transactionNatureId: natureId,
       transactionNatureKey: natureKey,
       transactionNatureLabel: data.transactionNatureLabel || null,
-      paymentMethod:   data.paymentMethod || null,
+      paymentMethod:   normalizePaymentMethodId(data.paymentMethod),
       cardId:          data.cardId || null,
       cardName:        data.cardName || null,
       contactId:       data.contactId || null,
@@ -129,6 +146,9 @@ export async function addTransaction(uid, data, options = {}) {
       receiptDetailStatus: data.receiptDetailStatus || null,
       receiptDetailTotal: Number(data.receiptDetailTotal || 0),
       receiptItems: Array.isArray(data.receiptItems) ? data.receiptItems : [],
+      receiptDocumentType: normalizeReceiptDocumentType(data.receiptDocumentType),
+      receiptPaymentMethod: normalizeReceiptPaymentMethod(data.receiptPaymentMethod),
+      cashOriginType: normalizeCashOriginType(data.cashOriginType),
       accountId:       data.accountId   || null,
       toAccountId:     isInternalTransfer ? (data.toAccountId || null) : null,
       notes:           data.notes       || '',
@@ -211,6 +231,9 @@ export async function updateTransaction(uid, txId, data, options = {}) {
     if (payload.salaryReferenceMonth !== undefined) {
       payload.salaryReferenceMonth = normalizeMonthKey(payload.salaryReferenceMonth)
     }
+    if (payload.paymentMethod !== undefined) {
+      payload.paymentMethod = normalizePaymentMethodId(payload.paymentMethod)
+    }
     if (payload.cardId !== undefined && !payload.cardId) {
       payload.cardId = null
       payload.cardName = null
@@ -224,6 +247,15 @@ export async function updateTransaction(uid, txId, data, options = {}) {
     if (payload.receiptDetailTotal !== undefined) {
       payload.receiptDetailTotal = Number(payload.receiptDetailTotal || 0)
     }
+    if (payload.receiptDocumentType !== undefined) {
+      payload.receiptDocumentType = normalizeReceiptDocumentType(payload.receiptDocumentType)
+    }
+    if (payload.receiptPaymentMethod !== undefined) {
+      payload.receiptPaymentMethod = normalizeReceiptPaymentMethod(payload.receiptPaymentMethod)
+    }
+    if (payload.cashOriginType !== undefined) {
+      payload.cashOriginType = normalizeCashOriginType(payload.cashOriginType)
+    }
     if (payload.totalInstallments !== undefined) {
       payload.totalInstallments = Number.isFinite(Number(payload.totalInstallments))
         ? Number(payload.totalInstallments)
@@ -233,9 +265,6 @@ export async function updateTransaction(uid, txId, data, options = {}) {
       payload.currentInstallment = Number.isFinite(Number(payload.currentInstallment))
         ? Number(payload.currentInstallment)
         : null
-    }
-    if (payload.affectsBudget !== undefined) {
-      payload.balanceImpact = !!payload.affectsBudget
     }
     if (isInternalTransfer) {
       payload.categoryId = null
@@ -311,7 +340,7 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
         recurringInstanceMonth: raw.recurringInstanceMonth || monthKeyFromDate(raw.date),
         subcategoryId: raw.subcategoryId || null,
         subcategoryName: raw.subcategoryName || null,
-        paymentMethod: raw.paymentMethod || null,
+        paymentMethod: normalizePaymentMethodId(raw.paymentMethod),
         cardId: raw.cardId || null,
         cardName: raw.cardName || null,
         debtId: raw.debtId || null,
@@ -321,6 +350,9 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
         receiptDetailStatus: raw.receiptDetailStatus || null,
         receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
         receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
+        receiptDocumentType: normalizeReceiptDocumentType(raw.receiptDocumentType),
+        receiptPaymentMethod: normalizeReceiptPaymentMethod(raw.receiptPaymentMethod),
+        cashOriginType: normalizeCashOriginType(raw.cashOriginType),
         recurrenceType: raw.recurrenceType || null,
         recurringStartDate: raw.recurringStartDate || null,
         recurringEndDate: raw.recurringEndDate || null,
@@ -347,7 +379,7 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
           recurringInstanceMonth: raw.recurringInstanceMonth || monthKeyFromDate(raw.date),
           subcategoryId: raw.subcategoryId || null,
           subcategoryName: raw.subcategoryName || null,
-          paymentMethod: raw.paymentMethod || null,
+          paymentMethod: normalizePaymentMethodId(raw.paymentMethod),
           cardId: raw.cardId || null,
           cardName: raw.cardName || null,
           debtId: raw.debtId || null,
@@ -357,6 +389,9 @@ export async function fetchTransactionsWithOptions(uid, year, month, options = {
           receiptDetailStatus: raw.receiptDetailStatus || null,
           receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
           receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
+          receiptDocumentType: normalizeReceiptDocumentType(raw.receiptDocumentType),
+          receiptPaymentMethod: normalizeReceiptPaymentMethod(raw.receiptPaymentMethod),
+          cashOriginType: normalizeCashOriginType(raw.cashOriginType),
           recurrenceType: raw.recurrenceType || null,
           recurringStartDate: raw.recurringStartDate || null,
           recurringEndDate: raw.recurringEndDate || null,
@@ -404,7 +439,7 @@ export async function fetchTransactionsBySalaryReferenceMonth(uid, salaryReferen
       recurringInstanceMonth: raw.recurringInstanceMonth || monthKeyFromDate(raw.date),
       subcategoryId: raw.subcategoryId || null,
       subcategoryName: raw.subcategoryName || null,
-      paymentMethod: raw.paymentMethod || null,
+      paymentMethod: normalizePaymentMethodId(raw.paymentMethod),
       cardId: raw.cardId || null,
       cardName: raw.cardName || null,
       debtId: raw.debtId || null,
@@ -414,6 +449,9 @@ export async function fetchTransactionsBySalaryReferenceMonth(uid, salaryReferen
       receiptDetailStatus: raw.receiptDetailStatus || null,
       receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
       receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
+      receiptDocumentType: normalizeReceiptDocumentType(raw.receiptDocumentType),
+      receiptPaymentMethod: normalizeReceiptPaymentMethod(raw.receiptPaymentMethod),
+      cashOriginType: normalizeCashOriginType(raw.cashOriginType),
       recurrenceType: raw.recurrenceType || null,
       recurringStartDate: raw.recurringStartDate || null,
       recurringEndDate: raw.recurringEndDate || null,
@@ -439,7 +477,7 @@ export async function fetchTransactionsBySalaryReferenceMonth(uid, salaryReferen
         recurringInstanceMonth: raw.recurringInstanceMonth || monthKeyFromDate(raw.date),
         subcategoryId: raw.subcategoryId || null,
         subcategoryName: raw.subcategoryName || null,
-        paymentMethod: raw.paymentMethod || null,
+        paymentMethod: normalizePaymentMethodId(raw.paymentMethod),
         cardId: raw.cardId || null,
         cardName: raw.cardName || null,
         debtId: raw.debtId || null,
@@ -449,6 +487,9 @@ export async function fetchTransactionsBySalaryReferenceMonth(uid, salaryReferen
         receiptDetailStatus: raw.receiptDetailStatus || null,
         receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
         receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
+        receiptDocumentType: normalizeReceiptDocumentType(raw.receiptDocumentType),
+        receiptPaymentMethod: normalizeReceiptPaymentMethod(raw.receiptPaymentMethod),
+        cashOriginType: normalizeCashOriginType(raw.cashOriginType),
         recurrenceType: raw.recurrenceType || null,
         recurringStartDate: raw.recurringStartDate || null,
         recurringEndDate: raw.recurringEndDate || null,

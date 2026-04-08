@@ -16,6 +16,12 @@ export const RECEIPT_ITEM_IMPORTANCE_OPTIONS = [
   { key: 'superfluous', label: 'Supérfluo' },
 ]
 
+export function getReceiptImportanceLabel(value) {
+  if (value === 'superfluous') return 'Supérfluo'
+  if (value === 'necessary') return 'Necessário'
+  return 'Essencial'
+}
+
 export function getReceiptCategory(categoryKey) {
   return getReceiptDetailCategoryByKey(categoryKey)
 }

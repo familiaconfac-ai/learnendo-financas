@@ -50,3 +50,101 @@
 .text-success { color: var(--color-success); }
 .text-danger  { color: var(--color-danger); }
 .text-warning { color: var(--color-warning); }
+
+.importance-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.importance-card {
+  border-radius: 14px;
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border: 1px solid transparent;
+}
+
+.importance-card span {
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.importance-card strong {
+  font-size: 1rem;
+}
+
+.importance-card--essential {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #166534;
+}
+
+.importance-card--necessary {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.importance-card--superfluous {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.receipt-breakdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.receipt-breakdown-item {
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 0.85rem;
+  background: #fff;
+}
+
+.receipt-breakdown-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  margin-bottom: 0.65rem;
+}
+
+.receipt-breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.receipt-breakdown-chip {
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 0.65rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.76rem;
+}
+
+.receipt-breakdown-chip span {
+  color: var(--color-text-muted);
+}
+
+.report-empty {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 680px) {
+  .importance-summary,
+  .receipt-breakdown-grid {
+    grid-template-columns: 1fr;
+  }
+}

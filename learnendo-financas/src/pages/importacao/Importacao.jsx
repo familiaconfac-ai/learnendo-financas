@@ -225,8 +225,8 @@ function expandReceiptImportRows(rows, categories, receiptDocumentType) {
       categoryHints: Array.isArray(item.budgetCategoryHints) && item.budgetCategoryHints.length > 0
         ? item.budgetCategoryHints
         : contextualRow.categoryHints,
-      receiptDetailEnabled: false,
-      receiptItems: [],
+      receiptDetailEnabled: true,
+      receiptItems: [item],
       receiptItemStatus: item.status || 'partial',
       quantity: item.quantity || '',
       detailCategoryKey: item.detailCategoryKey,
@@ -302,6 +302,18 @@ function computeImportCompetencyMonth(row, { isInvoiceImport, isReceiptCardImpor
   if (isInvoiceImport) return selectedMonthKey
   if (isReceiptCardImport) return computeCreditCardCompetencyMonth(row?.date, card) || rowMonth
   return rowMonth
+}
+
+function resolveImportedBudgetCategory(row, categories, hintedCategory) {
+  const explicitCategoryId = row?.budgetCategoryId || row?.categoryId || ''
+  const explicitCategory = explicitCategoryId
+    ? categories.find((category) => category.id === explicitCategoryId)
+    : null
+
+  return {
+    id: explicitCategory?.id || hintedCategory?.id || explicitCategoryId || null,
+    name: explicitCategory?.name || row?.budgetCategoryName || hintedCategory?.name || row?.categoryName || null,
+  }
 }
 
 function findMatchingAccountId(accounts, summary) {
@@ -686,10 +698,19 @@ export default function Importacao() {
       setSaveError('Seu papel atual não permite importação neste workspace.')
       return
     }
-    if (importUsesCard ? !cardId : !accountId) {
-      setSaveError(importUsesCard
-        ? 'Selecione o cartao/fatura antes de continuar.'
-        : 'Selecione uma conta antes de continuar.')
+    const missingTarget = isReceiptImport
+      ? (receiptPaymentMethod === 'card' ? !cardId : receiptPaymentMethod === 'cash' ? !cashOriginType : !accountId)
+      : (importUsesCard ? !cardId : !accountId)
+    if (missingTarget) {
+      setSaveError(isReceiptImport
+        ? (receiptPaymentMethod === 'card'
+            ? 'Selecione o cartao usado no pagamento antes de continuar.'
+            : receiptPaymentMethod === 'cash'
+              ? 'Selecione a origem do dinheiro antes de continuar.'
+              : 'Selecione a conta usada no pagamento antes de continuar.')
+        : (importUsesCard
+            ? 'Selecione o cartao/fatura antes de continuar.'
+            : 'Selecione uma conta antes de continuar.'))
       return
     }
 
@@ -871,6 +892,7 @@ export default function Importacao() {
         })
         const signature = buildDuplicateSignature(row, duplicateOptions)
         const hintedCategory = findCategoryByHints(categories, row.type, row.categoryHints)
+        const resolvedBudgetCategory = resolveImportedBudgetCategory(row, categories, hintedCategory)
         if (rowAudit?.exact) {
           skipped++
           continue
@@ -926,8 +948,8 @@ export default function Importacao() {
               ...(typeof row.affectsBudget === 'boolean' ? { affectsBudget: row.affectsBudget } : {}),
               ...(typeof row.balanceImpact === 'boolean' ? { balanceImpact: row.balanceImpact } : {}),
               ...(matchedTx.categoryId ? {} : {
-                categoryId: hintedCategory?.id || null,
-                categoryName: hintedCategory?.name || row.categoryName || null,
+                categoryId: resolvedBudgetCategory.id,
+                categoryName: resolvedBudgetCategory.name,
               }),
             }, { workspaceId: activeWorkspaceId })
             reconciledIds.add(matchedTx.id)
@@ -948,11 +970,11 @@ export default function Importacao() {
             accountId:                importUsesCard ? null : (isReceiptImport ? receiptOriginAccountId : accountId),
             cardId:                   importUsesCard ? (cardId || null) : null,
             cardName:                 importUsesCard ? (selectedCard?.name || null) : null,
-            categoryId:               hintedCategory?.id || null,
-            categoryName:             hintedCategory?.name || row.categoryName || null,
+            categoryId:               resolvedBudgetCategory.id,
+            categoryName:             resolvedBudgetCategory.name,
             notes:                    '',
             paymentMethod:            isReceiptImport
-              ? (receiptPaymentMethod === 'card' ? 'credit_card' : receiptPaymentMethod === 'cash' ? 'cash' : 'debit_card')
+              ? (receiptPaymentMethod === 'card' ? 'credit_card' : receiptPaymentMethod === 'cash' ? 'cash' : 'debit')
               : (row.paymentMethod || (importUsesCard || isCreditAccountImport ? 'credit_card' : null)),
             origin:                   isReceiptImportSource(row.source) ? 'manual' : (isInvoiceImport ? 'credit_card_import' : 'bank_import'),
             status:                   'pending',

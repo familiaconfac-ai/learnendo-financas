@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import MonthSelector from '../../components/ui/MonthSelector'
 import Modal from '../../components/ui/Modal'
@@ -12,7 +12,7 @@ import { useAccounts } from '../../hooks/useAccounts'
 import { useCards } from '../../hooks/useCards'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { useDebts } from '../../hooks/useDebts'
-import { fetchTransactions } from '../../services/transactionService'
+import { deleteTransaction, fetchTransactions } from '../../services/transactionService'
 import { createRecurrenceRule } from '../../services/recurrenceService'
 import {
   buildDuplicateSignature,
@@ -23,8 +23,8 @@ import { formatCurrency } from '../../utils/formatCurrency'
 import { formatDateBR, formatFriendlyDate } from '../../utils/formatDate'
 import { suggestTypeAndCategory } from '../../utils/transactionAutoCategorizer'
 import { resolveNatureAffectsBudget } from '../../constants/transactionNatures'
-import { TRANSACTION_PAYMENT_METHODS, getPaymentMethodLabel } from '../../constants/transactionPaymentMethods'
-import { normalizeReceiptItems, summarizeReceiptDetail } from '../../utils/receiptDetailCatalog'
+import { TRANSACTION_PAYMENT_METHODS, getPaymentMethodLabel, normalizePaymentMethodId } from '../../constants/transactionPaymentMethods'
+import { getReceiptImportanceLabel, normalizeReceiptItems, summarizeReceiptDetail } from '../../utils/receiptDetailCatalog'
 import {
   buildCardCommitmentRecurringFields,
   buildCardPlanningSnapshot,
@@ -176,7 +176,7 @@ function isPixOrTransferContext(formState) {
 }
 
 function requiresCardSelection(formState) {
-  return formState.paymentMethod === 'credit_card' || formState.transactionNatureId === 'nature_invoice_payment'
+  return normalizePaymentMethodId(formState.paymentMethod) === 'credit_card' || formState.transactionNatureId === 'nature_invoice_payment'
 }
 
 function isInvoicePaymentNature(formState) {
@@ -216,6 +216,22 @@ const ACCOUNT_TYPE_LABELS = {
   wallet: 'Carteira',
 }
 
+const CASH_ORIGIN_LABELS = {
+  caixa: 'Caixa',
+  oferta: 'Oferta',
+  ajuda_custo: 'Ajuda de custo',
+  bico: 'Bico',
+  outro: 'Outro',
+}
+
+const RECEIPT_DOCUMENT_TYPE_LABELS = {
+  supermercado: 'Supermercado',
+  loja: 'Loja',
+  farmacia: 'Farmácia',
+  material_ferramentas: 'Material/Ferramentas',
+  outros: 'Outros',
+}
+
 function accountOptionLabel(account) {
   if (!account) return ''
   const type = ACCOUNT_TYPE_LABELS[account.type] || account.type || ''
@@ -229,9 +245,11 @@ function cardOptionLabel(card) {
 }
 
 function requiresBankAccount(formState) {
+  const paymentMethod = normalizePaymentMethodId(formState.paymentMethod)
   if (formState.type === 'transfer_internal') return true
   if (isInvoicePaymentNature(formState)) return true
-  return formState.paymentMethod !== 'credit_card'
+  if (paymentMethod === 'credit_card' || paymentMethod === 'cash') return false
+  return true
 }
 
 function recurringStartDateForTransaction(tx) {
@@ -328,9 +346,11 @@ export default function Lancamentos({ view = 'confirmed' }) {
   const [saving,     setSaving]     = useState(false)
   const [editingNatureLabel, setEditingNatureLabel] = useState('')
   const [cardHint, setCardHint] = useState(null)
+  const [selectedPendingIds, setSelectedPendingIds] = useState(() => new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   // Dados reais do Firestore — users/{uid}/transactions
-  const { transactions: allTx, loading, error, add, update, remove } =
+  const { transactions: allTx, loading, error, reload, add, update, remove } =
     useTransactions(selectedYear, selectedMonth)
   const { categories, add: addCategory, update: updateCategory } = useCategories()
   const { accounts }   = useAccounts()
@@ -368,6 +388,32 @@ export default function Lancamentos({ view = 'confirmed' }) {
 
   // DEBUG VISUAL: log ao carregar lançamentos
   console.log('LANÇAMENTOS CARREGADOS:', transactions)
+
+  const visiblePendingIds = isPendingView ? transactions.map((tx) => tx.id).filter(Boolean) : []
+  const allVisiblePendingSelected = visiblePendingIds.length > 0
+    && visiblePendingIds.every((id) => selectedPendingIds.has(id))
+  const selectedPendingCount = selectedPendingIds.size
+
+  useEffect(() => {
+    if (!isPendingView) {
+      setSelectedPendingIds((current) => (current.size > 0 ? new Set() : current))
+      return
+    }
+
+    const visibleSet = new Set(visiblePendingIds)
+    setSelectedPendingIds((current) => {
+      let changed = false
+      const next = new Set()
+      current.forEach((id) => {
+        if (visibleSet.has(id)) {
+          next.add(id)
+        } else {
+          changed = true
+        }
+      })
+      return changed ? next : current
+    })
+  }, [isPendingView, transactions])
 
   const pendingCount = allTx.filter((t) => normalizeStatus(t.status) === 'pending').length
   const duplicateMetaById = (() => {
@@ -468,10 +514,11 @@ export default function Lancamentos({ view = 'confirmed' }) {
     }
 
     if (name === 'paymentMethod') {
+      const normalizedPaymentMethod = normalizePaymentMethodId(value) || ''
       setForm((f) => ({
         ...f,
-        paymentMethod: value,
-        cardId: value === 'credit_card' || f.transactionNatureId === 'nature_invoice_payment' ? f.cardId : '',
+        paymentMethod: normalizedPaymentMethod,
+        cardId: normalizedPaymentMethod === 'credit_card' || f.transactionNatureId === 'nature_invoice_payment' ? f.cardId : '',
       }))
       return
     }
@@ -725,7 +772,10 @@ export default function Lancamentos({ view = 'confirmed' }) {
       newSubcategoryName: '',
         debtId: tx.debtId || '',
         salaryReferenceMonth: tx.salaryReferenceMonth || '',
-        paymentMethod: tx.paymentMethod || '',
+        paymentMethod: normalizePaymentMethodId(tx.paymentMethod) || '',
+        receiptDocumentType: tx.receiptDocumentType || '',
+        receiptPaymentMethod: tx.receiptPaymentMethod || '',
+        cashOriginType: tx.cashOriginType || '',
         cardId: tx.cardId || '',
         receiptDetailEnabled: !!tx.receiptDetailEnabled,
       receiptItems: Array.isArray(tx.receiptItems) ? tx.receiptItems : [],
@@ -759,10 +809,17 @@ export default function Lancamentos({ view = 'confirmed' }) {
       const recurringSeed = (tx.origin === 'credit_card_import' || tx.paymentMethod === 'credit_card')
         ? buildCardCommitmentRecurringFields(tx.description, resolvedCompetencyMonth, tx)
         : null
+      const resolvedAccountId = requiresBankAccount({
+        type: resolvedType,
+        paymentMethod: tx.paymentMethod,
+        transactionNatureId: tx.transactionNatureId,
+      })
+        ? (tx.accountId || accounts[0]?.id || null)
+        : null
 
       await update(tx.id, {
         type: resolvedType,
-        accountId: tx.accountId || accounts[0]?.id || null,
+        accountId: resolvedAccountId,
         categoryId: resolvedCategoryId,
         categoryName: resolvedCategoryName,
         subcategoryId: isInvoicePayment ? null : tx.subcategoryId || null,
@@ -916,7 +973,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
         ?.subcategories
         ?.find((subcategory) => subcategory.id === form.subcategoryId)
         ?.name || null)
-    const resolvedAccountId = form.accountId || editingTx?.accountId || null
+    const resolvedAccountId = requiresBankAccount(form)
+      ? (form.accountId || editingTx?.accountId || null)
+      : null
     const selectedCard = availableCards.find((card) => card.id === form.cardId)
     const isCardPurchase = form.paymentMethod === 'credit_card' && !invoicePayment
     const preservedCompetencyMonth = String(editingTx?.competencyMonth || '').slice(0, 7)
@@ -961,6 +1020,11 @@ export default function Lancamentos({ view = 'confirmed' }) {
       cardId: requiresCardSelection(form) ? (form.cardId || null) : null,
       cardName: requiresCardSelection(form)
         ? (availableCards.find((card) => card.id === form.cardId)?.name || null)
+        : null,
+      receiptDocumentType: form.receiptDocumentType || editingTx?.receiptDocumentType || null,
+      receiptPaymentMethod: form.receiptPaymentMethod || editingTx?.receiptPaymentMethod || null,
+      cashOriginType: normalizePaymentMethodId(form.paymentMethod) === 'cash'
+        ? (form.cashOriginType || editingTx?.cashOriginType || null)
         : null,
       receiptDetailEnabled: !!form.receiptDetailEnabled,
       receiptDetailStatus: form.receiptDetailEnabled
@@ -1115,12 +1179,68 @@ export default function Lancamentos({ view = 'confirmed' }) {
   }
 
   // ── Render helpers ────────────────────────────────────────────────────────
+  function handleTogglePendingSelection(txId) {
+    setSelectedPendingIds((current) => {
+      const next = new Set(current)
+      if (next.has(txId)) next.delete(txId)
+      else next.add(txId)
+      return next
+    })
+  }
+
+  function handleSelectAllVisiblePending() {
+    setSelectedPendingIds(new Set(visiblePendingIds))
+  }
+
+  function handleClearPendingSelection() {
+    setSelectedPendingIds(new Set())
+  }
+
+  async function handleDeleteSelectedPending() {
+    const idsToDelete = [...selectedPendingIds]
+    if (!idsToDelete.length) return
+    if (!permissions.canLaunch) {
+      alert('Seu papel nao permite excluir pendencias neste workspace.')
+      return
+    }
+    if (!user?.uid) {
+      alert('Usuario nao autenticado.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      idsToDelete.length === 1
+        ? 'Excluir este lancamento pendente?'
+        : `Excluir ${idsToDelete.length} lancamentos pendentes selecionados?`,
+    )
+    if (!confirmed) return
+
+    setBulkDeleting(true)
+    try {
+      await Promise.all(
+        idsToDelete.map((txId) => deleteTransaction(user.uid, txId, { workspaceId: activeWorkspaceId })),
+      )
+      if (editingTx && idsToDelete.includes(editingTx.id)) {
+        setModalOpen(false)
+        setEditingTx(null)
+        setCardHint(null)
+      }
+      setSelectedPendingIds(new Set())
+      await reload()
+    } catch (err) {
+      alert('Erro ao excluir selecionados: ' + err.message)
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   function renderTx(t) {
     const originMeta = ORIGIN_META[t.origin] ?? null
     const normalizedTxStatus = normalizeStatus(t.status)
     const statusMeta = STATUS_META[normalizedTxStatus] ?? { label: normalizedTxStatus, cls: '' }
     const canQuickConfirm = isPendingView && normalizedTxStatus === 'pending'
     const isCredit   = t.type === 'income'
+    const isSelectedPending = selectedPendingIds.has(t.id)
     const catName    = categories.find((c) => c.id === t.categoryId)?.name ?? null
     const subcategoryLabel = t.subcategoryName || categories.find((c) => c.id === t.categoryId)?.subcategories?.find((s) => s.id === t.subcategoryId)?.name
     const natureLabel = t.transactionNatureLabel || transactionNatures.find((nature) => nature.id === t.transactionNatureId)?.label
@@ -1132,16 +1252,48 @@ export default function Lancamentos({ view = 'confirmed' }) {
       ? detectCardCommitment(t.description)
       : null
     const receiptItemCount = Array.isArray(t.receiptItems) ? t.receiptItems.length : 0
+    const receiptPreviewItem = receiptItemCount === 1 ? t.receiptItems[0] : null
+    const receiptContext = [
+      t.receiptDocumentType ? RECEIPT_DOCUMENT_TYPE_LABELS[t.receiptDocumentType] || t.receiptDocumentType : '',
+      t.paymentMethod === 'cash' && t.cashOriginType
+        ? `Origem: ${CASH_ORIGIN_LABELS[t.cashOriginType] || t.cashOriginType}`
+        : '',
+    ].filter(Boolean).join(' · ')
+    const paymentContext = [
+      t.paymentMethod ? paymentMethodLabel : '',
+      cardLabel || '',
+    ].filter(Boolean).join(' · ')
     const duplicateMeta = duplicateMetaById[t.id] || repeatedAmountMetaById[t.id] || null
     const duplicateHint = duplicateLocationLabel(duplicateMeta, normalizedTxStatus)
     const competencyLabel = t.paymentMethod === 'credit_card' && t.competencyMonth
       ? monthKeyLabel(t.competencyMonth)
       : ''
+    const destinationLabel = receiptPreviewItem?.budgetCategoryName || catName || ''
+    const detailPathLabel = receiptPreviewItem
+      ? [receiptPreviewItem.detailCategoryLabel, receiptPreviewItem.detailSubcategoryLabel].filter(Boolean).join(' · ')
+      : [catName, subcategoryLabel].filter(Boolean).join(' · ')
+    const importanceKey = receiptPreviewItem?.importance || ''
+    const importanceLabel = importanceKey ? getReceiptImportanceLabel(importanceKey) : ''
+    const pendingDestinationLabel = normalizedTxStatus === 'pending' && destinationLabel
+      ? `Vai para ${destinationLabel}`
+      : ''
+    const pendingDetailLabel = normalizedTxStatus === 'pending' && detailPathLabel && detailPathLabel !== destinationLabel
+      ? detailPathLabel
+      : ''
     return (
       <div
         key={t.id}
-        className={`transaction-item${normalizedTxStatus === 'pending' ? ' tx-pending' : ''}${duplicateMeta ? ` ${duplicateMeta.kind === 'exact' ? 'tx-duplicate' : 'tx-duplicate-soft'}` : ''}`}
+        className={`transaction-item${normalizedTxStatus === 'pending' ? ' tx-pending' : ''}${isSelectedPending ? ' tx-selected' : ''}${duplicateMeta ? ` ${duplicateMeta.kind === 'exact' ? 'tx-duplicate' : 'tx-duplicate-soft'}` : ''}`}
       >
+        {isPendingView && (
+          <label className="tx-select" title={isSelectedPending ? 'Remover da selecao' : 'Selecionar'}>
+            <input
+              type="checkbox"
+              checked={isSelectedPending}
+              onChange={() => handleTogglePendingSelection(t.id)}
+            />
+          </label>
+        )}
         <div className="tx-info">
           <span className="tx-desc">
             {t.description}
@@ -1149,14 +1301,24 @@ export default function Lancamentos({ view = 'confirmed' }) {
               <span className={`tx-status ${statusMeta.cls}`}>{statusMeta.label}</span>
             )}
           </span>
-          {/* DEBUG VISUAL: origem, status, tipo */}
-          <span className="tx-debug" style={{ fontSize: '0.85em', color: '#888', marginLeft: 8 }}>
-            [origem: {t.origem || t.origin || '-'} | status: {t.status} | tipo: {t.tipo || t.type}]
-          </span>
           <span className="tx-meta">
             <span className="tx-date">
               {catName ? `${catName} • ` : ''}{formatFriendlyDate(t.date)}
             </span>
+            {originMeta && (
+              <span className="origin-badge" style={{ background: originMeta.bg }}>{originMeta.label}</span>
+            )}
+            {pendingDestinationLabel && (
+              <span className="tx-badge tx-badge--destination">{pendingDestinationLabel}</span>
+            )}
+            {pendingDetailLabel && (
+              <span className="tx-badge tx-badge--detail">{pendingDetailLabel}</span>
+            )}
+            {importanceLabel && normalizedTxStatus === 'pending' && (
+              <span className={`tx-badge tx-badge--importance tx-badge--importance-${importanceKey}`}>
+                {importanceLabel}
+              </span>
+            )}
             {duplicateMeta?.kind === 'exact' && (
               <span className="tx-badge tx-badge--duplicate">Duplicado exato · {duplicateMeta.count}</span>
             )}
@@ -1172,6 +1334,11 @@ export default function Lancamentos({ view = 'confirmed' }) {
             {duplicateHint && <span className="tx-date">{duplicateHint}</span>}
             {commitmentHint && <span className="tx-date">{commitmentHint.reason}</span>}
             {competencyLabel && <span className="tx-date">Compete em {competencyLabel}</span>}
+            {natureLabel && <span className="tx-date">Natureza: {natureLabel}</span>}
+            {paymentContext && <span className="tx-date">{paymentContext}</span>}
+            {receiptContext && <span className="tx-date">{receiptContext}</span>}
+            {contactLabel && <span className="tx-date">{contactLabel}</span>}
+            {debtLabel && <span className="tx-date">Divida: {debtLabel}</span>}
           </span>
         </div>
         <span className={`tx-value tx-value--${t.type}`}>
@@ -1214,13 +1381,15 @@ export default function Lancamentos({ view = 'confirmed' }) {
               {formatCurrency(total)}
             </span>
           </div>
-          <button
-            className="section-add-btn"
-            onClick={() => openNewModal(meta.formType)}
-            title={meta.addLabel}
-          >
-            {meta.addLabel}
-          </button>
+          {!isPendingView && (
+            <button
+              className="section-add-btn"
+              onClick={() => openNewModal(meta.formType)}
+              title={meta.addLabel}
+            >
+              {meta.addLabel}
+            </button>
+          )}
         </div>
         <div className="section-items">
           {group.length === 0 ? (
@@ -1293,6 +1462,43 @@ export default function Lancamentos({ view = 'confirmed' }) {
           >
             Ver
           </button>
+        </div>
+      )}
+
+      {isPendingView && transactions.length > 0 && (
+        <div className="pending-bulk-bar">
+          <label className="pending-bulk-select">
+            <input
+              type="checkbox"
+              checked={allVisiblePendingSelected}
+              onChange={(e) => (e.target.checked ? handleSelectAllVisiblePending() : handleClearPendingSelection())}
+            />
+            <span>
+              {selectedPendingCount > 0
+                ? `${selectedPendingCount} selecionado(s)`
+                : `${transactions.length} pendencia(s) para revisar`}
+            </span>
+          </label>
+          <div className="pending-bulk-actions">
+            {!allVisiblePendingSelected && (
+              <button type="button" className="pending-bulk-btn" onClick={handleSelectAllVisiblePending}>
+                Selecionar todos
+              </button>
+            )}
+            {selectedPendingCount > 0 && (
+              <button type="button" className="pending-bulk-btn" onClick={handleClearPendingSelection}>
+                Limpar
+              </button>
+            )}
+            <button
+              type="button"
+              className="pending-bulk-btn pending-bulk-btn--danger"
+              onClick={handleDeleteSelectedPending}
+              disabled={selectedPendingCount === 0 || bulkDeleting}
+            >
+              {bulkDeleting ? 'Excluindo...' : 'Excluir selecionados'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -1410,6 +1616,17 @@ transactions.length === 0 ? (
           {form.type !== 'transfer_internal' && !requiresBankAccount(form) && requiresCardSelection(form) && (
             <p className="form-help-text">
               Compras no cartão ficam vinculadas ao cartão e não mexem no saldo da conta até o pagamento da fatura.
+            </p>
+          )}
+          {form.type !== 'transfer_internal' && normalizePaymentMethodId(form.paymentMethod) === 'cash' && (
+            <div className="form-help-block">
+              Pagamento em dinheiro não exige conta bancária.
+              {form.cashOriginType && ` Origem registrada: ${CASH_ORIGIN_LABELS[form.cashOriginType] || form.cashOriginType}.`}
+            </div>
+          )}
+          {form.type !== 'transfer_internal' && form.receiptDocumentType && (
+            <p className="form-help-text">
+              Cupom importado como {RECEIPT_DOCUMENT_TYPE_LABELS[form.receiptDocumentType] || form.receiptDocumentType}.
             </p>
           )}
           {form.type !== 'transfer_internal' && !isInvoicePaymentNature(form) ? (
@@ -1713,6 +1930,9 @@ function defaultForm() {
     transactionNatureId: '', transactionNatureLabel: '',
     salaryReferenceMonth: '',
     paymentMethod: '', cardId: '',
+    receiptDocumentType: '',
+    receiptPaymentMethod: '',
+    cashOriginType: '',
     contactId: '', newContactName: '',
     newCategoryName: '', newSubcategoryName: '',
     debtId: '', subcategoryId: '',

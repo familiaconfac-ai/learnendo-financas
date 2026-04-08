@@ -189,6 +189,70 @@
   cursor: pointer;
 }
 
+.pending-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  background: linear-gradient(180deg, #fff8e6 0%, #fffdf7 100%);
+  border-bottom: 1px solid #fde68a;
+}
+
+.pending-bulk-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #92400e;
+}
+
+.pending-bulk-select input {
+  width: 16px;
+  height: 16px;
+  accent-color: #d97706;
+}
+
+.pending-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.pending-bulk-btn {
+  border: 1px solid #fcd34d;
+  background: #fff;
+  color: #92400e;
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.pending-bulk-btn:hover:not(:disabled) {
+  background: #fff7ed;
+  border-color: #f59e0b;
+}
+
+.pending-bulk-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pending-bulk-btn--danger {
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
+.pending-bulk-btn--danger:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #ef4444;
+}
+
 /* ── Transaction list container ───────────────────────────────────────────── */
 .transaction-list {
   flex: 1;
@@ -284,6 +348,11 @@
   background: #fffdf0;
 }
 
+.tx-selected {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.12);
+}
+
 .tx-duplicate {
   border-color: #f59e0b;
   background: #fffbeb;
@@ -292,6 +361,20 @@
 .tx-duplicate-soft {
   border-color: #fcd34d;
   background: #fffef3;
+}
+
+.tx-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tx-select input {
+  width: 16px;
+  height: 16px;
+  accent-color: #d97706;
+  cursor: pointer;
 }
 
 .tx-info { flex: 1; min-width: 0; }
@@ -398,6 +481,35 @@
 .tx-badge--duplicate-soft {
   background: #fef3c7;
   color: #92400e;
+}
+
+.tx-badge--destination {
+  background: #ecfccb;
+  color: #3f6212;
+}
+
+.tx-badge--detail {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.tx-badge--importance {
+  text-transform: uppercase;
+}
+
+.tx-badge--importance-essential {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.tx-badge--importance-necessary {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.tx-badge--importance-superfluous {
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 /* ── Empty state ──────────────────────────────────────────────────────────── */
@@ -542,6 +654,14 @@
   .nature-chip-btn {
     min-height: 36px;
     font-size: 0.8rem;
+  }
+
+  .pending-bulk-bar {
+    align-items: flex-start;
+  }
+
+  .pending-bulk-actions {
+    width: 100%;
   }
 }
 
