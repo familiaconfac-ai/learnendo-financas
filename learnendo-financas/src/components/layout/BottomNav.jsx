@@ -3,11 +3,11 @@ import { NavLink } from 'react-router-dom'
 import './BottomNav.css'
 
 const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Inicio', icon: '🏠' },
-  { to: '/lancar', label: 'Lancar', icon: '➕' },
-  { to: '/importacao', label: 'Importacao', icon: '🏦' },
-  { to: '/orcamento', label: 'Orcamento', icon: '📊' },
-  { to: '/familia', label: 'Familia', icon: '👨‍👩‍👧‍👦' },
+  { to: '/dashboard', label: 'Início', icon: '🏠' },
+  { to: '/contas', label: 'Contas', icon: '💰' }, 
+  { to: '/lancar', label: 'Lançar', icon: '➕' },
+  { to: '/importacao', label: 'Importar', icon: '🏦' },
+  { to: '/orcamento', label: 'Metas', icon: '📊' },
 ]
 
 export default function BottomNav() {
@@ -22,8 +22,8 @@ export default function BottomNav() {
   async function handleShare() {
     const url = window.location.origin
     const shareData = {
-      title: 'Learnendo Financas',
-      text: 'Conheca o Learnendo Financas',
+      title: 'Learnendo Finanças',
+      text: 'Conheça o Learnendo Finanças',
       url,
     }
 
@@ -32,17 +32,15 @@ export default function BottomNav() {
         await navigator.share(shareData)
         return
       }
-
       await navigator.clipboard.writeText(url)
       setFeedback('Link copiado com sucesso')
     } catch (error) {
       if (error?.name === 'AbortError') return
-
       try {
         await navigator.clipboard.writeText(url)
         setFeedback('Link copiado com sucesso')
       } catch {
-        setFeedback('Nao foi possivel compartilhar')
+        setFeedback('Não foi possível compartilhar')
       }
     }
   }
