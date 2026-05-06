@@ -183,6 +183,29 @@ function isInvoicePaymentNature(formState) {
   return formState.transactionNatureId === 'nature_invoice_payment'
 }
 
+function resolveReceiptImportPaymentOrigin(formState) {
+  const paymentMethod = normalizePaymentMethodId(formState?.paymentMethod)
+  if (paymentMethod === 'credit_card') return 'card'
+  if (paymentMethod === 'cash') return 'cash'
+  return 'account'
+}
+
+function buildReceiptImportUrl(payload, formState) {
+  const params = new URLSearchParams({ tipo: 'receipt' })
+  const paymentOrigin = resolveReceiptImportPaymentOrigin(formState)
+
+  params.set('paymentOrigin', paymentOrigin)
+  if (paymentOrigin === 'card' && payload?.cardId) params.set('cardId', payload.cardId)
+  if (paymentOrigin === 'account' && payload?.accountId) params.set('accountId', payload.accountId)
+  if (paymentOrigin === 'cash' && formState?.cashOriginType) params.set('cashOriginType', formState.cashOriginType)
+  if (payload?.date) params.set('purchaseDate', payload.date)
+  if (payload?.amount) params.set('expectedTotal', String(payload.amount))
+  if (payload?.description) params.set('placeholderDescription', payload.description)
+  if (formState?.receiptDocumentType) params.set('receiptDocumentType', formState.receiptDocumentType)
+
+  return `/importacao?${params.toString()}`
+}
+
 function getTodayLocalISO() {
   const now = new Date()
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
@@ -879,8 +902,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
     }
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault()
+  async function handleSubmit(e, options = {}) {
+    e?.preventDefault?.()
     if (!form.description || !form.amount || !form.date) return
 
     if (form.transactionNatureId === 'nature_debt_payment' && !form.debtId) {
@@ -1148,9 +1171,15 @@ export default function Lancamentos({ view = 'confirmed' }) {
           })
         }
       }
+      const redirectToReceiptImport = !!options.redirectToReceiptImport && !!payload.receiptPlaceholderEnabled
+      const receiptImportUrl = redirectToReceiptImport ? buildReceiptImportUrl(payload, form) : ''
       setModalOpen(false)
       setEditingTx(null)
       setForm(defaultForm())
+      setCardHint(null)
+      if (receiptImportUrl) {
+        navigate(receiptImportUrl)
+      }
     } catch (err) {
       console.error('[Lancamentos] handleSubmit: erro ao salvar', err)
       alert('Erro ao salvar lançamento: ' + err.message)
@@ -1553,6 +1582,16 @@ transactions.length === 0 ? (
               </Button>
             )}
             <Button variant="ghost" fullWidth onClick={() => { setModalOpen(false); setCardHint(null) }}>Cancelar</Button>
+            {form.receiptPlaceholderEnabled && !form.receiptDetailEnabled && (
+              <Button
+                variant="ghost"
+                fullWidth
+                onClick={(e) => handleSubmit(e, { redirectToReceiptImport: true })}
+                loading={saving}
+              >
+                Salvar e subir cupom
+              </Button>
+            )}
             <Button variant="primary" fullWidth onClick={handleSubmit} loading={saving}>Salvar</Button>
           </>
         }

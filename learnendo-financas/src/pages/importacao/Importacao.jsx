@@ -230,12 +230,16 @@ export default function Importacao() {
   })
   const [receiptPlaceholderMatch, setReceiptPlaceholderMatch] = useState(null)
   const [paymentOrigin, setPaymentOrigin] = useState(
-    importType === 'invoice' ? 'card' : importType === 'bank' ? 'account' : 'cash',
+    importType === 'receipt'
+      ? (['card', 'account', 'cash'].includes(searchParams.get('paymentOrigin')) ? searchParams.get('paymentOrigin') : 'cash')
+      : importType === 'invoice'
+        ? 'card'
+        : 'account',
   )
   const [accountId, setAccountId] = useState(searchParams.get('accountId') || '')
   const [cardId, setCardId] = useState(searchParams.get('cardId') || '')
-  const [cashOriginType, setCashOriginType] = useState('caixa')
-  const [receiptDocumentType, setReceiptDocumentType] = useState('outros')
+  const [cashOriginType, setCashOriginType] = useState(searchParams.get('cashOriginType') || 'caixa')
+  const [receiptDocumentType, setReceiptDocumentType] = useState(searchParams.get('receiptDocumentType') || 'outros')
 
   const selectedAccount = accounts.find((account) => account.id === accountId) || null
   const selectedCard = cards.find((card) => card.id === cardId) || null
@@ -246,6 +250,11 @@ export default function Importacao() {
   const selectedSignedTotal = selectedRows.reduce((sum, row) => sum + signedRowAmount(row), 0)
   const previewTotal = importType === 'bank' ? selectedSignedTotal : selectedTotal
   const receiptAiAvailable = isReceiptAiFallbackConfigured()
+  const receiptLaunchContext = useMemo(() => ({
+    expectedTotal: Number(searchParams.get('expectedTotal') || 0),
+    purchaseDate: searchParams.get('purchaseDate') || '',
+    placeholderDescription: searchParams.get('placeholderDescription') || '',
+  }), [searchParams])
 
   function resetPreview() {
     setParsedRows([])
@@ -844,6 +853,13 @@ export default function Importacao() {
           <span className="import-mode-kicker">{config.kicker}</span>
           <h2>{config.title}</h2>
           <p>{config.description}</p>
+          {importType === 'receipt' && (receiptLaunchContext.expectedTotal > 0 || receiptLaunchContext.placeholderDescription) && (
+            <p className="import-mode-warning">
+              Detalhando compra ja lancada: {receiptLaunchContext.placeholderDescription || 'Lancamento manual'}
+              {receiptLaunchContext.expectedTotal > 0 ? ` · ${formatCurrency(receiptLaunchContext.expectedTotal)}` : ''}
+              {receiptLaunchContext.purchaseDate ? ` · ${receiptLaunchContext.purchaseDate}` : ''}.
+            </p>
+          )}
           {importType === 'receipt' && !receiptAiAvailable && (
             <p className="import-mode-warning">
               Scanner inteligente indisponivel nesta instalacao. Cupons longos por foto exigem `VITE_GEMINI_API_KEY` no `.env`.
