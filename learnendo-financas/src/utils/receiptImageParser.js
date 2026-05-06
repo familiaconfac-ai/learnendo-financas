@@ -1003,8 +1003,7 @@ export async function parseReceiptPdfFile(file) {
   let itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   let totalAmount = findTotalAmount(summary, itemTotal)
 
-  const needsAdvancedRead = shouldUseAiFallback(receiptItems, totalAmount) || shouldForceAiFallback(receiptItems, summary, totalAmount)
-  if (isReceiptAiFallbackConfigured() && needsAdvancedRead) {
+  if (isReceiptAiFallbackConfigured()) {
     const aiResult = await analyzeReceiptTextWithAiFallback({
       extractedText: text,
       fileName: file?.name,
@@ -1031,6 +1030,20 @@ export async function parseReceiptPdfFile(file) {
         source: 'pdf_receipt',
       })
     }
+  }
+
+  const needsAdvancedRead = shouldUseAiFallback(receiptItems, totalAmount) || shouldForceAiFallback(receiptItems, summary, totalAmount)
+  if (needsAdvancedRead && receiptItems.length > 0) {
+    return buildReceiptEnvelope({
+      lines,
+      file,
+      merchantName,
+      purchaseDate,
+      totalAmount: totalAmount > 0 ? totalAmount : itemTotal,
+      receiptItems,
+      source: 'pdf_receipt',
+      aiWarningMessage: 'O PDF foi lido parcialmente. Revise os itens antes de lancar.',
+    })
   }
 
   if (receiptItems.length === 0) {

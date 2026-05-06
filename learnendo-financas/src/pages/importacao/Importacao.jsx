@@ -217,12 +217,12 @@ export default function Importacao() {
 
       if (importType === 'receipt') {
         const outerRow = Array.isArray(raw) && raw.length === 1 ? raw[0] : null
-        const isReceiptImage = (outerRow?.source === 'image_receipt' || outerRow?.source === 'pdf_receipt')
+        const isReceiptDocument = (outerRow?.source === 'image_receipt' || outerRow?.source === 'pdf_receipt')
           && Array.isArray(outerRow.receiptItems)
           && outerRow.receiptItems.length > 0
 
-        if (!isReceiptImage) {
-          throw new Error('Este arquivo não foi reconhecido como cupom ou nota fiscal por imagem.')
+        if (!isReceiptDocument) {
+          throw new Error('Este arquivo nao foi reconhecido como cupom ou nota fiscal com itens validos.')
         }
 
         const normalizedItems = normalizeReceiptItems(
@@ -267,6 +267,11 @@ export default function Importacao() {
         isDuplicate: row.isDuplicate || row.status === 'duplicate',
       }))
 
+      if (rowsWithId.length === 0) {
+        const importLabel = importType === 'invoice' ? 'fatura' : 'extrato'
+        throw new Error(`O arquivo foi reconhecido como ${importLabel}, mas nenhum lancamento valido foi extraido.`)
+      }
+
       setParsedRows(rowsWithId)
       setSummary(handled.summary || raw?.__summary || null)
       setSelectedIds(new Set(rowsWithId.filter((row) => !row.isDuplicate).map((row) => row.id)))
@@ -279,7 +284,17 @@ export default function Importacao() {
   }
 
   async function handleLaunch() {
-    if (!user?.uid || !activeWorkspaceId || isSavingRef.current || selectedCount === 0) return
+    if (!user?.uid || !activeWorkspaceId || isSavingRef.current) return
+
+    if (selectedCount === 0) {
+      const importLabel = importType === 'invoice'
+        ? 'fatura'
+        : importType === 'bank'
+          ? 'extrato'
+          : 'cupom'
+      alert(`Nenhum item de ${importLabel} esta selecionado para lancamento.`)
+      return
+    }
 
     if (importType === 'receipt') {
       if (paymentOrigin === 'card' && !cardId) {
@@ -668,6 +683,19 @@ export default function Importacao() {
               <button type="button" className="btn-link" onClick={handleSelectAllNew}>Selecionar novos</button>
               <button type="button" className="btn-link" onClick={() => setSelectedIds(new Set())}>Limpar</button>
             </div>
+
+            {selectedCount === 0 && (
+              <div className="parse-warning-box import-inline-error">
+                <strong>Nenhum item pronto para lancar</strong>
+                <p>
+                  {importType === 'invoice'
+                    ? 'A fatura foi lida, mas nenhuma compra nova ficou selecionada. Revise se o PDF trouxe compras validas ou se tudo ficou marcado como duplicado.'
+                    : importType === 'bank'
+                      ? 'O extrato foi lido, mas nenhum lancamento novo ficou selecionado.'
+                      : 'Nenhum item do cupom ficou selecionado para lancamento.'}
+                </p>
+              </div>
+            )}
 
             <div className="preview-rows">
               {parsedRows.map((row) => {
