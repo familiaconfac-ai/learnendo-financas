@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import { useFinance } from '../../context/FinanceContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { useAccounts } from '../../hooks/useAccounts'
 import { useCards } from '../../hooks/useCards'
@@ -146,7 +147,9 @@ function signedRowAmount(row) {
   return row?.direction === 'credit' ? amount : -amount
 }
 
-function resolveInvoiceCompetencyMonth(row, summary, selectedCard) {
+function resolveInvoiceCompetencyMonth(row, summary, selectedCard, selectedMonthKey = '') {
+  if (/^\d{4}-\d{2}$/.test(selectedMonthKey)) return selectedMonthKey
+
   const dueMonth = String(summary?.dueDate || '').slice(0, 7)
   if (/^\d{4}-\d{2}$/.test(dueMonth)) return dueMonth
 
@@ -164,6 +167,7 @@ export default function Importacao() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { user } = useAuth()
+  const { selectedMonth, selectedYear } = useFinance()
   const { activeWorkspaceId } = useWorkspace()
   const { accounts, update: updateAccount } = useAccounts()
   const { cards, update: updateCard } = useCards()
@@ -198,6 +202,7 @@ export default function Importacao() {
   const selectedAccount = accounts.find((account) => account.id === accountId) || null
   const selectedCard = cards.find((card) => card.id === cardId) || null
   const selectedRows = parsedRows.filter((row) => selectedIds.has(row.id))
+  const selectedMonthKey = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`
   const selectedCount = selectedRows.length
   const selectedTotal = selectedRows.reduce((sum, row) => sum + normalizeAmount(row.amount), 0)
   const selectedSignedTotal = selectedRows.reduce((sum, row) => sum + signedRowAmount(row), 0)
@@ -455,7 +460,7 @@ export default function Importacao() {
       if (importType === 'invoice') {
         for (const row of selectedRows) {
           const transactionDate = row.date || todayIso()
-          const competencyMonth = resolveInvoiceCompetencyMonth(row, summary, selectedCard)
+          const competencyMonth = resolveInvoiceCompetencyMonth(row, summary, selectedCard, selectedMonthKey)
           const recurringFields = buildCardCommitmentRecurringFields(row.description, competencyMonth)
 
           await addTransaction(user.uid, {
