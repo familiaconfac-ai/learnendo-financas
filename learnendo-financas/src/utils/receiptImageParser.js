@@ -195,6 +195,7 @@ function shouldBufferDescription(line) {
   const normalized = normalize(line)
   return (
     normalized.length >= 3
+    && !/^\d{1,3}\s+\d{2,}/.test(String(line || '').trim())
     && !lineHasAmount(line)
     && !isMetadataLine(line)
     && !hasSummaryKeyword(normalized)
@@ -372,6 +373,25 @@ function parseStructuredReceiptItemLine(line) {
     quantity,
     unitAmount: unitAmount > 0 ? unitAmount : null,
   }
+}
+
+function scoreReceiptOcrText(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map(cleanLine)
+    .filter(Boolean)
+
+  if (lines.length === 0) return -Infinity
+
+  const structuredCount = lines.filter((line) => looksStructuredReceiptItemLine(line)).length
+  const amountCount = lines.filter((line) => extractLineAmounts(line).length > 0).length
+  const itemCountHint = lines.reduce((max, line) => {
+    const match = String(line || '').match(RECEIPT_ITEM_COUNT_PATTERN)
+    return Math.max(max, Number(match?.[1] || 0))
+  }, 0)
+  const noisePenalty = lines.filter((line) => isLikelyCorruptedDescription(line)).length
+
+  return (structuredCount * 10) + (amountCount * 2) + itemCountHint - noisePenalty
 }
 
 function classifyReceiptItem(description) {
@@ -665,12 +685,20 @@ async function extractTextWithOcr(file) {
   const input = await preprocessReceiptImage(file)
 
   try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: '4',
-      preserve_interword_spaces: '1',
-    })
-    const { data } = await worker.recognize(input)
-    return String(data?.text || '')
+    const attempts = []
+
+    for (const psm of ['4', '6', '11']) {
+      await worker.setParameters({
+        tessedit_pageseg_mode: psm,
+        preserve_interword_spaces: '1',
+      })
+      const { data } = await worker.recognize(input)
+      const text = String(data?.text || '')
+      attempts.push({ text, score: scoreReceiptOcrText(text) })
+    }
+
+    attempts.sort((left, right) => right.score - left.score)
+    return attempts[0]?.text || ''
   } finally {
     await worker.terminate()
   }
