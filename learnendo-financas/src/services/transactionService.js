@@ -139,6 +139,7 @@ function mapTransactionSnapshot(docSnapshot) {
     debtName: raw.debtName || null,
     salaryReferenceMonth: normalizeMonthKey(raw.salaryReferenceMonth) || null,
     receiptDetailEnabled: !!raw.receiptDetailEnabled,
+    receiptPlaceholderEnabled: !!raw.receiptPlaceholderEnabled,
     receiptDetailStatus: raw.receiptDetailStatus || null,
     receiptDetailTotal: Number(raw.receiptDetailTotal || 0),
     receiptItems: Array.isArray(raw.receiptItems) ? raw.receiptItems : [],
@@ -190,6 +191,7 @@ export async function addTransaction(uid, data, options = {}) {
       debtName: data.debtName || null,
       salaryReferenceMonth: normalizeMonthKey(data.salaryReferenceMonth) || null,
       receiptDetailEnabled: !!data.receiptDetailEnabled,
+      receiptPlaceholderEnabled: !!data.receiptPlaceholderEnabled,
       receiptDetailStatus: data.receiptDetailStatus || null,
       receiptDetailTotal: Number(data.receiptDetailTotal || 0),
       receiptItems: Array.isArray(data.receiptItems) ? data.receiptItems : [],
@@ -285,6 +287,9 @@ export async function updateTransaction(uid, txId, data, options = {}) {
     }
     if (payload.receiptDetailEnabled !== undefined) {
       payload.receiptDetailEnabled = !!payload.receiptDetailEnabled
+    }
+    if (payload.receiptPlaceholderEnabled !== undefined) {
+      payload.receiptPlaceholderEnabled = !!payload.receiptPlaceholderEnabled
     }
     if (payload.receiptItems !== undefined && !Array.isArray(payload.receiptItems)) {
       payload.receiptItems = []

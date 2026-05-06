@@ -6,7 +6,7 @@ import { useWorkspace } from '../../context/WorkspaceContext'
 import { useAccounts } from '../../hooks/useAccounts'
 import { useCards } from '../../hooks/useCards'
 import { useCategories } from '../../hooks/useCategories'
-import { addTransaction, fetchAllTransactionsForWorkspace } from '../../services/transactionService'
+import { addTransaction, deleteTransaction, fetchAllTransactionsForWorkspace } from '../../services/transactionService'
 import { isReceiptAiFallbackConfigured } from '../../services/receiptAiFallbackService'
 import { parseReceiptPdfFile } from '../../utils/receiptImageParser'
 import { parseStatementFile } from '../../utils/statementParser'
@@ -14,6 +14,7 @@ import { handleImport } from '../../utils/importRules'
 import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
 import { findRecurringImportMatch } from '../../utils/recurringImportMatcher'
 import { findImportedTransactionDuplicateCandidate } from '../../utils/importExistingDuplicateMatcher'
+import { findReceiptPlaceholderCandidate } from '../../utils/receiptPlaceholderMatcher'
 import { findReceiptPaymentReconciliationCandidate } from '../../utils/receiptPaymentReconciliation'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { addMonthsToMonthKey, buildCardCommitmentRecurringFields, computeCreditCardCompetencyMonth } from '../../utils/creditCardPlanning'
@@ -163,6 +164,11 @@ function buildImportedDuplicateLabel(match) {
   return description ? `Ja lancado neste mes: ${description}` : 'Ja lancado neste mes'
 }
 
+function buildReceiptPlaceholderLabel(match) {
+  const description = String(match?.description || '').trim()
+  return description ? `Substitui lancamento total: ${description}` : 'Substitui lancamento total'
+}
+
 function signedRowAmount(row) {
   const amount = normalizeAmount(row?.amount)
   if (amount === 0) return 0
@@ -213,6 +219,7 @@ export default function Importacao() {
     totalAmount: 0,
     purchaseDate: '',
   })
+  const [receiptPlaceholderMatch, setReceiptPlaceholderMatch] = useState(null)
   const [paymentOrigin, setPaymentOrigin] = useState(
     importType === 'invoice' ? 'card' : importType === 'bank' ? 'account' : 'cash',
   )
@@ -237,6 +244,7 @@ export default function Importacao() {
     setSummary(null)
     setFileName('')
     setReceiptMeta({ merchantName: '', totalAmount: 0, purchaseDate: '' })
+    setReceiptPlaceholderMatch(null)
     setErrorMessage('')
     setWarningMessage('')
     setStep('idle')
@@ -271,6 +279,7 @@ export default function Importacao() {
     setSelectedIds(new Set())
     setSummary(null)
     setFileName(file.name || '')
+    setReceiptPlaceholderMatch(null)
 
     try {
       const raw = importType === 'receipt' && extension === 'pdf'
@@ -278,6 +287,13 @@ export default function Importacao() {
         : await parseStatementFile(file)
 
       if (importType === 'receipt') {
+        const existingTransactions = user?.uid && activeWorkspaceId
+          ? await fetchAllTransactionsForWorkspace(user.uid, {
+              workspaceId: activeWorkspaceId,
+              viewerRole: myRole,
+              viewerUid: user.uid,
+            }).catch(() => [])
+          : []
         const outerRow = Array.isArray(raw) && raw.length === 1 ? raw[0] : null
         const isReceiptDocument = (outerRow?.source === 'image_receipt' || outerRow?.source === 'pdf_receipt')
           && Array.isArray(outerRow.receiptItems)
@@ -309,6 +325,14 @@ export default function Importacao() {
           totalAmount: normalizeAmount(outerRow.totalAmount),
           purchaseDate: outerRow.date || todayIso(),
         })
+        setReceiptPlaceholderMatch(findReceiptPlaceholderCandidate({
+          totalAmount: normalizeAmount(outerRow.totalAmount),
+          purchaseDate: outerRow.date || todayIso(),
+        }, existingTransactions, {
+          paymentOrigin,
+          cardId,
+          accountId,
+        }))
         setWarningMessage(outerRow.aiWarningMessage || '')
         setParsedRows(rowsWithId)
         setSelectedIds(new Set(rowsWithId.map((row) => row.id)))
@@ -482,6 +506,7 @@ export default function Importacao() {
             subcategoryId: null,
             subcategoryName: row.detailSubcategoryLabel || null,
             receiptDetailEnabled: false,
+            receiptPlaceholderEnabled: false,
             receiptItems: [],
             receiptBatchId,
             receiptBatchTotal,
@@ -494,6 +519,10 @@ export default function Importacao() {
             notes: receiptMeta.merchantName ? `Origem: ${receiptMeta.merchantName}` : '',
             ...recurringFields,
           }, { workspaceId: activeWorkspaceId })
+        }
+
+        if (receiptPlaceholderMatch?.transactionId) {
+          await deleteTransaction(user.uid, receiptPlaceholderMatch.transactionId, { workspaceId: activeWorkspaceId })
         }
       }
 
@@ -529,6 +558,7 @@ export default function Importacao() {
             totalInstallments: row.totalInstallments ?? null,
             currentInstallment: row.currentInstallment ?? null,
             installmentNumber: row.installmentNumber ?? null,
+            receiptPlaceholderEnabled: false,
           }, { workspaceId: activeWorkspaceId })
         }
 
@@ -586,6 +616,7 @@ export default function Importacao() {
             classificationConfidence: row.classification?.confidence || null,
             notes: row.rawLine || '',
             recurringId: row.recurringId || null,
+            receiptPlaceholderEnabled: false,
             ...recurringFields,
           }, { workspaceId: activeWorkspaceId })
         }
@@ -840,6 +871,15 @@ export default function Importacao() {
               </div>
             )}
 
+            {importType === 'receipt' && receiptPlaceholderMatch && (
+              <div className="parse-warning-box import-inline-error">
+                <strong>Cupom vai substituir um lancamento total</strong>
+                <p>
+                  Encontramos um lancamento manual marcado para detalhamento posterior. Ao enviar este cupom, a linha generica sera removida e ficarao apenas os itens detalhados por categoria.
+                </p>
+              </div>
+            )}
+
             {parsedRows.some((row) => !!row.receiptMatch) && (
               <div className="parse-warning-box import-inline-error">
                 <strong>Possiveis duplicidades com cupom</strong>
@@ -904,6 +944,11 @@ export default function Importacao() {
                           <span key={`${row.id}-${piece}`} className="preview-date">{piece}</span>
                         ))}
                         {row.recurringMatch && <span className="preview-review-tag preview-review-tag--info">{row.recurringMatchLabel || 'Recorrente conhecido'}</span>}
+                        {importType === 'receipt' && receiptPlaceholderMatch && (
+                          <span className="preview-review-tag preview-review-tag--info">
+                            {buildReceiptPlaceholderLabel(receiptPlaceholderMatch)}
+                          </span>
+                        )}
                         {row.importedDuplicateMatch && <span className="preview-review-tag">{row.importedDuplicateLabel || 'Ja lancado neste mes'}</span>}
                         {row.isDuplicate && !row.importedDuplicateMatch && <span className="preview-review-tag">Duplicado</span>}
                         {row.receiptMatch && <span className="preview-review-tag preview-review-tag--info">{row.receiptMatchLabel || 'Bate com cupom'}</span>}

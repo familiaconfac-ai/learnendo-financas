@@ -22,8 +22,8 @@ export default function ReceiptDetailEditor({
   const summary = useMemo(() => summarizeReceiptDetail(items, totalAmount), [items, totalAmount])
 
   function importanceLabel(value) {
-    if (value === 'superfluous') return 'Supérfluo'
-    if (value === 'necessary') return 'Necessário'
+    if (value === 'superfluous') return 'Superfluo'
+    if (value === 'necessary') return 'Necessario'
     return 'Essencial'
   }
 
@@ -82,8 +82,8 @@ export default function ReceiptDetailEditor({
     <div className="receipt-detail-box">
       <div className="receipt-detail-toggle-row">
         <div>
-          <strong>Detalhar cupom</strong>
-          <p className="receipt-detail-hint">Quebra a compra por item real para orçamento e análise.</p>
+          <strong>Cupom / nota fiscal</strong>
+          <p className="receipt-detail-hint">Use quando voce quer quebrar esta compra por item real para orcamento e analise.</p>
         </div>
         <button
           type="button"
@@ -106,13 +106,13 @@ export default function ReceiptDetailEditor({
               <strong>{formatCurrency(summary.detailedTotal)}</strong>
             </div>
             <div>
-              <span className="receipt-summary-label">Diferença</span>
+              <span className="receipt-summary-label">Diferenca</span>
               <strong>{formatCurrency(summary.difference)}</strong>
             </div>
           </div>
 
           <p className="receipt-detail-hint">
-            Cada item precisa de categoria analítica, subcategoria, marcação essencial/necessário/supérfluo e categoria real de orçamento.
+            Cada item precisa de categoria analitica, subcategoria, marcacao essencial/necessario/superfluo e categoria real de orcamento.
           </p>
 
           <div className="receipt-item-list">
@@ -143,7 +143,7 @@ export default function ReceiptDetailEditor({
                     {isExpanded && (
                       <div className="receipt-item-fields">
                         <div className="form-group">
-                          <label>Descrição</label>
+                          <label>Descricao</label>
                           <input
                             type="text"
                             value={item.description}
@@ -177,7 +177,7 @@ export default function ReceiptDetailEditor({
                         </div>
 
                         <div className="form-group">
-                          <label>Categoria analítica</label>
+                          <label>Categoria analitica</label>
                           <select
                             value={item.detailCategoryKey}
                             onChange={(e) => handleItemChange(item.id, { detailCategoryKey: e.target.value })}
@@ -201,12 +201,12 @@ export default function ReceiptDetailEditor({
                         </div>
 
                         <div className="form-group">
-                          <label>Categoria real do orçamento</label>
+                          <label>Categoria real do orcamento</label>
                           <select
                             value={item.budgetCategoryId || ''}
                             onChange={(e) => handleItemChange(item.id, { budgetCategoryId: e.target.value })}
                           >
-                            <option value="">Selecione…</option>
+                            <option value="">Selecione...</option>
                             {(expenseCategories || []).map((category) => (
                               <option key={category.id} value={category.id}>{category.name}</option>
                             ))}
@@ -214,7 +214,7 @@ export default function ReceiptDetailEditor({
                         </div>
 
                         <div className="form-group">
-                          <label>Marcação analítica</label>
+                          <label>Marcacao analitica</label>
                           <div className="receipt-importance-row">
                             {RECEIPT_ITEM_IMPORTANCE_OPTIONS.map((option) => (
                               <button

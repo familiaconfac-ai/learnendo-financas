@@ -13,7 +13,7 @@ import { useCards } from '../../hooks/useCards'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { useDebts } from '../../hooks/useDebts'
 import { fetchTransactions } from '../../services/transactionService'
-import { createRecurrenceRule } from '../../services/recurrenceService'
+import { createRecurrenceRule, prefillRecurringTransactions } from '../../services/recurrenceService'
 import {
   buildDuplicateSignature,
   findDuplicateMatches,
@@ -778,6 +778,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
         cashOriginType: tx.cashOriginType || '',
         cardId: tx.cardId || '',
         receiptDetailEnabled: !!tx.receiptDetailEnabled,
+        receiptPlaceholderEnabled: !!tx.receiptPlaceholderEnabled,
       receiptItems: Array.isArray(tx.receiptItems) ? tx.receiptItems : [],
     })
     setEditingNatureLabel(tx.transactionNatureLabel || '')
@@ -859,6 +860,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
           currentInstallment,
           active: true,
         }, { workspaceId: activeWorkspaceId })
+
+        await prefillRecurringTransactions(user.uid, recurrence, { workspaceId: activeWorkspaceId, monthsAhead: 12 })
 
         await update(tx.id, {
           recurringId: recurrence.id,
@@ -1019,6 +1022,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
         ? (form.cashOriginType || editingTx?.cashOriginType || null)
         : null,
       receiptDetailEnabled: !!form.receiptDetailEnabled,
+      receiptPlaceholderEnabled: form.receiptDetailEnabled ? false : !!form.receiptPlaceholderEnabled,
       receiptDetailStatus: form.receiptDetailEnabled
         ? (receiptSummary.isBalanced ? 'balanced' : 'mismatch')
         : null,
@@ -1096,6 +1100,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
             active: true,
           }, { workspaceId: activeWorkspaceId })
 
+          await prefillRecurringTransactions(user.uid, recurrence, { workspaceId: activeWorkspaceId, monthsAhead: 12 })
+
           await update(editingTx.id, {
             recurringId: recurrence.id,
             recurringType: recurrenceType,
@@ -1127,6 +1133,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
             currentInstallment,
             active: true,
           }, { workspaceId: activeWorkspaceId })
+
+          await prefillRecurringTransactions(user.uid, recurrence, { workspaceId: activeWorkspaceId, monthsAhead: 12 })
 
           await update(txId, {
             recurringId: recurrence.id,
@@ -1600,11 +1608,6 @@ transactions.length === 0 ? (
               )}
             </div>
           )}
-          {form.type !== 'transfer_internal' && !requiresBankAccount(form) && requiresCardSelection(form) && (
-            <p className="form-help-text">
-              Compras no cartão ficam vinculadas ao cartão e não mexem no saldo da conta até o pagamento da fatura.
-            </p>
-          )}
           {form.type !== 'transfer_internal' && normalizePaymentMethodId(form.paymentMethod) === 'cash' && (
             <div className="form-help-block">
               Pagamento em dinheiro não exige conta bancária.
@@ -1815,11 +1818,30 @@ transactions.length === 0 ? (
             <textarea name="notes" value={form.notes} onChange={handleChange} rows={2} placeholder="Opcional" />
           </div>
           {form.type === 'expense' && !isInvoicePaymentNature(form) && (
+            <div className="form-help-block">
+              <div className="form-check">
+                <input
+                  id="receiptPlaceholderEnabled"
+                  name="receiptPlaceholderEnabled"
+                  type="checkbox"
+                  checked={!!form.receiptPlaceholderEnabled}
+                  onChange={handleCheck}
+                  disabled={!!form.receiptDetailEnabled}
+                />
+                <label htmlFor="receiptPlaceholderEnabled">Cupom / nota fiscal para detalhar depois</label>
+              </div>
+              <p className="form-help-text">
+                Marque quando este lançamento total ainda vai ser substituído por um cupom detalhado. Quando o cupom for importado depois, o app tenta bater valor, data e origem para remover a linha genérica e manter só as categorias reais.
+              </p>
+            </div>
+          )}
+          {form.type === 'expense' && !isInvoicePaymentNature(form) && (
             <ReceiptDetailEditor
               enabled={form.receiptDetailEnabled}
               onToggle={(enabled) => setForm((f) => ({
                 ...f,
                 receiptDetailEnabled: enabled,
+                receiptPlaceholderEnabled: enabled ? false : f.receiptPlaceholderEnabled,
                 receiptItems: enabled ? f.receiptItems : [],
               }))}
               items={form.receiptItems}
@@ -1924,6 +1946,7 @@ function defaultForm() {
     newCategoryName: '', newSubcategoryName: '',
     debtId: '', subcategoryId: '',
     receiptDetailEnabled: false,
+    receiptPlaceholderEnabled: false,
     receiptItems: [],
   }
 }

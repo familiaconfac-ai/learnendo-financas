@@ -143,6 +143,119 @@ async function updateRecurrenceRule(uid, recurrenceId, patch) {
   })
 }
 
+async function generateTransactionsForRuleThroughMonth(uid, rule, targetMonth, options = {}) {
+  const workspaceId = options.workspaceId || rule.workspaceId || null
+  const normalized = normalizeRecurrencePayload(rule)
+  const startMonth = normalized.startMonth
+  const endMonth = normalized.endMonth
+
+  if (!targetMonth || compareMonthKey(targetMonth, startMonth) < 0) {
+    return { generated: 0, skipped: 0, finished: 0 }
+  }
+
+  let generated = 0
+  let skipped = 0
+  let finished = 0
+  let currentInstallment = Number(rule.currentInstallment || 0)
+  let lastGeneratedMonth = rule.lastGeneratedMonth || addMonths(startMonth, -1)
+  let monthCursor = addMonths(lastGeneratedMonth, 1)
+
+  const txCacheByMonth = new Map()
+  async function getMonthTransactions(monthKey) {
+    if (txCacheByMonth.has(monthKey)) return txCacheByMonth.get(monthKey)
+    const { year, month } = parseMonthKey(monthKey)
+    const txList = await fetchTransactionsWithOptions(uid, year, month, {
+      includeRecurringAuto: true,
+      workspaceId,
+    })
+    txCacheByMonth.set(monthKey, txList)
+    return txList
+  }
+
+  while (compareMonthKey(monthCursor, targetMonth) <= 0) {
+    if (compareMonthKey(monthCursor, startMonth) < 0) {
+      monthCursor = addMonths(monthCursor, 1)
+      continue
+    }
+
+    if (endMonth && compareMonthKey(monthCursor, endMonth) > 0) {
+      finished = 1
+      break
+    }
+
+    const installmentToGenerate = currentInstallment + 1
+    if (isFixedRecurrence(normalized) && installmentToGenerate > Number(normalized.totalInstallments || 0)) {
+      finished = 1
+      break
+    }
+
+    const txForMonth = await getMonthTransactions(monthCursor)
+    const duplicate = txForMonth.some((tx) => (
+      tx.recurringId === rule.id && tx.recurringInstanceMonth === monthCursor
+    ))
+
+    if (!duplicate) {
+      await addTransaction(uid, {
+        type: rule.type,
+        description: rule.description,
+        amount: Number(rule.amount),
+        date: toDateForMonth(monthCursor, rule.startDate),
+        competencyMonth: monthCursor,
+        accountId: rule.accountId || null,
+        toAccountId: rule.toAccountId || null,
+        categoryId: rule.categoryId || null,
+        categoryName: rule.categoryName || null,
+        subcategoryId: rule.subcategoryId || null,
+        subcategoryName: rule.subcategoryName || null,
+        notes: rule.notes || '',
+        paymentMethod: rule.paymentMethod || null,
+        cardId: rule.cardId || null,
+        cardName: rule.cardName || null,
+        origin: 'recurring_auto',
+        status: 'confirmed',
+        recurringId: rule.id,
+        recurringType: normalized.recurrenceType,
+        recurringInstanceMonth: monthCursor,
+        installmentNumber: isFixedRecurrence(normalized) ? installmentToGenerate : null,
+        transactionNatureId: rule.transactionNatureId || null,
+        transactionNatureKey: rule.transactionNatureKey || null,
+        transactionNatureLabel: rule.transactionNatureLabel || null,
+        affectsBudget: typeof rule.affectsBudget === 'boolean' ? rule.affectsBudget : rule.type !== 'transfer_internal',
+        balanceImpact: typeof rule.balanceImpact === 'boolean'
+          ? rule.balanceImpact
+          : rule.type !== 'transfer_internal',
+        workspaceId,
+        createdBy: uid,
+        userId: uid,
+      }, { workspaceId })
+      generated++
+      txForMonth.push({ recurringId: rule.id, recurringInstanceMonth: monthCursor })
+    } else {
+      skipped++
+    }
+
+    currentInstallment = installmentToGenerate
+    lastGeneratedMonth = monthCursor
+    monthCursor = addMonths(monthCursor, 1)
+  }
+
+  const endedByInstallments = isFixedRecurrence(normalized)
+    && currentInstallment >= Number(normalized.totalInstallments || 0)
+  const shouldDeactivate = finished === 1 || endedByInstallments
+
+  await updateRecurrenceRule(uid, rule.id, {
+    currentInstallment,
+    lastGeneratedMonth,
+    active: shouldDeactivate ? false : true,
+  })
+
+  return {
+    generated,
+    skipped,
+    finished: shouldDeactivate ? 1 : 0,
+  }
+}
+
 export async function ensureMonthlyRecurringTransactions(uid, year, month, options = {}) {
   const workspaceId = options.workspaceId || null
   const targetMonth = toMonthKey(year, month)
@@ -270,4 +383,18 @@ export async function ensureMonthlyRecurringTransactions(uid, year, month, optio
   }
 
   return { generated, skipped, finished }
+}
+
+export async function prefillRecurringTransactions(uid, recurrence, options = {}) {
+  if (!recurrence?.id) return { generated: 0, skipped: 0, finished: 0 }
+
+  const recurrenceType = recurrence.recurrenceType === 'fixed' ? 'fixed' : 'indefinite'
+  const baseMonth = recurrence.lastGeneratedMonth || recurrence.startMonth || monthKeyFromDate(recurrence.startDate)
+  const targetMonth = recurrenceType === 'fixed'
+    ? recurrence.endMonth
+    : addMonths(baseMonth, Number(options.monthsAhead || 12))
+
+  return generateTransactionsForRuleThroughMonth(uid, recurrence, targetMonth, {
+    workspaceId: options.workspaceId || recurrence.workspaceId || null,
+  })
 }
