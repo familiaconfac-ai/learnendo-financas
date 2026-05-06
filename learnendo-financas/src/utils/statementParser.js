@@ -17,6 +17,12 @@ import { parseReceiptImageFile } from './receiptImageParser'
 
 const MAX_REASON_LOGS = 40
 const MAX_SANITY_AMOUNT = 10_000_000
+const PARSER_DEBUG_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_IMPORT_DEBUG === 'true'
+
+function logParserDebug(...args) {
+  if (!PARSER_DEBUG_ENABLED) return
+  console.log(...args)
+}
 
 // ---------------------------------------------------------------------------
 // Amount normalization
@@ -69,10 +75,6 @@ export function normaliseBRAmount(raw) {
   if (!Number.isFinite(value)) return NaN
 
   const result = isNegative ? -Math.abs(value) : value
-  if (Math.abs(result) > 100_000_000) {
-    console.warn(`[Parser] suspicious amount: raw="${raw}" normalized=${result}`)
-  }
-
   return result
 }
 
@@ -264,7 +266,7 @@ function extractOfxClosingBalance(text) {
 // ---------------------------------------------------------------------------
 
 function parseOFX(text) {
-  console.log('[Parser] format=OFX')
+  logParserDebug('[Parser] format=OFX')
 
   const rows = []
   const blocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || []
@@ -327,7 +329,7 @@ function ofxField(block, field) {
 // ---------------------------------------------------------------------------
 
 function parseCSV(text) {
-  console.log('[Parser] format=CSV/TXT')
+  logParserDebug('[Parser] format=CSV/TXT')
 
   const normalizedText = String(text || '').replace(/\u0000/g, '')
   const lines = normalizedText
@@ -340,7 +342,7 @@ function parseCSV(text) {
   }
 
   const delimiter = detectBestSeparator(lines)
-  console.log(`[Parser] delimiter="${delimiter === '\t' ? 'TAB' : delimiter}"`)
+  logParserDebug(`[Parser] delimiter="${delimiter === '\t' ? 'TAB' : delimiter}"`)
 
   const table = lines.map((line) => splitDelimitedLine(line, delimiter))
   const headerIdx = findHeaderRowIndex(table)
@@ -349,9 +351,9 @@ function parseCSV(text) {
   const dataRows = table.slice(firstDataIdx)
 
   const columns = detectColumns(headers, dataRows)
-  console.log('[Parser] columns:', columns)
+  logParserDebug('[Parser] columns:', columns)
   if (headers) {
-    console.log('[Parser] headers:', headers)
+    logParserDebug('[Parser] headers:', headers)
   }
 
   const diagnostics = {
@@ -370,8 +372,8 @@ function parseCSV(text) {
     if (parsed) rows.push(parsed)
   }
 
-  console.log('[Parser] first parsed rows:', rows.slice(0, 5))
-  console.log('[Parser] skip reasons:', diagnostics.reasons)
+  logParserDebug('[Parser] first parsed rows:', rows.slice(0, 5))
+  logParserDebug('[Parser] skip reasons:', diagnostics.reasons)
 
   if (rows.length === 0) {
     if (!diagnostics.anyDateDetected) {
@@ -407,7 +409,7 @@ function detectBestSeparator(lines) {
     const stable = widths.filter((n) => n === mode).length
     const score = useful * 10 + stable + mode
 
-    console.log(`[Parser] delimiter test sep="${sep === '\t' ? 'TAB' : sep}" useful=${useful}/${sample.length} mode=${mode} stable=${stable} score=${score}`)
+    logParserDebug(`[Parser] delimiter test sep="${sep === '\t' ? 'TAB' : sep}" useful=${useful}/${sample.length} mode=${mode} stable=${stable} score=${score}`)
 
     if (score > bestScore) {
       bestScore = score
@@ -540,7 +542,7 @@ function parseCSVDataRow(cells, columns, rowNum, diagnostics) {
     diagnostics.rowsSkipped += 1
     diagnostics.reasons[reason] = (diagnostics.reasons[reason] || 0) + 1
     if (diagnostics.rowsSkipped <= MAX_REASON_LOGS) {
-      console.log(`[Parser] skip row ${rowNum}: ${reason}`, cells)
+      logParserDebug(`[Parser] skip row ${rowNum}: ${reason}`, cells)
     }
     return null
   }
@@ -708,7 +710,7 @@ function maxKey(scoreMap, exclude = []) {
 let pdfWorkerConfigured = false
 
 async function parsePDF(file) {
-  console.log('[Parser] format=PDF')
+  logParserDebug('[Parser] format=PDF')
 
   const { getDocument, GlobalWorkerOptions } = await import('pdfjs-dist')
   if (!pdfWorkerConfigured) {
@@ -730,10 +732,10 @@ async function parsePDF(file) {
   }
 
   const previewLines = lines.slice(0, 30)
-  console.log(`[PDF] pages: ${pdf.numPages}`)
-  console.log(`[PDF] text length: ${totalTextLength}`)
-  console.log('[PDF] preview:')
-  previewLines.forEach((line) => console.log(line))
+  logParserDebug(`[PDF] pages: ${pdf.numPages}`)
+  logParserDebug(`[PDF] text length: ${totalTextLength}`)
+  logParserDebug('[PDF] preview:')
+  previewLines.forEach((line) => logParserDebug(line))
 
   if (lines.length === 0) {
     throw new ParseError('PDF sem texto selecionavel. Talvez seja necessario OCR ou outro formato.', {
@@ -748,9 +750,9 @@ async function parsePDF(file) {
   const structure = analyzePdfLines(lines)
   const balanceSummary = kind === 'statement' ? extractPdfBalanceSummary(lines) : {}
   const headerSummary = extractPdfHeaderSummary(lines, kind, layout, file?.name || '')
-  console.log(`[Parser] PDF kind: ${kind}`)
-  console.log(`[PDF] layout: ${layout}`)
-  console.log('[PDF] structure:', structure)
+  logParserDebug(`[Parser] PDF kind: ${kind}`)
+  logParserDebug(`[PDF] layout: ${layout}`)
+  logParserDebug('[PDF] structure:', structure)
 
   const parsedRows = layout === 'nubank_invoice'
     ? parseNubankInvoicePdf(lines)
@@ -765,9 +767,9 @@ async function parsePDF(file) {
   })
 
   const lowConfidenceCount = rows.filter((row) => row.direction === 'unknown').length
-  console.log(`[PDF] ignored lines: ${rows.__meta?.ignoredLines ?? 0}`)
-  console.log(`[PDF] transactions recognized: ${rows.length}`)
-  console.log(`[PDF] low confidence: ${lowConfidenceCount}`)
+  logParserDebug(`[PDF] ignored lines: ${rows.__meta?.ignoredLines ?? 0}`)
+  logParserDebug(`[PDF] transactions recognized: ${rows.length}`)
+  logParserDebug(`[PDF] low confidence: ${lowConfidenceCount}`)
 
   if (rows.length === 0) {
     throw new ParseError('PDF lido, mas o layout ainda nao foi reconhecido com seguranca.', {
@@ -780,7 +782,7 @@ async function parsePDF(file) {
     })
   }
 
-  console.log('[Parser] PDF first parsed rows:', rows.slice(0, 5))
+  logParserDebug('[Parser] PDF first parsed rows:', rows.slice(0, 5))
   return rows
 }
 
@@ -1410,7 +1412,7 @@ export async function readStatementFile(file) {
     if (replacementCount > 3) {
       let latin = await readAsText('ISO-8859-1')
       latin = latin.replace(/^\uFEFF/, '')
-      console.log('[Parser] encoding fallback: ISO-8859-1')
+      logParserDebug('[Parser] encoding fallback: ISO-8859-1')
       return { text: latin, encoding: 'ISO-8859-1' }
     }
 

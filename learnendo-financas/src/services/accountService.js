@@ -21,12 +21,9 @@ function accCol(uid) {
 }
 
 export async function fetchAccounts(uid) {
-  console.log(`[AccountService] Fetching users/${uid}/accounts`)
   try {
     const snap = await getDocs(accCol(uid))
-    const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-    console.log(`[AccountService] Fetched ${docs.length} accounts`)
-    return docs
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
   } catch (err) {
     console.error('[AccountService] Fetch failed:', err.code, err.message)
     throw err
@@ -34,7 +31,6 @@ export async function fetchAccounts(uid) {
 }
 
 export async function addAccount(uid, data) {
-  console.log(`[AccountService] Writing to users/${uid}/accounts`)
   try {
     const ref = await addDoc(accCol(uid), {
       name: data.name,
@@ -51,7 +47,6 @@ export async function addAccount(uid, data) {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     })
-    console.log('[AccountService] Write succeeded - Firestore id:', ref.id)
     return ref.id
   } catch (err) {
     console.error('[AccountService] Write failed:', err.code, err.message)
@@ -60,7 +55,6 @@ export async function addAccount(uid, data) {
 }
 
 export async function updateAccount(uid, accId, data) {
-  console.log(`[AccountService] Updating users/${uid}/accounts/${accId}`)
   try {
     const payload = { ...data, updatedAt: serverTimestamp() }
     if (payload.balance !== undefined) payload.balance = Number(payload.balance)
@@ -85,7 +79,6 @@ export async function updateAccount(uid, accId, data) {
       delete payload.adjustmentAuditEntries
     }
     await updateDoc(doc(db, 'users', uid, 'accounts', accId), payload)
-    console.log('[AccountService] Update succeeded')
   } catch (err) {
     console.error('[AccountService] Update failed:', err.code, err.message)
     throw err
@@ -93,10 +86,8 @@ export async function updateAccount(uid, accId, data) {
 }
 
 export async function deleteAccount(uid, accId) {
-  console.log(`[AccountService] Deleting users/${uid}/accounts/${accId}`)
   try {
     await deleteDoc(doc(db, 'users', uid, 'accounts', accId))
-    console.log('[AccountService] Delete succeeded')
   } catch (err) {
     console.error('[AccountService] Delete failed:', err.code, err.message)
     throw err
@@ -104,7 +95,6 @@ export async function deleteAccount(uid, accId) {
 }
 
 export async function testGeminiConnection() {
-  console.log('[AccountService] Testing Gemini connection with gemini-1.5-flash')
   try {
     return await testGeminiConnectionRequest()
   } catch (err) {

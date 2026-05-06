@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useWorkspace } from '../context/WorkspaceContext'
 import { fetchTransactionsBySalaryReferenceMonth } from '../services/transactionService'
-import { buildSalaryInsight, calculateMonthlySummary } from '../utils/financeCalculations'
+import { buildAccountsReconciliation, buildSalaryInsight, calculateMonthlySummary } from '../utils/financeCalculations'
 import { useBudget } from './useBudget'
+import { useAccounts } from './useAccounts'
 import { useTransactions } from './useTransactions'
 
 /**
  * Hook que calcula o resumo financeiro do Dashboard a partir de dados reais do Firestore.
- * Campos que ainda não têm backend (orçamento, reconciliação, cartões) usam mock temporariamente.
  *
  * Tipos de transação e como afetam o saldo:
  *   income            -> receita  (+saldo)
@@ -21,6 +21,7 @@ export function useDashboard(year, month) {
   const { user } = useAuth()
   const { activeWorkspaceId, myRole } = useWorkspace()
   const { transactions, loading, error, reload } = useTransactions(year, month)
+  const { accounts, loading: accountsLoading } = useAccounts()
   const { budgetItems, loading: budgetLoading } = useBudget(year, month)
   const [linkedAdvanceTransactions, setLinkedAdvanceTransactions] = useState([])
   const [linkedAdvanceLoading, setLinkedAdvanceLoading] = useState(false)
@@ -59,6 +60,10 @@ export function useDashboard(year, month) {
     const baseSummary = calculateMonthlySummary(transactions, 'dashboard')
     const selectedMonthKey = `${year}-${String(month).padStart(2, '0')}`
     const salaryInsight = buildSalaryInsight(transactions, linkedAdvanceTransactions, selectedMonthKey)
+    const reconciliations = buildAccountsReconciliation(accounts, transactions, selectedMonthKey)
+    const reconcilableAccounts = reconciliations.filter((item) => item.hasSnapshot)
+    const reconciliationDiff = reconcilableAccounts.reduce((sum, item) => sum + Math.abs(Number(item.difference || 0)), 0)
+    const reconciled = reconcilableAccounts.length > 0 && reconcilableAccounts.every((item) => item.reconciled)
     const orcado = budgetItems
       .filter((item) => item.type === 'expense')
       .reduce((sum, item) => sum + Number(item.plannedAmount || 0), 0)
@@ -77,16 +82,17 @@ export function useDashboard(year, month) {
       possuiVinculoVale: salaryInsight.hasLinkedAdvance,
       orcado,
       pendingCount: baseSummary.pendingCount,
-      reconciled: false,
-      reconciliationDiff: 0,
+      reconciled,
+      reconciliationDiff,
+      reconciliationAccountsCount: reconcilableAccounts.length,
       recentTransactions: baseSummary.recentTransactions,
     }
-  }, [transactions, budgetItems, linkedAdvanceTransactions, year, month])
+  }, [transactions, budgetItems, linkedAdvanceTransactions, year, month, accounts])
 
   return {
     summary,
     transactions,
-    loading: loading || budgetLoading || linkedAdvanceLoading,
+    loading: loading || budgetLoading || linkedAdvanceLoading || accountsLoading,
     error,
     reload,
   }

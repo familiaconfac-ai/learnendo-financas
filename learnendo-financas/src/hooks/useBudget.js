@@ -68,11 +68,6 @@ export function useBudget(year, month, options = {}) {
         }
       })
 
-      console.log('[useBudget] Diagnostics:', {
-        budgets: rawBudgets.length,
-        transactions: transactions.length,
-        matchedById: items.filter((i) => i.spent > 0 && i.categoryId).length,
-      })
       setBudgetItems(items)
     } catch (err) {
       console.error('[useBudget] Error:', err.message)

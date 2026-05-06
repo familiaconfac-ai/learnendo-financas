@@ -12,7 +12,7 @@ import { useAccounts } from '../../hooks/useAccounts'
 import { useCards } from '../../hooks/useCards'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { useDebts } from '../../hooks/useDebts'
-import { deleteTransaction, fetchTransactions } from '../../services/transactionService'
+import { fetchTransactions } from '../../services/transactionService'
 import { createRecurrenceRule } from '../../services/recurrenceService'
 import {
   buildDuplicateSignature,
@@ -350,7 +350,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
   const [bulkDeleting, setBulkDeleting] = useState(false)
 
   // Dados reais do Firestore — users/{uid}/transactions
-  const { transactions: allTx, loading, error, reload, add, update, remove } =
+  const { transactions: allTx, loading, error, reload, add, update, remove, removeMany } =
     useTransactions(selectedYear, selectedMonth)
   const { categories, add: addCategory, update: updateCategory } = useCategories()
   const { accounts }   = useAccounts()
@@ -385,9 +385,6 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const matchOrigin = !filterOrigin || t.origin === filterOrigin
     return matchOrigin
   })
-
-  // DEBUG VISUAL: log ao carregar lançamentos
-  console.log('LANÇAMENTOS CARREGADOS:', transactions)
 
   const visiblePendingIds = isPendingView ? transactions.map((tx) => tx.id).filter(Boolean) : []
   const allVisiblePendingSelected = visiblePendingIds.length > 0
@@ -878,15 +875,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.description || !form.amount || !form.date) {
-      // FIX: log diagnóstico para identificar qual campo está vazio
-      console.warn('[Lancamentos] handleSubmit: bloqueado por campo obrigatório vazio', {
-        hasDescription: !!form.description,
-        hasAmount: !!form.amount,
-        hasDate: !!form.date,
-      })
-      return
-    }
+    if (!form.description || !form.amount || !form.date) return
 
     if (form.transactionNatureId === 'nature_debt_payment' && !form.debtId) {
       alert('Selecione a dívida para vincular o pagamento.')
@@ -1083,7 +1072,6 @@ export default function Lancamentos({ view = 'confirmed' }) {
       }
     }
 
-    console.log('[Lancamentos] handleSubmit:', editingTx ? `atualizando id=${editingTx.id}` : 'criando novo lançamento', { type: payload.type, amount: payload.amount, date: payload.date })
     try {
       if (editingTx) {
         await update(editingTx.id, payload)
@@ -1118,7 +1106,6 @@ export default function Lancamentos({ view = 'confirmed' }) {
         }
       } else {
         const txId = await add(payload)
-        console.log('[Lancamentos] handleSubmit: lançamento criado com sucesso, id=', txId)
 
         if (form.recurring && shouldCreateFutureRecurrence(form.recurrenceType, form.currentInstallment, form.totalInstallments)) {
           const recurrenceType = form.recurrenceType === 'fixed' ? 'fixed' : 'indefinite'
@@ -1217,16 +1204,13 @@ export default function Lancamentos({ view = 'confirmed' }) {
 
     setBulkDeleting(true)
     try {
-      await Promise.all(
-        idsToDelete.map((txId) => deleteTransaction(user.uid, txId, { workspaceId: activeWorkspaceId })),
-      )
+      await removeMany(idsToDelete)
       if (editingTx && idsToDelete.includes(editingTx.id)) {
         setModalOpen(false)
         setEditingTx(null)
         setCardHint(null)
       }
       setSelectedPendingIds(new Set())
-      await reload()
     } catch (err) {
       alert('Erro ao excluir selecionados: ' + err.message)
     } finally {

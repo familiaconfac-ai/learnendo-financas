@@ -7,6 +7,43 @@
   margin: 0 auto;
 }
 
+.rec-account-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.rec-account-picker label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.rec-account-picker select {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--color-text);
+}
+
+.rec-empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: center;
+  padding: 1rem 0.25rem;
+}
+
+.rec-empty-state p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+}
+
 /* Status card */
 .rec-status-card {
   padding: 1rem;
@@ -109,5 +146,15 @@
   border-radius: var(--radius);
   font-size: 0.9rem;
   color: #15803d;
+  font-weight: 600;
+}
+
+.rec-action-hint {
+  text-align: center;
+  padding: 1rem 1.25rem;
+  background: #eff6ff;
+  border-radius: var(--radius);
+  font-size: 0.88rem;
+  color: #1d4ed8;
   font-weight: 600;
 }

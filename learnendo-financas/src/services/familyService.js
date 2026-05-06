@@ -107,8 +107,6 @@ export async function fetchUserFamily(uid) {
 }
 
 export async function deleteFamily(_actorUid, familyId) {
-  console.log('[FamilyService] deleting family', familyId)
-
   const [membersSnap, invitesSnap] = await Promise.all([
     getDocs(memberCol(familyId)),
     getDocs(inviteCol(familyId)),

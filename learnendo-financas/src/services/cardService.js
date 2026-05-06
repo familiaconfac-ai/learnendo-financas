@@ -1,6 +1,6 @@
 /**
  * cardService.js
- * CRUD real no Firestore para cartões do usuário.
+ * CRUD real no Firestore para cartoes do usuario.
  * Path: users/{uid}/cards/{cardId}
  */
 import {
@@ -19,12 +19,9 @@ function cardCol(uid) {
 }
 
 export async function fetchCards(uid) {
-  console.log(`[CardService] Fetching users/${uid}/cards`)
   try {
     const snap = await getDocs(cardCol(uid))
-    const docs = snap.docs.map((entry) => ({ id: entry.id, ...entry.data() }))
-    console.log(`[CardService] Fetched ${docs.length} cards`)
-    return docs
+    return snap.docs.map((entry) => ({ id: entry.id, ...entry.data() }))
   } catch (err) {
     console.error('[CardService] Fetch failed:', err.code, err.message)
     throw err
@@ -32,7 +29,6 @@ export async function fetchCards(uid) {
 }
 
 export async function addCard(uid, data) {
-  console.log(`[CardService] Writing to users/${uid}/cards`)
   try {
     const ref = await addDoc(cardCol(uid), {
       name: data.name,
@@ -51,7 +47,6 @@ export async function addCard(uid, data) {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     })
-    console.log('[CardService] Write succeeded — Firestore id:', ref.id)
     return ref.id
   } catch (err) {
     console.error('[CardService] Write failed:', err.code, err.message)
@@ -60,7 +55,6 @@ export async function addCard(uid, data) {
 }
 
 export async function updateCard(uid, cardId, data) {
-  console.log(`[CardService] Updating users/${uid}/cards/${cardId}`)
   try {
     const payload = { ...data, updatedAt: serverTimestamp() }
     if (payload.limit !== undefined) payload.limit = Number(payload.limit)
@@ -69,7 +63,6 @@ export async function updateCard(uid, cardId, data) {
     if (payload.closingDay !== undefined) payload.closingDay = Number(payload.closingDay)
     if (payload.dueDay !== undefined) payload.dueDay = Number(payload.dueDay)
     await updateDoc(doc(db, 'users', uid, 'cards', cardId), payload)
-    console.log('[CardService] Update succeeded')
   } catch (err) {
     console.error('[CardService] Update failed:', err.code, err.message)
     throw err
@@ -77,10 +70,8 @@ export async function updateCard(uid, cardId, data) {
 }
 
 export async function deleteCard(uid, cardId) {
-  console.log(`[CardService] Deleting users/${uid}/cards/${cardId}`)
   try {
     await deleteDoc(doc(db, 'users', uid, 'cards', cardId))
-    console.log('[CardService] Delete succeeded')
   } catch (err) {
     console.error('[CardService] Delete failed:', err.code, err.message)
     throw err

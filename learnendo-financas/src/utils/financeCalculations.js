@@ -3,6 +3,13 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+const FINANCE_DEBUG_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_FINANCE_DEBUG === 'true'
+
+function logFinanceDebug(tag, payload) {
+  if (!FINANCE_DEBUG_ENABLED || !tag) return
+  console.log(tag, payload)
+}
+
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFD')
@@ -31,6 +38,13 @@ function receiptItemsForBudget(tx) {
 
 function monthKey(value) {
   return String(value || '').slice(0, 7)
+}
+
+function addMonthsToMonthKey(monthKeyValue, offset) {
+  const [year, month] = String(monthKeyValue || '').split('-').map(Number)
+  if (!year || !month) return ''
+  const target = new Date(year, month - 1 + offset, 1)
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}`
 }
 
 function isSalaryNature(tx) {
@@ -73,7 +87,7 @@ export function calculateMonthlySummary(transactions, debugTag = '') {
     .reduce((sum, t) => sum + toNumber(t.amount), 0)
 
   if (debugTag) {
-    console.log(`[FinanceSummary:${debugTag}]`, {
+    logFinanceDebug(`[FinanceSummary:${debugTag}]`, {
       count: source.length,
       receitas,
       despesas,
@@ -169,7 +183,7 @@ export function buildBudgetSpentMap(transactions, debugTag = '') {
   })
 
   if (debugTag) {
-    console.log(`[BudgetSpentMap:${debugTag}]`, {
+    logFinanceDebug(`[BudgetSpentMap:${debugTag}]`, {
       txCount: source.length,
       byIdKeys: Object.keys(spentByCategoryId).length,
       byNameKeys: Object.keys(spentByCategoryName).length,
@@ -196,7 +210,7 @@ export function buildReceiptDetailAnalysis(transactions, debugTag = '') {
   })
 
   if (debugTag) {
-    console.log(`[ReceiptDetailAnalysis:${debugTag}]`, {
+    logFinanceDebug(`[ReceiptDetailAnalysis:${debugTag}]`, {
       txCount: source.length,
       detailCategories: Object.keys(byDetailCategory).length,
       importanceBuckets: Object.keys(byImportance).length,
@@ -247,7 +261,7 @@ export function buildReceiptBudgetImportanceBreakdown(transactions, debugTag = '
   const totalDetailed = sortedCategories.reduce((sum, item) => sum + item.total, 0)
 
   if (debugTag) {
-    console.log(`[ReceiptBudgetImportance:${debugTag}]`, {
+    logFinanceDebug(`[ReceiptBudgetImportance:${debugTag}]`, {
       txCount: source.length,
       categories: sortedCategories.length,
       totalDetailed,
@@ -263,4 +277,103 @@ export function buildReceiptBudgetImportanceBreakdown(transactions, debugTag = '
 
 export function normalizedCategoryName(value) {
   return normalizeText(value)
+}
+
+function getAccountMonthOpeningBalance(account, selectedMonthKey) {
+  const monthlyOpeningBalance = account?.monthlyOpeningBalances?.[selectedMonthKey]
+  if (Number.isFinite(Number(monthlyOpeningBalance))) return Number(monthlyOpeningBalance)
+  if (Number.isFinite(Number(account?.lastStatementOpeningBalance))) return Number(account.lastStatementOpeningBalance)
+  if (Number.isFinite(Number(account?.initialBalance))) return Number(account.initialBalance)
+  if (Number.isFinite(Number(account?.balance))) return Number(account.balance)
+  return 0
+}
+
+function getAccountMonthActualClosingBalance(account, selectedMonthKey) {
+  const nextMonthKey = addMonthsToMonthKey(selectedMonthKey, 1)
+  const nextMonthOpening = account?.monthlyOpeningBalances?.[nextMonthKey]
+  if (Number.isFinite(Number(nextMonthOpening))) return Number(nextMonthOpening)
+  if (Number.isFinite(Number(account?.lastStatementClosingBalance))) return Number(account.lastStatementClosingBalance)
+  if (Number.isFinite(Number(account?.current_balance))) return Number(account.current_balance)
+  if (Number.isFinite(Number(account?.balance))) return Number(account.balance)
+  return null
+}
+
+function transactionImpactsAccountBalance(tx) {
+  if (tx?.type === 'transfer_internal') return true
+  return tx?.balanceImpact !== false
+}
+
+function transactionSignedAmountForAccount(tx, accountId) {
+  const amount = Math.abs(toNumber(tx?.amount))
+  if (!amount) return 0
+
+  if (tx?.type === 'transfer_internal') {
+    if (tx?.accountId === accountId) return -amount
+    if (tx?.toAccountId === accountId) return amount
+    return 0
+  }
+
+  if (tx?.accountId !== accountId) return 0
+  if (!transactionImpactsAccountBalance(tx)) return 0
+  if (tx?.type === 'income') return amount
+  return -amount
+}
+
+export function buildAccountReconciliation(account, transactions = [], selectedMonthKey = '') {
+  if (!account) return null
+
+  const source = Array.isArray(transactions) ? transactions : []
+  const confirmedTransactions = source.filter((tx) => tx?.status === 'confirmed')
+  const pendingTransactions = source.filter((tx) => tx?.status === 'pending')
+  const openingBalance = getAccountMonthOpeningBalance(account, selectedMonthKey)
+  const actualClosingBalance = getAccountMonthActualClosingBalance(account, selectedMonthKey)
+  const signedMovements = confirmedTransactions.map((tx) => transactionSignedAmountForAccount(tx, account.id))
+
+  const netMovement = signedMovements.reduce((sum, amount) => sum + amount, 0)
+  const expectedClosingBalance = openingBalance + netMovement
+  const difference = actualClosingBalance === null
+    ? null
+    : Number((actualClosingBalance - expectedClosingBalance).toFixed(2))
+
+  const incomeTotal = confirmedTransactions
+    .filter((tx) => transactionSignedAmountForAccount(tx, account.id) > 0)
+    .reduce((sum, tx) => sum + transactionSignedAmountForAccount(tx, account.id), 0)
+  const outgoingTransactions = confirmedTransactions
+    .map((tx) => ({ tx, signedAmount: transactionSignedAmountForAccount(tx, account.id) }))
+    .filter(({ signedAmount }) => signedAmount < 0)
+  const expenseAndInvestmentTotal = outgoingTransactions
+    .filter(({ tx }) => tx.type === 'expense' || tx.type === 'investment')
+    .reduce((sum, { signedAmount }) => sum + Math.abs(signedAmount), 0)
+  const transferTotal = outgoingTransactions
+    .filter(({ tx }) => canonicalType(tx.type) === 'transfer')
+    .reduce((sum, { signedAmount }) => sum + Math.abs(signedAmount), 0)
+
+  const relatedPendingTransactions = pendingTransactions.filter((tx) => {
+    if (tx?.type === 'transfer_internal') return tx?.accountId === account.id || tx?.toAccountId === account.id
+    return tx?.accountId === account.id
+  })
+
+  return {
+    accountId: account.id,
+    accountName: account.name || 'Conta',
+    monthKey: selectedMonthKey,
+    openingBalance,
+    expectedClosingBalance,
+    actualClosingBalance,
+    difference,
+    reconciled: difference !== null ? Math.abs(difference) < 0.01 : false,
+    hasSnapshot: actualClosingBalance !== null,
+    totalIncome: incomeTotal,
+    totalExpenses: expenseAndInvestmentTotal,
+    totalTransfers: transferTotal,
+    netMovement,
+    pendingTransactions: relatedPendingTransactions,
+    pendingCount: relatedPendingTransactions.length,
+  }
+}
+
+export function buildAccountsReconciliation(accounts = [], transactions = [], selectedMonthKey = '') {
+  return (Array.isArray(accounts) ? accounts : [])
+    .map((account) => buildAccountReconciliation(account, transactions, selectedMonthKey))
+    .filter(Boolean)
 }

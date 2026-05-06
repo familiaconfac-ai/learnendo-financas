@@ -99,8 +99,22 @@ export function useTransactions(year, month) {
     if (!user?.uid) throw new Error('Usuário não autenticado')
     if (!permissions.canLaunch) throw new Error('Seu papel não permite excluir lançamentos neste workspace')
     await deleteTransaction(user.uid, txId, { workspaceId: activeWorkspaceId })
-    await reload()
+    setTransactions((current) => current.filter((tx) => tx.id !== txId))
   }
 
-  return { transactions, loading, error, reload, add, update, remove }
+  async function removeMany(txIds) {
+    if (!user?.uid) throw new Error('Usuário não autenticado')
+    if (!permissions.canLaunch) throw new Error('Seu papel não permite excluir lançamentos neste workspace')
+
+    const ids = Array.isArray(txIds) ? txIds.filter(Boolean) : []
+    if (ids.length === 0) return
+
+    await Promise.all(
+      ids.map((txId) => deleteTransaction(user.uid, txId, { workspaceId: activeWorkspaceId })),
+    )
+    const removedIds = new Set(ids)
+    setTransactions((current) => current.filter((tx) => !removedIds.has(tx.id)))
+  }
+
+  return { transactions, loading, error, reload, add, update, remove, removeMany }
 }

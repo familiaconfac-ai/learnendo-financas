@@ -22,10 +22,6 @@ export function useCategories() {
     setError(null)
     try {
       const data = await fetchCategories(user.uid, { workspaceId: activeWorkspaceId })
-      if (data.length === 0) {
-        // Nenhuma categoria no Firestore — usa lista padrão como referência visual
-        console.log('[useCategories] Nenhuma categoria cadastrada — usando defaults visuais')
-      }
       setCategories(mergeCategoriesWithDefaults(data))
     } catch (err) {
       console.error('[useCategories] Error:', err.message)

@@ -4,7 +4,6 @@ import { useFinance } from '../../context/FinanceContext'
 import { SummaryCard } from '../../components/ui/Card'
 import Card, { CardHeader } from '../../components/ui/Card'
 import { formatCurrency } from '../../utils/formatCurrency'
-import { MOCK_CARDS } from '../../utils/mockData'
 import { useDashboard } from '../../hooks/useDashboard'
 import './Dashboard.css'
 
@@ -47,15 +46,17 @@ export default function Dashboard() {
     possuiVinculoVale: false,
     orcado: 6000,
     pendingCount: 0,
-    reconciled: false,
+    reconciled: true,
+    reconciliationAccountsCount: 0,
+    reconciliationDiff: 0,
     recentTransactions: [],
   }
 
   const summary = liveSummary ?? ZERO
-  const totalCardInvoices = MOCK_CARDS.reduce((sum, card) => sum + card.currentInvoice, 0)
   const scopeMeta = SCOPE_LABEL[summary.scope] ?? SCOPE_LABEL.personal
   const budgetRatio = summary.orcado > 0 ? summary.despesas / summary.orcado : 0
   const firstName = profile?.displayName?.split(' ')[0] ?? 'Usuario'
+  const hasReconciliationData = Number(summary.reconciliationAccountsCount || 0) > 0
 
   return (
     <div className="dashboard-page">
@@ -132,24 +133,27 @@ export default function Dashboard() {
       </div>
 
       <div
-        className={`reconcile-highlight-card rh-${summary.reconciled ? 'ok' : 'pending'}`}
+        className={`reconcile-highlight-card rh-${hasReconciliationData && !summary.reconciled ? 'pending' : 'ok'}`}
         onClick={() => navigate('/reconciliacao')}
         role="button"
         tabIndex={0}
       >
-        <span className="rh-icon">{summary.reconciled ? '✅' : '⚠️'}</span>
+        <span className="rh-icon">{!hasReconciliationData ? '🧾' : summary.reconciled ? '✅' : '⚠️'}</span>
         <div className="rh-info">
           <span className="rh-title">Reconciliacao</span>
-          <span className="rh-status">{summary.reconciled ? 'Conciliado' : 'Pendente'}</span>
+          <span className="rh-status">
+            {!hasReconciliationData ? 'Sem extrato' : summary.reconciled ? 'Conciliado' : 'Pendente'}
+          </span>
         </div>
         <span className="rh-detail">
-          {summary.reconciled ? 'Extrato e lancamentos conferem' : 'Verifique divergencias'}
+          {!hasReconciliationData
+            ? 'Importe um extrato em Contas para comparar saldo real e esperado'
+            : summary.reconciled
+              ? 'Extrato e lancamentos conferem'
+              : `Diferenca atual: ${formatCurrency(summary.reconciliationDiff || 0)}`}
         </span>
         <span className="rh-arrow">›</span>
       </div>
-
-      {/* Mantido calculado para uso futuro. */}
-      {!!totalCardInvoices && null}
 
       {summary.possuiVinculoVale && (
         <Card className="dashboard-budget-card">

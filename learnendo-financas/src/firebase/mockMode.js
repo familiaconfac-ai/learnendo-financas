@@ -1,19 +1,38 @@
+const REQUIRED_FIREBASE_ENV_KEYS = [
+  'VITE_FIREBASE_API_KEY',
+  'VITE_FIREBASE_AUTH_DOMAIN',
+  'VITE_FIREBASE_PROJECT_ID',
+  'VITE_FIREBASE_STORAGE_BUCKET',
+  'VITE_FIREBASE_MESSAGING_SENDER_ID',
+  'VITE_FIREBASE_APP_ID',
+]
+
+const PLACEHOLDER_VALUES = new Set([
+  '',
+  'sua_api_key_aqui',
+  'seu_auth_domain_aqui',
+  'seu_project_id_aqui',
+  'seu_storage_bucket_aqui',
+  'seu_messaging_sender_id_aqui',
+  'seu_app_id_aqui',
+])
+
+export const FIREBASE_MISSING_ENV_KEYS = REQUIRED_FIREBASE_ENV_KEYS.filter((key) => {
+  const value = String(import.meta.env[key] || '').trim()
+  return !value || PLACEHOLDER_VALUES.has(value)
+})
+
 /**
  * MOCK MODE
- * Ativado automaticamente quando VITE_FIREBASE_API_KEY não está definida
- * ou ainda contém o valor-exemplo do .env.example.
- *
- * Nesse modo o app roda 100% local com dados mockados, sem nenhuma
- * chamada ao Firebase. Para sair do mock mode, configure o .env real.
+ * Ativado automaticamente quando qualquer configuração essencial do Firebase
+ * está ausente ou ainda contém valor placeholder.
  */
-export const IS_MOCK_MODE =
-  !import.meta.env.VITE_FIREBASE_API_KEY ||
-  import.meta.env.VITE_FIREBASE_API_KEY === 'sua_api_key_aqui'
+export const IS_MOCK_MODE = FIREBASE_MISSING_ENV_KEYS.length > 0
 
 if (IS_MOCK_MODE) {
   console.warn(
     '%c[Learnendo Finanças] 🟡 Mock Mode ativo — Firebase não configurado.' +
-      ' Configure o .env para conectar ao backend real.',
+      ` Variáveis ausentes: ${FIREBASE_MISSING_ENV_KEYS.join(', ')}.`,
     'color: #d97706; font-weight: bold; font-size: 12px'
   )
 }
