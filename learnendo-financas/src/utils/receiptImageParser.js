@@ -376,6 +376,45 @@ function parseStructuredReceiptItemLine(line) {
   }
 }
 
+function looksGenericReceiptItemLine(line) {
+  const raw = String(line || '').trim()
+  if (!raw) return false
+  if (!lineHasAmount(raw)) return false
+
+  const normalized = normalize(raw)
+  if (isMetadataLine(raw) || hasSummaryKeyword(normalized)) return false
+
+  const description = cleanItemDescription(raw.replace(/\bR\$\s*/gi, ' '))
+  return description.length >= 3
+}
+
+function parseGenericReceiptItemLine(line) {
+  if (!looksGenericReceiptItemLine(line)) return null
+
+  const raw = String(line || '').trim()
+  const amounts = extractLineAmounts(raw)
+  if (amounts.length === 0) return null
+
+  const quantity = normalizeQuantityNumber(extractQuantity(raw)) || null
+  const totalAmount = amounts[amounts.length - 1]?.value || 0
+  const unitAmount = amounts.length >= 2 ? amounts[amounts.length - 2]?.value || 0 : 0
+  const descriptionSource = raw.slice(0, amounts[0].index)
+  const description = cleanItemDescription(
+    descriptionSource
+      .replace(/^[#*\-–—•\s]*/, '')
+      .replace(/^\d+[.)\-\s]+/, ''),
+  )
+
+  if (!description || !(totalAmount > 0)) return null
+
+  return {
+    description,
+    amount: totalAmount,
+    quantity,
+    unitAmount: unitAmount > 0 ? unitAmount : null,
+  }
+}
+
 function scoreReceiptOcrText(text) {
   const lines = String(text || '')
     .split(/\r?\n/)
@@ -712,6 +751,25 @@ function parseReceiptItems(lines, expectedTotal = 0) {
   return trimLikelyOcrDuplicates(items, expectedTotal)
 }
 
+function parseGenericReceiptTextItems(lines, expectedTotal = 0) {
+  const items = []
+
+  for (const rawLine of Array.isArray(lines) ? lines : []) {
+    const line = cleanLine(rawLine)
+    if (!line) continue
+
+    const genericItem = parseGenericReceiptItemLine(line)
+    if (!genericItem) continue
+
+    const item = createReceiptItem(genericItem.description, genericItem.amount, genericItem.quantity)
+    item.status = 'identified'
+    item.unitAmount = genericItem.unitAmount
+    items.push(item)
+  }
+
+  return trimLikelyOcrDuplicates(items, expectedTotal)
+}
+
 async function extractTextWithOcr(file) {
   const { createWorker } = await import('tesseract.js')
   const worker = await createWorker('por')
@@ -997,8 +1055,10 @@ export async function parseReceiptPdfFile(file) {
   const summary = parseReceiptSummary(lines)
   const detailLines = sliceReceiptDetailLines(lines)
   const expectedTotal = findTotalAmount(summary, 0)
+  const receiptLikeItems = finalizeLocalReceiptItems(parseReceiptItems(detailLines, expectedTotal), summary)
+  const genericPdfItems = finalizeLocalReceiptItems(parseGenericReceiptTextItems(lines, expectedTotal), summary)
   let receiptItems = hydrateReceiptItemsFromCache(
-    finalizeLocalReceiptItems(parseReceiptItems(detailLines, expectedTotal), summary),
+    genericPdfItems.length > receiptLikeItems.length ? genericPdfItems : receiptLikeItems,
   )
   let itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   let totalAmount = findTotalAmount(summary, itemTotal)
