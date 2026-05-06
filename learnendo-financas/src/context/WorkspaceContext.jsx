@@ -15,8 +15,9 @@ import {
   upsertWorkspaceNature,
   createWorkspaceContact,
   buildContactDebtLedger,
+  buildWorkspaceFinancialSummary,
 } from '../services/workspaceService'
-import { fetchTransactionsWithOptions } from '../services/transactionService'
+import { fetchAllTransactionsForWorkspace } from '../services/transactionService'
 
 const WorkspaceContext = createContext(null)
 
@@ -28,6 +29,7 @@ export function WorkspaceProvider({ children }) {
   const [contacts, setContacts] = useState([])
   const [transactionNatures, setTransactionNatures] = useState([])
   const [debtLedger, setDebtLedger] = useState([])
+  const [workspaceSummary, setWorkspaceSummary] = useState({ receitas: 0, despesas: 0, investimentos: 0, saldo: 0 })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -55,8 +57,7 @@ export function WorkspaceProvider({ children }) {
     setContacts(contactList)
     setTransactionNatures(natures)
 
-    const now = new Date()
-    const tx = await fetchTransactionsWithOptions(user.uid, now.getFullYear(), now.getMonth() + 1, {
+    const tx = await fetchAllTransactionsForWorkspace(user.uid, {
       workspaceId: activeWorkspaceId,
       viewerRole: myRole,
       viewerUid: user.uid,
@@ -64,6 +65,7 @@ export function WorkspaceProvider({ children }) {
       includeLegacyPersonal: false,
     })
     setDebtLedger(buildContactDebtLedger(tx, contactList))
+    setWorkspaceSummary(buildWorkspaceFinancialSummary(tx))
   }, [activeWorkspaceId, myRole, user?.uid])
 
   const reload = useCallback(async () => {
@@ -74,6 +76,7 @@ export function WorkspaceProvider({ children }) {
       setContacts([])
       setTransactionNatures([])
       setDebtLedger([])
+      setWorkspaceSummary({ receitas: 0, despesas: 0, investimentos: 0, saldo: 0 })
       setLoading(false)
       return
     }
@@ -108,8 +111,7 @@ export function WorkspaceProvider({ children }) {
         setContacts(contactList)
         setTransactionNatures(natures)
 
-        const now = new Date()
-        const tx = await fetchTransactionsWithOptions(user.uid, now.getFullYear(), now.getMonth() + 1, {
+        const tx = await fetchAllTransactionsForWorkspace(user.uid, {
           workspaceId: chosenId,
           viewerRole: role,
           viewerUid: user.uid,
@@ -117,6 +119,7 @@ export function WorkspaceProvider({ children }) {
           includeLegacyPersonal: false,
         })
         setDebtLedger(buildContactDebtLedger(tx, contactList))
+        setWorkspaceSummary(buildWorkspaceFinancialSummary(tx))
       }
     } catch (err) {
       console.error('[WorkspaceContext] load error:', err.message)
@@ -149,8 +152,7 @@ export function WorkspaceProvider({ children }) {
     setContacts(contactList)
     setTransactionNatures(natures)
 
-    const now = new Date()
-    const tx = await fetchTransactionsWithOptions(user.uid, now.getFullYear(), now.getMonth() + 1, {
+    const tx = await fetchAllTransactionsForWorkspace(user.uid, {
       workspaceId: nextWorkspaceId,
       viewerRole: role,
       viewerUid: user.uid,
@@ -158,6 +160,7 @@ export function WorkspaceProvider({ children }) {
       includeLegacyPersonal: false,
     })
     setDebtLedger(buildContactDebtLedger(tx, contactList))
+    setWorkspaceSummary(buildWorkspaceFinancialSummary(tx))
   }
 
   async function renameNatureInline(natureId, label) {
@@ -202,6 +205,7 @@ export function WorkspaceProvider({ children }) {
         members,
         contacts,
         debtLedger,
+        workspaceSummary,
         transactionNatures,
         loading,
         error,

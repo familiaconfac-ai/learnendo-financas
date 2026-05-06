@@ -68,6 +68,28 @@ function txDoc(uid, txId, workspaceId = null) {
   return doc(db, 'users', uid, 'transactions', txId)
 }
 
+async function resolveTransactionDocForMutation(uid, txId, preferredWorkspaceId = null) {
+  if (preferredWorkspaceId) {
+    const workspaceRef = txDoc(uid, txId, preferredWorkspaceId)
+    const workspaceSnap = await getDoc(workspaceRef)
+    if (workspaceSnap.exists()) {
+      return { ref: workspaceRef, snap: workspaceSnap, workspaceId: preferredWorkspaceId }
+    }
+  }
+
+  const personalRef = txDoc(uid, txId, null)
+  const personalSnap = await getDoc(personalRef)
+  if (personalSnap.exists()) {
+    return { ref: personalRef, snap: personalSnap, workspaceId: null }
+  }
+
+  return {
+    ref: txDoc(uid, txId, preferredWorkspaceId),
+    snap: null,
+    workspaceId: preferredWorkspaceId,
+  }
+}
+
 function normalizeNatureId(type, natureId) {
   if (natureId) return natureId
   return NATURE_DEFAULT_BY_TYPE[type] || NATURE_DEFAULT_BY_TYPE.expense
@@ -217,8 +239,9 @@ export async function updateTransaction(uid, txId, data, options = {}) {
   const workspaceId = options.workspaceId || data.workspaceId || null
 
   try {
-    const previousSnap = await getDoc(txDoc(uid, txId, workspaceId))
-    const previousData = previousSnap.exists() ? { id: previousSnap.id, ...previousSnap.data() } : null
+    const resolvedTarget = await resolveTransactionDocForMutation(uid, txId, workspaceId)
+    const previousSnap = resolvedTarget.snap
+    const previousData = previousSnap?.exists() ? { id: previousSnap.id, ...previousSnap.data() } : null
     const payload = { ...data, updatedAt: serverTimestamp() }
     const isInternalTransfer = payload.type === 'transfer_internal'
 
@@ -291,7 +314,7 @@ export async function updateTransaction(uid, txId, data, options = {}) {
       payload.balanceImpact = false
     }
 
-    await updateDoc(txDoc(uid, txId, workspaceId), payload)
+    await updateDoc(resolvedTarget.ref, payload)
 
     const afterTx = {
       ...previousData,
@@ -300,7 +323,7 @@ export async function updateTransaction(uid, txId, data, options = {}) {
       transactionNatureId: payload.transactionNatureId || data.transactionNatureId || previousData?.transactionNatureId,
       status: payload.status || data.status || previousData?.status,
     }
-    await syncDebtBalancesForTransactionChange(workspaceId, previousData, afterTx)
+    await syncDebtBalancesForTransactionChange(resolvedTarget.workspaceId, previousData, afterTx)
   } catch (err) {
     console.error('[TransactionService] Update failed:', err.code, err.message)
     throw err
@@ -311,10 +334,11 @@ export async function deleteTransaction(uid, txId, options = {}) {
   const workspaceId = options.workspaceId || null
 
   try {
-    const previousSnap = await getDoc(txDoc(uid, txId, workspaceId))
-    const previousData = previousSnap.exists() ? { id: previousSnap.id, ...previousSnap.data() } : null
-    await deleteDoc(txDoc(uid, txId, workspaceId))
-    await syncDebtBalancesForTransactionChange(workspaceId, previousData, null)
+    const resolvedTarget = await resolveTransactionDocForMutation(uid, txId, workspaceId)
+    const previousSnap = resolvedTarget.snap
+    const previousData = previousSnap?.exists() ? { id: previousSnap.id, ...previousSnap.data() } : null
+    await deleteDoc(resolvedTarget.ref)
+    await syncDebtBalancesForTransactionChange(resolvedTarget.workspaceId, previousData, null)
   } catch (err) {
     console.error('[TransactionService] Delete failed:', err.code, err.message)
     throw err
@@ -323,6 +347,38 @@ export async function deleteTransaction(uid, txId, options = {}) {
 
 export async function fetchTransactions(uid, year, month, options = {}) {
   return fetchTransactionsWithOptions(uid, year, month, options)
+}
+
+export async function fetchAllTransactionsForWorkspace(uid, options = {}) {
+  const workspaceId = options.workspaceId || null
+
+  try {
+    let docs = []
+
+    if (workspaceId) {
+      const workspaceSnap = await getDocs(txCol(uid, workspaceId))
+      docs = workspaceSnap.docs.map(mapTransactionSnapshot)
+    } else {
+      const personalSnap = await getDocs(txCol(uid, null))
+      docs = personalSnap.docs.map(mapTransactionSnapshot)
+    }
+
+    if (workspaceId && options.includeLegacyPersonal !== false) {
+      const legacySnap = await getDocs(txCol(uid, null))
+      const legacyDocs = legacySnap.docs
+        .map(mapTransactionSnapshot)
+        .filter((tx) => !tx.workspaceId)
+      docs = [...docs, ...legacyDocs]
+    }
+
+    docs = applyViewerScope(docs, options)
+
+    const includeRecurringAuto = options.includeRecurringAuto !== false
+    return includeRecurringAuto ? docs : docs.filter((tx) => tx.origin !== 'recurring_auto')
+  } catch (err) {
+    console.error('[TransactionService] Fetch all failed:', err.code, err.message)
+    throw err
+  }
 }
 
 export async function fetchTransactionsWithOptions(uid, year, month, options = {}) {

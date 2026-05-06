@@ -59,7 +59,7 @@ function useToast() {
 
 export default function Familia() {
   const { user } = useAuth()
-  const { createInviteLink, activeWorkspaceId, permissions, debtLedger } = useWorkspace()
+  const { createInviteLink, activeWorkspaceId, permissions, debtLedger, workspaceSummary } = useWorkspace()
   const {
     family, members, invitations, loading, error,
     myRole, canManage, reload,
@@ -121,9 +121,9 @@ export default function Familia() {
   // ── Derived ────────────────────────────────────────────────────────────────
 
   const myMember   = members.find((m) => m.uid === user?.uid || m.id === user?.uid)
-  const totalReceitas = realIncome
-  const totalDespesas = realExpense
-  const totalSaldo    = realIncome - realExpense
+  const totalReceitas = Number(workspaceSummary?.receitas || realIncome || 0)
+  const totalDespesas = Number(workspaceSummary?.despesas || realExpense || 0)
+  const totalSaldo    = Number(workspaceSummary?.saldo ?? (realIncome - realExpense))
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 

@@ -3,7 +3,6 @@ import Card, { CardHeader } from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { InlineLoading } from '../../components/ui/Loading'
-import { generateMonthlyPDF } from '../../services/pdfService'
 import { MOCK_ADMIN_USERS } from '../../utils/mockData'
 import './AdminDashboard.css'
 
@@ -15,6 +14,7 @@ export default function AdminDashboard() {
   async function handleExportConsolidado() {
     setLoadingPDF(true)
     try {
+      const { generateMonthlyPDF } = await import('../../services/pdfService')
       await generateMonthlyPDF({ isAdmin: true, users })
     } finally {
       setLoadingPDF(false)

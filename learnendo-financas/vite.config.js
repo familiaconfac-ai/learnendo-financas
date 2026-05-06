@@ -29,12 +29,24 @@ export default defineConfig({
             return 'vendor-charts'
           }
 
-          if (id.includes('firebase')) {
-            return 'vendor-firebase'
+          if (id.includes('firebase/app')) {
+            return 'vendor-firebase-app'
           }
 
-          if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('pdfjs-dist')) {
-            return 'vendor-pdf'
+          if (id.includes('firebase/auth')) {
+            return 'vendor-firebase-auth'
+          }
+
+          if (id.includes('firebase/firestore')) {
+            return 'vendor-firebase-firestore'
+          }
+
+          if (id.includes('jspdf') || id.includes('jspdf-autotable')) {
+            return 'vendor-pdf-export'
+          }
+
+          if (id.includes('pdfjs-dist')) {
+            return 'vendor-pdf-parser'
           }
         },
       },

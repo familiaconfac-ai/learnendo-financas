@@ -16,7 +16,6 @@ import { useFinance } from '../../context/FinanceContext'
 import { useDashboard } from '../../hooks/useDashboard'
 import { useBudget } from '../../hooks/useBudget'
 import { useTransactions } from '../../hooks/useTransactions'
-import { generateMonthlyPDF } from '../../services/pdfService'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { buildReceiptBudgetImportanceBreakdown } from '../../utils/financeCalculations'
 import { getReceiptImportanceLabel } from '../../utils/receiptDetailCatalog'
@@ -63,6 +62,7 @@ export default function Relatorios() {
   async function handleExportPDF() {
     setLoadingPDF(true)
     try {
+      const { generateMonthlyPDF } = await import('../../services/pdfService')
       await generateMonthlyPDF({ summary, budget })
     } finally {
       setLoadingPDF(false)

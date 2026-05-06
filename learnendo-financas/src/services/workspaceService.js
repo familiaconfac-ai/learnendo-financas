@@ -342,14 +342,38 @@ export async function updateWorkspaceMemberRole(workspaceId, actor, memberUid, r
   }, { merge: true })
 }
 
-function directionSign(nature) {
-  if (nature === 'emprestimo_concedido' || nature === 'ajuda_custo_enviada' || nature === 'doacao_enviada' || nature === 'oferta_enviada' || nature === 'mesada') {
-    return -1
+function contactDebtDelta(tx) {
+  const amount = Math.abs(Number(tx?.amount || 0))
+  if (!amount) return 0
+
+  switch (tx?.transactionNatureId) {
+    case 'nature_loan_given':
+      return amount
+    case 'nature_loan_received':
+      return -amount
+    case 'nature_loan_repayment':
+      return -amount
+    case 'nature_debt_payment':
+      return amount
+    case 'nature_restitution':
+      return -amount
+    default:
+      return 0
   }
-  if (nature === 'emprestimo_recebido' || nature === 'devolucao_emprestimo' || nature === 'restituicao' || nature === 'ajuda_custo_recebida' || nature === 'doacao_recebida' || nature === 'oferta_recebida' || nature === 'reembolso') {
-    return 1
-  }
-  return 0
+}
+
+export function buildWorkspaceFinancialSummary(transactions = []) {
+  return (Array.isArray(transactions) ? transactions : [])
+    .filter((tx) => tx.status === 'confirmed')
+    .reduce((acc, tx) => {
+      const amount = Math.abs(Number(tx.amount || 0))
+      if (!amount) return acc
+      if (tx.type === 'income') acc.receitas += amount
+      if (tx.type === 'expense') acc.despesas += amount
+      if (tx.type === 'investment') acc.investimentos += amount
+      acc.saldo = acc.receitas - acc.despesas - acc.investimentos
+      return acc
+    }, { receitas: 0, despesas: 0, investimentos: 0, saldo: 0 })
 }
 
 export function buildContactDebtLedger(transactions = [], contacts = []) {
@@ -360,11 +384,9 @@ export function buildContactDebtLedger(transactions = [], contacts = []) {
   transactions
     .filter((tx) => tx.status === 'confirmed' && tx.contactId)
     .forEach((tx) => {
-      const sign = directionSign(tx.transactionNatureKey)
-      if (sign === 0) return
-      const amount = Math.abs(Number(tx.amount || 0))
-      if (!amount) return
-      balanceByContactId[tx.contactId] = (balanceByContactId[tx.contactId] || 0) + amount * sign
+      const delta = contactDebtDelta(tx)
+      if (delta === 0) return
+      balanceByContactId[tx.contactId] = (balanceByContactId[tx.contactId] || 0) + delta
       if (!txNameByContactId[tx.contactId] && tx.contactName) {
         txNameByContactId[tx.contactId] = tx.contactName
       }
