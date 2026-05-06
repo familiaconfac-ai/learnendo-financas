@@ -1,7 +1,6 @@
 import {
-  getReceiptAiTaxonomyPayload,
+  classifyReceiptItemByTaxonomy,
   normalizeTaxonomyText,
-  resolveReceiptClassification,
 } from '../utils/financeTaxonomy'
 import {
   callGeminiForJson,
@@ -9,8 +8,8 @@ import {
   isGeminiRateLimitError,
 } from './geminiService'
 
-const RECEIPT_ANALYSIS_CACHE_KEY = 'learnendo.receipt.analysis.v2'
-const RECEIPT_ITEM_CACHE_KEY = 'learnendo.receipt.items.v2'
+const RECEIPT_ANALYSIS_CACHE_KEY = 'learnendo.receipt.analysis.v3'
+const RECEIPT_ITEM_CACHE_KEY = 'learnendo.receipt.items.v3'
 
 function readLocalCache(key) {
   if (typeof window === 'undefined' || !window.localStorage) return {}
@@ -77,28 +76,23 @@ async function toGeminiImagePart(file) {
 }
 
 function buildPrompt({ fileName, ocrText, localSummary }) {
-  const taxonomy = getReceiptAiTaxonomyPayload()
   const expectedCount = Number(localSummary?.expectedItemCount || 0)
 
   return [
     'Analise esta imagem de cupom fiscal.',
-    'Extraia cada item com: Nome do Produto, Valor Unitario, Quantidade quando existir e Sugestao de Subcategoria.',
+    'Extraia os itens do cupom linha por linha, sem resumir.',
+    'Seu trabalho principal e OCR estruturado: identificar descricao do produto, quantidade, valor unitario e valor total de cada linha.',
     'Nao junte linhas diferentes em um item so.',
     'Nao repita item. Nao invente item. Nao devolva item com valor zero.',
-    expectedCount > 0 ? `O cupom indica aproximadamente ${expectedCount} itens. Tente preservar essa quantidade real sem duplicar linhas.` : 'O cupom pode ter muitos itens; mantenha a lista completa.',
-    'Baseie a classificacao SOMENTE na taxonomia JSON abaixo.',
-    'Categorias validas: Transporte, Habitacao, Alimentacao, Saude/Pessoal e Outros quando realmente nao houver encaixe melhor.',
-    'Identifique itens de limpeza automotiva, estetica automotiva ou manutencao do carro e classifique em Transporte > Estetica Automotiva ou Transporte > Mecanica, mesmo se o cupom for de supermercado.',
-    'Nao invente categorias, nao crie nomes novos e nao traduza chaves.',
+    expectedCount > 0 ? `O cupom indica ${expectedCount} itens. Tente retornar exatamente essa quantidade se a imagem permitir.` : 'O cupom pode ter muitos itens; mantenha a lista completa.',
+    'Se uma descricao estiver abreviada no cupom, preserve a abreviacao original em vez de inventar nome novo.',
+    'Se uma linha estiver parcialmente ilegivel, mantenha a melhor descricao bruta possivel, mas nao descarte o item.',
     'Responda apenas JSON valido neste formato:',
-    '{"merchantName":"string","purchaseDate":"YYYY-MM-DD|null","totalAmount":0,"items":[{"description":"string","amount":0,"unitAmount":0,"quantity":null,"detailCategoryKey":"string","detailSubcategoryKey":"string","importance":"essential|necessary|superfluous"}]}',
+    '{"merchantName":"string","purchaseDate":"YYYY-MM-DD|null","totalAmount":0,"items":[{"description":"string","amount":0,"unitAmount":0,"quantity":null}]}',
     'Use "amount" como valor final do item na nota. Use "unitAmount" quando conseguir identificar o valor unitario.',
     '',
     `Arquivo: ${fileName || 'cupom'}`,
     `Resumo OCR local: ${JSON.stringify(localSummary || {})}`,
-    'Taxonomia permitida:',
-    JSON.stringify(taxonomy),
-    '',
     'Texto OCR de apoio:',
     String(ocrText || '').slice(0, 6000),
   ].join('\n')
@@ -130,11 +124,7 @@ function normalizeAiItems(items) {
       const amount = normalizeAmount(item?.amount)
       if (!description || !amount) return null
 
-      const classification = resolveReceiptClassification(
-        item?.detailCategoryKey,
-        item?.detailSubcategoryKey,
-        { importance: item?.importance },
-      )
+      const classification = classifyReceiptItemByTaxonomy(description)
 
       return {
         id: `receipt_ai_${Date.now()}_${index}`,
@@ -265,7 +255,10 @@ export async function analyzeReceiptWithAiFallback({
   const raw = await callGeminiForJson([
     { text: prompt },
     imagePart,
-  ])
+  ], {
+    temperature: 0,
+    maxOutputTokens: 8192,
+  })
 
   const items = normalizeAiItems(raw?.items)
   if (items.length === 0) return null

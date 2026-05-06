@@ -61,7 +61,7 @@ export function geminiModelName() {
   return GEMINI_MODEL
 }
 
-async function callGeminiApi({ parts, responseMimeType = 'application/json', temperature = 0.1 }) {
+async function callGeminiApi({ parts, responseMimeType = 'application/json', temperature = 0.1, maxOutputTokens = 8192 }) {
   const apiKey = geminiApiKey()
   if (!apiKey) {
     const error = new Error('Chave Gemini nao configurada.')
@@ -78,6 +78,7 @@ async function callGeminiApi({ parts, responseMimeType = 'application/json', tem
         generationConfig: {
           temperature,
           responseMimeType,
+          maxOutputTokens,
         },
         contents: [
           {
@@ -99,6 +100,7 @@ export async function callGeminiForJson(parts, options = {}) {
     parts,
     responseMimeType: 'application/json',
     temperature: options.temperature ?? 0.1,
+    maxOutputTokens: options.maxOutputTokens ?? 8192,
   })
 
   return safeJsonParse(extractGeminiText(payload))
