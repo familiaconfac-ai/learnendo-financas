@@ -6,6 +6,7 @@ import { useAccounts } from '../../hooks/useAccounts'
 import { useCards } from '../../hooks/useCards'
 import { useCategories } from '../../hooks/useCategories'
 import { addTransaction } from '../../services/transactionService'
+import { isReceiptAiFallbackConfigured } from '../../services/receiptAiFallbackService'
 import { parseStatementFile } from '../../utils/statementParser'
 import { handleImport } from '../../utils/importRules'
 import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
@@ -165,6 +166,7 @@ export default function Importacao() {
   const selectedRows = parsedRows.filter((row) => selectedIds.has(row.id))
   const selectedCount = selectedRows.length
   const selectedTotal = selectedRows.reduce((sum, row) => sum + normalizeAmount(row.amount), 0)
+  const receiptAiAvailable = isReceiptAiFallbackConfigured()
 
   function resetPreview() {
     setParsedRows([])
@@ -560,6 +562,11 @@ export default function Importacao() {
           <span className="import-mode-kicker">{config.kicker}</span>
           <h2>{config.title}</h2>
           <p>{config.description}</p>
+          {importType === 'receipt' && !receiptAiAvailable && (
+            <p className="import-mode-warning">
+              Scanner inteligente indisponivel nesta instalacao. Cupons longos por foto exigem `VITE_GEMINI_API_KEY` no `.env`.
+            </p>
+          )}
         </div>
       </div>
 

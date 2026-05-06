@@ -115,6 +115,11 @@
   font-size: 0.84rem;
   color: var(--color-text-muted);
 }
+.import-mode-warning {
+  margin-top: 0.6rem !important;
+  color: #92400e !important;
+  font-weight: 600;
+}
 
 .import-mode-kicker {
   font-size: 0.72rem;

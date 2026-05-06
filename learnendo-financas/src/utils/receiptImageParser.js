@@ -806,6 +806,7 @@ export async function parseReceiptImageFile(file) {
   let itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   let totalAmount = findTotalAmount(summary, itemTotal)
   let aiWarningMessage = ''
+  const needsAdvancedRead = shouldUseAiFallback(receiptItems, totalAmount) || shouldForceAiFallback(receiptItems, summary, totalAmount)
 
   if (isReceiptAiFallbackConfigured()) {
     try {
@@ -845,8 +846,8 @@ export async function parseReceiptImageFile(file) {
       }
       console.warn('[ReceiptAI] AI fallback unavailable, keeping local OCR result:', error.message)
     }
-  } else if (shouldUseAiFallback(receiptItems, totalAmount) || shouldForceAiFallback(receiptItems, summary, totalAmount)) {
-    aiWarningMessage = 'Leitura automatica avancada indisponivel. Configure a chave Gemini para melhorar cupons longos.'
+  } else if (needsAdvancedRead) {
+    throw new Error('Este cupom precisa do scanner inteligente para ser lido corretamente. Configure a chave Gemini no arquivo .env para importar cupons longos por foto.')
   }
 
   const topHints = [...new Set(receiptItems.flatMap((item) => item.budgetCategoryHints || []))].slice(0, 4)
