@@ -18,6 +18,7 @@ import {
   createWorkspaceProject,
   buildContactDebtLedger,
   buildWorkspaceFinancialSummary,
+  buildWorkspaceProjectSnapshots,
 } from '../services/workspaceService'
 import { fetchAllTransactionsForWorkspace } from '../services/transactionService'
 
@@ -68,6 +69,7 @@ export function WorkspaceProvider({ children }) {
       includeRecurringAuto: true,
       includeLegacyPersonal: false,
     })
+    setProjects(buildWorkspaceProjectSnapshots(projectList, tx))
     setDebtLedger(buildContactDebtLedger(tx, contactList))
     setWorkspaceSummary(buildWorkspaceFinancialSummary(tx))
   }, [activeWorkspaceId, myRole, user?.uid])
@@ -113,7 +115,6 @@ export function WorkspaceProvider({ children }) {
           fetchWorkspaceNatures(chosenId),
         ])
 
-        setProjects(projectList)
         setMembers(memberList)
         setContacts(contactList)
         setTransactionNatures(naturesList)
@@ -125,6 +126,7 @@ export function WorkspaceProvider({ children }) {
           includeRecurringAuto: true,
           includeLegacyPersonal: false,
         })
+        setProjects(buildWorkspaceProjectSnapshots(projectList, tx))
         setDebtLedger(buildContactDebtLedger(tx, contactList))
         setWorkspaceSummary(buildWorkspaceFinancialSummary(tx))
       }
@@ -156,7 +158,6 @@ export function WorkspaceProvider({ children }) {
       fetchWorkspaceNatures(nextWorkspaceId),
     ])
 
-    setProjects(projectList)
     setMembers(memberList)
     setContacts(contactList)
     setTransactionNatures(naturesList)
@@ -168,6 +169,7 @@ export function WorkspaceProvider({ children }) {
       includeRecurringAuto: true,
       includeLegacyPersonal: false,
     })
+    setProjects(buildWorkspaceProjectSnapshots(projectList, tx))
     setDebtLedger(buildContactDebtLedger(tx, contactList))
     setWorkspaceSummary(buildWorkspaceFinancialSummary(tx))
   }

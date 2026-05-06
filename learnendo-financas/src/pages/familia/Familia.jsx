@@ -3,6 +3,7 @@ import { collection, getDocs } from 'firebase/firestore'
 import Card, { CardHeader } from '../../components/ui/Card'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { useFamilia } from '../../hooks/useFamilia'
+import { useAccounts } from '../../hooks/useAccounts'
 import { useAuth } from '../../context/AuthContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { db } from '../../firebase/config'
@@ -59,6 +60,7 @@ function useToast() {
 
 export default function Familia() {
   const { user } = useAuth()
+  const { accounts } = useAccounts()
   const {
     createInviteLink,
     activeWorkspace,
@@ -104,6 +106,8 @@ export default function Familia() {
   const [projectTarget,      setProjectTarget]       = useState('')
   const [projectCurrent,     setProjectCurrent]      = useState('')
   const [projectAccount,     setProjectAccount]      = useState('')
+  const [projectAccountId,   setProjectAccountId]    = useState('')
+  const [projectMatchText,   setProjectMatchText]    = useState('')
   const [projectNotes,       setProjectNotes]        = useState('')
   const [realIncome,         setRealIncome]          = useState(0)
   const [realExpense,        setRealExpense]         = useState(0)
@@ -147,7 +151,7 @@ export default function Familia() {
   const activeProjects = Array.isArray(projects) ? projects.filter((project) => project.status !== 'archived') : []
   const leadProject = activeProjects[0] || null
   const projectLabel = leadProject ? leadProject.name : 'Projetos'
-  const projectHighlight = leadProject ? formatCurrency(Number(leadProject.currentAmount || 0)) : String(activeProjects.length)
+  const projectHighlight = leadProject ? formatCurrency(Number(leadProject.effectiveCurrentAmount || 0)) : String(activeProjects.length)
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -316,7 +320,9 @@ export default function Familia() {
         name: projectName.trim(),
         targetAmount: projectTarget,
         currentAmount: projectCurrent,
+        linkedAccountId: projectAccountId,
         linkedAccountLabel: projectAccount.trim(),
+        matchText: projectMatchText.trim(),
         notes: projectNotes.trim(),
       })
       setProjectOpen(false)
@@ -324,6 +330,8 @@ export default function Familia() {
       setProjectTarget('')
       setProjectCurrent('')
       setProjectAccount('')
+      setProjectAccountId('')
+      setProjectMatchText('')
       setProjectNotes('')
       showToast('Projeto familiar criado ✅')
     } catch (err) {
@@ -525,7 +533,7 @@ export default function Familia() {
           <ul className="projects-list">
             {activeProjects.map((project) => {
               const targetAmount = Number(project.targetAmount || 0)
-              const currentAmount = Number(project.currentAmount || 0)
+              const currentAmount = Number(project.effectiveCurrentAmount || project.currentAmount || 0)
               const progress = targetAmount > 0
                 ? Math.max(0, Math.min(100, Number(project.progress || (currentAmount / targetAmount) * 100)))
                 : 0
@@ -547,7 +555,15 @@ export default function Familia() {
                     <div className="project-meta">
                       <span>{progress.toFixed(0)}% concluido</span>
                       {project.linkedAccountLabel && <span>Conta: {project.linkedAccountLabel}</span>}
+                      {project.matchText && <span>Filtro: {project.matchText}</span>}
+                      {project.isAutoTracked && <span>Auto: {project.trackedTransactionsCount} lancamentos</span>}
                     </div>
+                    {project.isAutoTracked && (
+                      <div className="project-meta">
+                        <span>Base manual: {formatCurrency(Number(project.currentAmount || 0))}</span>
+                        <span>Movimento automatico: {formatCurrency(Number(project.trackedAmount || 0))}</span>
+                      </div>
+                    )}
                     {project.notes && <p className="project-notes">{project.notes}</p>}
                   </div>
                 </li>
@@ -985,7 +1001,7 @@ export default function Familia() {
                 />
               </div>
               <div className="form-group">
-                <label>Valor atual</label>
+                <label>Saldo inicial manual</label>
                 <input
                   type="number"
                   min="0"
@@ -996,7 +1012,36 @@ export default function Familia() {
                 />
               </div>
               <div className="form-group">
-                <label>Conta de referencia</label>
+                <label>Conta real para acompanhar</label>
+                <select
+                  value={projectAccountId}
+                  onChange={(e) => {
+                    const nextId = e.target.value
+                    const selectedAccount = accounts.find((account) => account.id === nextId)
+                    setProjectAccountId(nextId)
+                    setProjectAccount(selectedAccount ? `${selectedAccount.name}${selectedAccount.bank ? ` - ${selectedAccount.bank}` : ''}` : '')
+                  }}
+                >
+                  <option value="">Selecione uma conta</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}{account.bank ? ` - ${account.bank}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Texto ou categoria para identificar</label>
+                <input
+                  type="text"
+                  value={projectMatchText}
+                  onChange={(e) => setProjectMatchText(e.target.value)}
+                  placeholder="Ex: viagem, caixinha viagem, reserva"
+                  maxLength={80}
+                />
+              </div>
+              <div className="form-group">
+                <label>Nome livre da conta</label>
                 <input
                   type="text"
                   value={projectAccount}

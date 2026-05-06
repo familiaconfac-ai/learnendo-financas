@@ -262,7 +262,9 @@ export async function createWorkspaceProject(workspaceId, payload = {}, actorUid
     targetAmount: Number.isFinite(targetAmount) ? targetAmount : 0,
     currentAmount: Number.isFinite(currentAmount) ? currentAmount : 0,
     progress,
+    linkedAccountId: payload.linkedAccountId || '',
     linkedAccountLabel: payload.linkedAccountLabel || '',
+    matchText: String(payload.matchText || '').trim(),
     notes: payload.notes || '',
     status: payload.status || 'active',
     createdBy: actorUid || null,
@@ -271,6 +273,85 @@ export async function createWorkspaceProject(workspaceId, payload = {}, actorUid
   })
 
   return ref.id
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
+function transactionSignedAmountForProject(tx, accountId) {
+  const amount = Math.abs(Number(tx?.amount || 0))
+  if (!amount || !accountId) return 0
+
+  if (tx?.type === 'transfer_internal') {
+    if (tx?.accountId === accountId) return -amount
+    if (tx?.toAccountId === accountId) return amount
+    return 0
+  }
+
+  if (tx?.accountId !== accountId || tx?.balanceImpact === false) return 0
+  if (tx?.type === 'income') return amount
+  return -amount
+}
+
+function transactionMatchesProject(project, tx) {
+  if (!project || !tx || tx?.status !== 'confirmed') return false
+
+  const linkedAccountId = project.linkedAccountId || ''
+  if (linkedAccountId) {
+    const touchesAccount = tx?.accountId === linkedAccountId || tx?.toAccountId === linkedAccountId
+    if (!touchesAccount) return false
+  }
+
+  const matchText = normalizeSearchText(project.matchText)
+  if (!matchText) return !!linkedAccountId
+
+  const haystack = [
+    tx?.description,
+    tx?.notes,
+    tx?.categoryName,
+    tx?.subcategoryName,
+    tx?.transactionNatureLabel,
+    ...(Array.isArray(tx?.receiptItems)
+      ? tx.receiptItems.flatMap((item) => [item?.name, item?.budgetCategoryName])
+      : []),
+  ]
+    .map(normalizeSearchText)
+    .filter(Boolean)
+    .join(' ')
+
+  return haystack.includes(matchText)
+}
+
+export function buildWorkspaceProjectSnapshots(projects = [], transactions = []) {
+  const sourceProjects = Array.isArray(projects) ? projects : []
+  const sourceTransactions = Array.isArray(transactions) ? transactions : []
+
+  return sourceProjects.map((project) => {
+    const matchedTransactions = sourceTransactions.filter((tx) => transactionMatchesProject(project, tx))
+    const trackedAmount = matchedTransactions.reduce((sum, tx) => (
+      sum + transactionSignedAmountForProject(tx, project.linkedAccountId)
+    ), 0)
+    const baseAmount = Number(project.currentAmount || 0)
+    const effectiveCurrentAmount = Number((baseAmount + trackedAmount).toFixed(2))
+    const targetAmount = Number(project.targetAmount || 0)
+    const progress = targetAmount > 0
+      ? Math.max(0, Math.min(100, (effectiveCurrentAmount / targetAmount) * 100))
+      : 0
+
+    return {
+      ...project,
+      trackedAmount,
+      trackedTransactionsCount: matchedTransactions.length,
+      effectiveCurrentAmount,
+      progress,
+      isAutoTracked: !!(project.linkedAccountId || project.matchText),
+    }
+  })
 }
 
 export async function upsertWorkspaceNature(workspaceId, natureId, patch) {
