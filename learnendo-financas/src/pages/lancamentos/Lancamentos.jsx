@@ -1887,6 +1887,10 @@ transactions.length === 0 ? (
               onChange={(items) => setForm((f) => ({ ...f, receiptItems: items }))}
               totalAmount={form.amount}
               expenseCategories={categories.filter((category) => category.type === 'expense')}
+              showImportAction={!!form.receiptPlaceholderEnabled}
+              onImportReceipt={form.receiptPlaceholderEnabled
+                ? ((e) => handleSubmit(e, { redirectToReceiptImport: true }))
+                : undefined}
             />
           )}
           <div className="form-check">

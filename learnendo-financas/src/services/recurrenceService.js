@@ -144,7 +144,7 @@ async function updateRecurrenceRule(uid, recurrenceId, patch) {
 }
 
 async function generateTransactionsForRuleThroughMonth(uid, rule, targetMonth, options = {}) {
-  const workspaceId = options.workspaceId || rule.workspaceId || null
+  const workspaceId = rule.workspaceId ?? options.workspaceId ?? null
   const normalized = normalizeRecurrencePayload(rule)
   const startMonth = normalized.startMonth
   const endMonth = normalized.endMonth
@@ -261,7 +261,9 @@ export async function ensureMonthlyRecurringTransactions(uid, year, month, optio
   const targetMonth = toMonthKey(year, month)
   const rules = (await getActiveRecurrenceRules(uid)).filter((rule) => {
     const ruleWorkspaceId = rule.workspaceId || null
-    return ruleWorkspaceId === workspaceId
+    if (ruleWorkspaceId === workspaceId) return true
+    if (workspaceId && options.includeLegacyPersonal !== false && ruleWorkspaceId === null) return true
+    return false
   })
   if (rules.length === 0) return { generated: 0, skipped: 0, finished: 0 }
 
@@ -269,117 +271,13 @@ export async function ensureMonthlyRecurringTransactions(uid, year, month, optio
   let skipped = 0
   let finished = 0
 
-  const txCacheByMonth = new Map()
-  async function getMonthTransactions(monthKey) {
-    if (txCacheByMonth.has(monthKey)) return txCacheByMonth.get(monthKey)
-    const { year: y, month: m } = parseMonthKey(monthKey)
-    const txList = await fetchTransactionsWithOptions(uid, y, m, {
-      includeRecurringAuto: true,
+  for (const rule of rules) {
+    const result = await generateTransactionsForRuleThroughMonth(uid, rule, targetMonth, {
       workspaceId,
     })
-    txCacheByMonth.set(monthKey, txList)
-    return txList
-  }
-
-  for (const rule of rules) {
-    const normalized = normalizeRecurrencePayload(rule)
-    const startMonth = normalized.startMonth
-    const endMonth = normalized.endMonth
-
-    if (compareMonthKey(targetMonth, startMonth) < 0) continue
-    if (endMonth && compareMonthKey(targetMonth, endMonth) > 0) {
-      await updateRecurrenceRule(uid, rule.id, { active: false })
-      finished++
-      continue
-    }
-
-    const lastGeneratedMonth = rule.lastGeneratedMonth || addMonths(startMonth, -1)
-    let monthCursor = addMonths(lastGeneratedMonth, 1)
-    let currentInstallment = Number(rule.currentInstallment || 0)
-
-    while (compareMonthKey(monthCursor, targetMonth) <= 0) {
-      if (compareMonthKey(monthCursor, startMonth) < 0) {
-        monthCursor = addMonths(monthCursor, 1)
-        continue
-      }
-
-      if (endMonth && compareMonthKey(monthCursor, endMonth) > 0) {
-        await updateRecurrenceRule(uid, rule.id, {
-          active: false,
-          lastGeneratedMonth: addMonths(monthCursor, -1),
-          currentInstallment,
-        })
-        finished++
-        break
-      }
-
-      const installmentToGenerate = currentInstallment + 1
-      if (isFixedRecurrence(normalized) && installmentToGenerate > Number(normalized.totalInstallments || 0)) {
-        await updateRecurrenceRule(uid, rule.id, { active: false, currentInstallment })
-        finished++
-        break
-      }
-
-      const txForMonth = await getMonthTransactions(monthCursor)
-      const duplicate = txForMonth.some((tx) => (
-        tx.recurringId === rule.id && tx.recurringInstanceMonth === monthCursor
-      ))
-
-      if (!duplicate) {
-        await addTransaction(uid, {
-          type: rule.type,
-          description: rule.description,
-          amount: Number(rule.amount),
-          date: toDateForMonth(monthCursor, rule.startDate),
-          accountId: rule.accountId || null,
-          toAccountId: rule.toAccountId || null,
-          categoryId: rule.categoryId || null,
-          categoryName: rule.categoryName || null,
-          subcategoryId: rule.subcategoryId || null,
-          subcategoryName: rule.subcategoryName || null,
-          notes: rule.notes || '',
-          paymentMethod: rule.paymentMethod || null,
-          cardId: rule.cardId || null,
-          cardName: rule.cardName || null,
-          origin: 'recurring_auto',
-          status: 'confirmed',
-          recurringId: rule.id,
-          recurringType: normalized.recurrenceType,
-          recurringInstanceMonth: monthCursor,
-          installmentNumber: isFixedRecurrence(normalized) ? installmentToGenerate : null,
-          transactionNatureId: rule.transactionNatureId || null,
-          transactionNatureKey: rule.transactionNatureKey || null,
-          transactionNatureLabel: rule.transactionNatureLabel || null,
-          affectsBudget: typeof rule.affectsBudget === 'boolean' ? rule.affectsBudget : rule.type !== 'transfer_internal',
-          balanceImpact: typeof rule.balanceImpact === 'boolean'
-            ? rule.balanceImpact
-            : rule.type !== 'transfer_internal',
-          workspaceId,
-          createdBy: uid,
-          userId: uid,
-        }, { workspaceId })
-        generated++
-        txForMonth.push({ recurringId: rule.id, recurringInstanceMonth: monthCursor })
-      } else {
-        skipped++
-      }
-
-      currentInstallment = installmentToGenerate
-      monthCursor = addMonths(monthCursor, 1)
-    }
-
-    const lastProcessedMonth = addMonths(monthCursor, -1)
-    const endedByInstallments = (
-      isFixedRecurrence(normalized) && currentInstallment >= Number(normalized.totalInstallments || 0)
-    )
-
-    await updateRecurrenceRule(uid, rule.id, {
-      currentInstallment,
-      lastGeneratedMonth: compareMonthKey(lastProcessedMonth, startMonth) >= 0 ? lastProcessedMonth : rule.lastGeneratedMonth,
-      active: endedByInstallments ? false : true,
-    })
-
-    if (endedByInstallments) finished++
+    generated += result.generated
+    skipped += result.skipped
+    finished += result.finished
   }
 
   return { generated, skipped, finished }

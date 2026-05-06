@@ -17,6 +17,8 @@ export default function ReceiptDetailEditor({
   onChange,
   totalAmount,
   expenseCategories,
+  showImportAction = false,
+  onImportReceipt,
 }) {
   const [expandedId, setExpandedId] = useState(null)
   const summary = useMemo(() => summarizeReceiptDetail(items, totalAmount), [items, totalAmount])
@@ -114,6 +116,19 @@ export default function ReceiptDetailEditor({
           <p className="receipt-detail-hint">
             Cada item precisa de categoria analitica, subcategoria, marcacao essencial/necessario/superfluo e categoria real de orcamento.
           </p>
+
+          {(showImportAction || onImportReceipt) && (
+            <div className="receipt-detail-actions">
+              {showImportAction && onImportReceipt && (
+                <button type="button" className="receipt-import-btn" onClick={onImportReceipt}>
+                  Salvar e subir cupom
+                </button>
+              )}
+              <span className="receipt-detail-hint">
+                Se o leitor nao trouxer tudo certo, voce ainda pode completar ou corrigir os itens manualmente abaixo.
+              </span>
+            </div>
+          )}
 
           <div className="receipt-item-list">
             {(items || []).length === 0 ? (
@@ -245,7 +260,7 @@ export default function ReceiptDetailEditor({
           </div>
 
           <button type="button" className="receipt-add-btn" onClick={handleAddItem}>
-            + Adicionar item
+            + Adicionar item manualmente
           </button>
         </div>
       )}
