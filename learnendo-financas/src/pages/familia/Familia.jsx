@@ -59,7 +59,16 @@ function useToast() {
 
 export default function Familia() {
   const { user } = useAuth()
-  const { createInviteLink, activeWorkspaceId, permissions, debtLedger, workspaceSummary } = useWorkspace()
+  const {
+    createInviteLink,
+    activeWorkspace,
+    activeWorkspaceId,
+    permissions,
+    debtLedger,
+    workspaceSummary,
+    members: workspaceMembers,
+    myRole: workspaceRole,
+  } = useWorkspace()
   const {
     family, members, invitations, loading, error,
     myRole, canManage, reload,
@@ -124,6 +133,9 @@ export default function Familia() {
   const totalReceitas = Number(workspaceSummary?.receitas || realIncome || 0)
   const totalDespesas = Number(workspaceSummary?.despesas || realExpense || 0)
   const totalSaldo    = Number(workspaceSummary?.saldo ?? (realIncome - realExpense))
+  const familyName = activeWorkspace?.name || family?.name || 'Familia'
+  const familyMembers = workspaceMembers?.length > 0 ? workspaceMembers : members
+  const effectiveRole = workspaceRole || myRole
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -387,8 +399,8 @@ export default function Familia() {
       <div className="familia-header">
         <div className="familia-icon">🏡</div>
         <div className="familia-header-info">
-          <h1 className="familia-name">{family.name}</h1>
-          <span className="familia-plan">Plano Familiar · {membersLabel(members.length)}</span>
+          <h1 className="familia-name">{familyName}</h1>
+          <span className="familia-plan">Plano Familiar · {membersLabel(familyMembers.length)}</span>
         </div>
         {canManage && (
           <div className="familia-header-actions">
@@ -437,7 +449,7 @@ export default function Familia() {
           </div>
           <div className="familia-stat">
             <span className="familia-stat-label">Membros</span>
-            <span className="familia-stat-value">{members.length}</span>
+            <span className="familia-stat-value">{familyMembers.length}</span>
           </div>
         </div>
       </Card>
@@ -445,7 +457,7 @@ export default function Familia() {
       {/* Membros */}
       <Card>
         <div className="familia-members-header">
-          <CardHeader title="Membros" subtitle={membersLabel(members.length)} />
+          <CardHeader title="Membros" subtitle={membersLabel(familyMembers.length)} />
           {canManage && (
             <div className="members-header-btns">
               <button className="btn-add-member" onClick={() => setAddMemberOpen(true)}>
@@ -458,7 +470,7 @@ export default function Familia() {
           )}
         </div>
 
-        {members.length === 0 ? (
+        {familyMembers.length === 0 ? (
           <div className="familia-empty" style={{ marginTop: '0.5rem' }}>
             <p className="familia-empty-title">Nenhum membro cadastrado</p>
             <p className="familia-empty-sub">Adicione pessoas da casa para começar o acompanhamento familiar.</p>
@@ -470,7 +482,7 @@ export default function Familia() {
           </div>
         ) : (
         <ul className="members-list">
-          {members.map((m) => {
+          {familyMembers.map((m) => {
             const roleMeta  = ROLE_META[m.role] ?? { label: m.role, cls: '', icon: '👤' }
             const isMe      = m.uid === user?.uid || m.id === user?.uid
             const isGestor  = m.role === 'gestor'
