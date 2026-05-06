@@ -127,6 +127,19 @@ function normalizeAmount(value) {
   return Number.isFinite(parsed) ? Math.abs(parsed) : 0
 }
 
+function validateStatementKindForImport(importType, statementSummary = null) {
+  const kind = String(statementSummary?.kind || '').trim().toLowerCase()
+  if (!kind) return
+
+  if (importType === 'bank' && kind === 'invoice') {
+    throw new Error('Este arquivo parece ser uma fatura de cartao. Importe-o na area de Cartoes.')
+  }
+
+  if (importType === 'invoice' && kind === 'statement') {
+    throw new Error('Este arquivo parece ser um extrato bancario. Importe-o na area de Contas.')
+  }
+}
+
 function signedRowAmount(row) {
   const amount = normalizeAmount(row?.amount)
   if (amount === 0) return 0
@@ -280,6 +293,7 @@ export default function Importacao() {
         statementSummary: raw?.__summary,
         holderName: importType === 'bank' ? selectedAccount?.holderName : selectedCard?.holderName,
       })
+      validateStatementKindForImport(importType, handled.summary || raw?.__summary || null)
 
       const rowsWithId = handled.rows.map((row, index) => ({
         ...row,
