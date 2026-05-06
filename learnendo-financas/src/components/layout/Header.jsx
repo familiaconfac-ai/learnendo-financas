@@ -5,20 +5,21 @@ import HamburgerMenu from './HamburgerMenu'
 import './Header.css'
 
 const MONTH_NAMES = [
-  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
 ]
 
 const PAGE_TITLES = {
-  '/lancar': 'Lançar',
-  '/lancamentos': 'Lançamentos',
+  '/lancar': 'Lancar',
+  '/lancamentos': 'Lancamentos',
   '/contas': 'Contas',
   '/importacao': 'Cupom',
-  '/orcamento': 'Orçamento',
-  '/mensal': 'Visão Mensal',
-  '/relatorios': 'Relatórios',
-  '/dividas': 'Dívidas',
-  '/reconciliacao': 'Reconciliação',
+  '/orcamento': 'Orcamento',
+  '/mensal': 'Visao Mensal',
+  '/relatorios': 'Relatorios',
+  '/dividas': 'Dividas',
+  '/reconciliacao': 'Reconciliacao',
+  '/familia': 'Familia',
   '/perfil': 'Perfil',
   '/admin': 'Painel Admin',
 }
@@ -47,8 +48,8 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
             <h1 className="header-title">{title}</h1>
           ) : (
             <div className="header-brand">
-              <img src="/logo.jpg" alt="Learnendo Finanças" className="header-logo" />
-              <span className="header-brand-name">Learnendo Finanças</span>
+              <img src="/logo.jpg" alt="Learnendo Financas" className="header-logo" />
+              <span className="header-brand-name">Learnendo Financas</span>
             </div>
           )}
           {showMonthNav && (

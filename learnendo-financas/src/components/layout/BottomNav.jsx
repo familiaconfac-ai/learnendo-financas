@@ -3,9 +3,10 @@ import { NavLink } from 'react-router-dom'
 import './BottomNav.css'
 
 const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Início', icon: '🏠' },
-  { to: '/contas', label: 'Contas', icon: '💰' }, 
-  { to: '/lancar', label: 'Lançar', icon: '➕' },
+  { to: '/dashboard', label: 'Inicio', icon: '🏠' },
+  { to: '/contas', label: 'Contas', icon: '💰' },
+  { to: '/lancar', label: 'Lancar', icon: '➕' },
+  { to: '/familia', label: 'Familia', icon: '🏡' },
   { to: '/importacao', label: 'Cupom', icon: '🧾' },
   { to: '/orcamento', label: 'Metas', icon: '📊' },
 ]
@@ -22,8 +23,8 @@ export default function BottomNav() {
   async function handleShare() {
     const url = window.location.origin
     const shareData = {
-      title: 'Learnendo Finanças',
-      text: 'Conheça o Learnendo Finanças',
+      title: 'Learnendo Financas',
+      text: 'Conheca o Learnendo Financas',
       url,
     }
 
@@ -40,7 +41,7 @@ export default function BottomNav() {
         await navigator.clipboard.writeText(url)
         setFeedback('Link copiado com sucesso')
       } catch {
-        setFeedback('Não foi possível compartilhar')
+        setFeedback('Nao foi possivel compartilhar')
       }
     }
   }
