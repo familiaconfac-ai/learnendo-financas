@@ -42,6 +42,10 @@ function workspaceNaturesCol(workspaceId) {
   return collection(db, 'workspaces', workspaceId, 'transactionNatures')
 }
 
+function workspaceProjectsCol(workspaceId) {
+  return collection(db, 'workspaces', workspaceId, 'projects')
+}
+
 function userMembershipDoc(uid, workspaceId) {
   return doc(db, 'users', uid, 'workspaceMemberships', workspaceId)
 }
@@ -229,6 +233,44 @@ export async function fetchWorkspaceNatures(workspaceId) {
   await ensureDefaultNatures(workspaceId)
   const snap = await getDocs(workspaceNaturesCol(workspaceId))
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+}
+
+export async function fetchWorkspaceProjects(workspaceId) {
+  if (!workspaceId) return []
+  const snap = await getDocs(workspaceProjectsCol(workspaceId))
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => {
+      const aDate = a.createdAt?.toDate?.()?.getTime?.() || 0
+      const bDate = b.createdAt?.toDate?.()?.getTime?.() || 0
+      return bDate - aDate
+    })
+}
+
+export async function createWorkspaceProject(workspaceId, payload = {}, actorUid = null) {
+  if (!workspaceId) throw new Error('Workspace nao selecionado')
+
+  const targetAmount = Number(payload.targetAmount || 0)
+  const currentAmount = Number(payload.currentAmount || 0)
+  const progress = targetAmount > 0
+    ? Math.max(0, Math.min(100, (currentAmount / targetAmount) * 100))
+    : 0
+
+  const ref = await addDoc(workspaceProjectsCol(workspaceId), {
+    name: String(payload.name || '').trim() || 'Projeto familiar',
+    kind: payload.kind || 'caixinha',
+    targetAmount: Number.isFinite(targetAmount) ? targetAmount : 0,
+    currentAmount: Number.isFinite(currentAmount) ? currentAmount : 0,
+    progress,
+    linkedAccountLabel: payload.linkedAccountLabel || '',
+    notes: payload.notes || '',
+    status: payload.status || 'active',
+    createdBy: actorUid || null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  })
+
+  return ref.id
 }
 
 export async function upsertWorkspaceNature(workspaceId, natureId, patch) {

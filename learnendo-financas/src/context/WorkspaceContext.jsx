@@ -10,10 +10,12 @@ import {
   fetchWorkspaceMembers,
   fetchWorkspaceContacts,
   fetchWorkspaceNatures,
+  fetchWorkspaceProjects,
   getPermissionsByRole,
   normalizeWorkspaceRole,
   upsertWorkspaceNature,
   createWorkspaceContact,
+  createWorkspaceProject,
   buildContactDebtLedger,
   buildWorkspaceFinancialSummary,
 } from '../services/workspaceService'
@@ -28,6 +30,7 @@ export function WorkspaceProvider({ children }) {
   const [members, setMembers] = useState([])
   const [contacts, setContacts] = useState([])
   const [transactionNatures, setTransactionNatures] = useState([])
+  const [projects, setProjects] = useState([])
   const [debtLedger, setDebtLedger] = useState([])
   const [workspaceSummary, setWorkspaceSummary] = useState({ receitas: 0, despesas: 0, investimentos: 0, saldo: 0 })
   const [loading, setLoading] = useState(true)
@@ -47,15 +50,16 @@ export function WorkspaceProvider({ children }) {
   const reloadWorkspaceData = useCallback(async () => {
     if (!user?.uid || !activeWorkspaceId) return
 
-    const [memberList, contactList, natures] = await Promise.all([
+    const [projectList, memberList, contactList, naturesList] = await Promise.all([
+      fetchWorkspaceProjects(activeWorkspaceId),
       fetchWorkspaceMembers(activeWorkspaceId),
       fetchWorkspaceContacts(activeWorkspaceId),
       fetchWorkspaceNatures(activeWorkspaceId),
     ])
-
+    setProjects(projectList)
     setMembers(memberList)
     setContacts(contactList)
-    setTransactionNatures(natures)
+    setTransactionNatures(naturesList)
 
     const tx = await fetchAllTransactionsForWorkspace(user.uid, {
       workspaceId: activeWorkspaceId,
@@ -75,6 +79,7 @@ export function WorkspaceProvider({ children }) {
       setMembers([])
       setContacts([])
       setTransactionNatures([])
+      setProjects([])
       setDebtLedger([])
       setWorkspaceSummary({ receitas: 0, despesas: 0, investimentos: 0, saldo: 0 })
       setLoading(false)
@@ -101,15 +106,17 @@ export function WorkspaceProvider({ children }) {
       if (chosenId) {
         const selected = list.find((ws) => ws.id === chosenId)
         const role = normalizeWorkspaceRole(selected?.memberRole)
-        const [memberList, contactList, natures] = await Promise.all([
+        const [projectList, memberList, contactList, naturesList] = await Promise.all([
+          fetchWorkspaceProjects(chosenId),
           fetchWorkspaceMembers(chosenId),
           fetchWorkspaceContacts(chosenId),
           fetchWorkspaceNatures(chosenId),
         ])
 
+        setProjects(projectList)
         setMembers(memberList)
         setContacts(contactList)
-        setTransactionNatures(natures)
+        setTransactionNatures(naturesList)
 
         const tx = await fetchAllTransactionsForWorkspace(user.uid, {
           workspaceId: chosenId,
@@ -142,15 +149,17 @@ export function WorkspaceProvider({ children }) {
     const selected = workspaces.find((ws) => ws.id === nextWorkspaceId)
     const role = normalizeWorkspaceRole(selected?.memberRole)
 
-    const [memberList, contactList, natures] = await Promise.all([
+    const [projectList, memberList, contactList, naturesList] = await Promise.all([
+      fetchWorkspaceProjects(nextWorkspaceId),
       fetchWorkspaceMembers(nextWorkspaceId),
       fetchWorkspaceContacts(nextWorkspaceId),
       fetchWorkspaceNatures(nextWorkspaceId),
     ])
 
+    setProjects(projectList)
     setMembers(memberList)
     setContacts(contactList)
-    setTransactionNatures(natures)
+    setTransactionNatures(naturesList)
 
     const tx = await fetchAllTransactionsForWorkspace(user.uid, {
       workspaceId: nextWorkspaceId,
@@ -180,6 +189,13 @@ export function WorkspaceProvider({ children }) {
     return contact
   }
 
+  async function addProject(data) {
+    if (!user?.uid || !activeWorkspaceId) throw new Error('Workspace nao selecionado')
+    const projectId = await createWorkspaceProject(activeWorkspaceId, data, user.uid)
+    await reloadWorkspaceData()
+    return projectId
+  }
+
   async function createNewWorkspace(name, type = 'family') {
     if (!user?.uid) throw new Error('Usuário não autenticado')
     const workspaceId = await createWorkspace(user.uid, { name, type, role: 'gestor' })
@@ -204,6 +220,7 @@ export function WorkspaceProvider({ children }) {
         permissions,
         members,
         contacts,
+        projects,
         debtLedger,
         workspaceSummary,
         transactionNatures,
@@ -214,6 +231,7 @@ export function WorkspaceProvider({ children }) {
         changeWorkspace,
         renameNatureInline,
         addExternalContact,
+        addProject,
         createNewWorkspace,
         createInviteLink,
       }}

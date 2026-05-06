@@ -65,9 +65,11 @@ export default function Familia() {
     activeWorkspaceId,
     permissions,
     debtLedger,
+    projects,
     workspaceSummary,
     members: workspaceMembers,
     myRole: workspaceRole,
+    addProject,
   } = useWorkspace()
   const {
     family, members, invitations, loading, error,
@@ -97,6 +99,12 @@ export default function Familia() {
   const [addMemberEmail,     setAddMemberEmail]      = useState('')
   const [addMemberNote,      setAddMemberNote]       = useState('')
   const [addMemberRole,      setAddMemberRole]       = useState('membro')
+  const [projectOpen,        setProjectOpen]         = useState(false)
+  const [projectName,        setProjectName]         = useState('')
+  const [projectTarget,      setProjectTarget]       = useState('')
+  const [projectCurrent,     setProjectCurrent]      = useState('')
+  const [projectAccount,     setProjectAccount]      = useState('')
+  const [projectNotes,       setProjectNotes]        = useState('')
   const [realIncome,         setRealIncome]          = useState(0)
   const [realExpense,        setRealExpense]         = useState(0)
   const [summaryLoading,     setSummaryLoading]      = useState(false)
@@ -136,6 +144,10 @@ export default function Familia() {
   const familyName = activeWorkspace?.name || family?.name || 'Familia'
   const familyMembers = workspaceMembers?.length > 0 ? workspaceMembers : members
   const effectiveRole = workspaceRole || myRole
+  const activeProjects = Array.isArray(projects) ? projects.filter((project) => project.status !== 'archived') : []
+  const leadProject = activeProjects[0] || null
+  const projectLabel = leadProject ? leadProject.name : 'Projetos'
+  const projectHighlight = leadProject ? formatCurrency(Number(leadProject.currentAmount || 0)) : String(activeProjects.length)
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -286,6 +298,36 @@ export default function Familia() {
       showToast('Família criada ✅')
     } catch (err) {
       showToast('Erro ao criar: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleCreateProject(e) {
+    e.preventDefault()
+    if (!projectName.trim()) {
+      showToast('Informe o nome do projeto.', 'err')
+      return
+    }
+
+    setSaving(true)
+    try {
+      await addProject({
+        name: projectName.trim(),
+        targetAmount: projectTarget,
+        currentAmount: projectCurrent,
+        linkedAccountLabel: projectAccount.trim(),
+        notes: projectNotes.trim(),
+      })
+      setProjectOpen(false)
+      setProjectName('')
+      setProjectTarget('')
+      setProjectCurrent('')
+      setProjectAccount('')
+      setProjectNotes('')
+      showToast('Projeto familiar criado ✅')
+    } catch (err) {
+      showToast('Erro ao criar projeto: ' + err.message, 'err')
     } finally {
       setSaving(false)
     }
@@ -448,10 +490,71 @@ export default function Familia() {
             </span>
           </div>
           <div className="familia-stat">
-            <span className="familia-stat-label">Membros</span>
-            <span className="familia-stat-value">{familyMembers.length}</span>
+            <span className="familia-stat-label">{projectLabel}</span>
+            <span className="familia-stat-value blue">{projectHighlight}</span>
           </div>
         </div>
+      </Card>
+
+      <Card>
+        <div className="familia-members-header">
+          <CardHeader
+            title="Projetos familiares"
+            subtitle={leadProject ? 'Caixinhas e objetivos compartilhados da familia' : 'Crie a primeira caixinha da familia'}
+          />
+          {canManage && (
+            <div className="members-header-btns">
+              <button className="btn-add-member" onClick={() => setProjectOpen(true)}>
+                + Projeto
+              </button>
+            </div>
+          )}
+        </div>
+
+        {activeProjects.length === 0 ? (
+          <div className="familia-empty" style={{ marginTop: '0.5rem' }}>
+            <p className="familia-empty-title">Nenhum projeto criado ainda</p>
+            <p className="familia-empty-sub">Use projetos para acompanhar viagem, reserva, reforma ou outra caixinha da familia.</p>
+            {canManage && (
+              <button className="btn-add-member" onClick={() => setProjectOpen(true)}>
+                + Criar primeiro projeto
+              </button>
+            )}
+          </div>
+        ) : (
+          <ul className="projects-list">
+            {activeProjects.map((project) => {
+              const targetAmount = Number(project.targetAmount || 0)
+              const currentAmount = Number(project.currentAmount || 0)
+              const progress = targetAmount > 0
+                ? Math.max(0, Math.min(100, Number(project.progress || (currentAmount / targetAmount) * 100)))
+                : 0
+
+              return (
+                <li key={project.id} className="project-item">
+                  <div className="project-main">
+                    <div className="project-head">
+                      <strong>{project.name}</strong>
+                      <span className="project-kind">{project.kind === 'caixinha' ? 'Caixinha' : project.kind}</span>
+                    </div>
+                    <div className="project-values">
+                      <span>{formatCurrency(currentAmount)}</span>
+                      <span className="project-target">meta {formatCurrency(targetAmount)}</span>
+                    </div>
+                    <div className="project-progress-track">
+                      <span className="project-progress-fill" style={{ width: `${progress}%` }} />
+                    </div>
+                    <div className="project-meta">
+                      <span>{progress.toFixed(0)}% concluido</span>
+                      {project.linkedAccountLabel && <span>Conta: {project.linkedAccountLabel}</span>}
+                    </div>
+                    {project.notes && <p className="project-notes">{project.notes}</p>}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
       </Card>
 
       {/* Membros */}
@@ -849,6 +952,78 @@ export default function Familia() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {projectOpen && (
+        <div className="modal-overlay" onClick={() => setProjectOpen(false)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Novo projeto familiar</h3>
+            <form onSubmit={handleCreateProject} className="invite-form">
+              <div className="form-group">
+                <label>Nome do projeto</label>
+                <input
+                  type="text"
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder="Ex: Viagem de ferias"
+                  required
+                  autoFocus
+                  maxLength={80}
+                />
+              </div>
+              <div className="form-group">
+                <label>Meta total</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={projectTarget}
+                  onChange={(e) => setProjectTarget(e.target.value)}
+                  placeholder="0,00"
+                />
+              </div>
+              <div className="form-group">
+                <label>Valor atual</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={projectCurrent}
+                  onChange={(e) => setProjectCurrent(e.target.value)}
+                  placeholder="0,00"
+                />
+              </div>
+              <div className="form-group">
+                <label>Conta de referencia</label>
+                <input
+                  type="text"
+                  value={projectAccount}
+                  onChange={(e) => setProjectAccount(e.target.value)}
+                  placeholder="Ex: Nubank - caixinha viagem"
+                  maxLength={80}
+                />
+              </div>
+              <div className="form-group">
+                <label>Observacoes</label>
+                <textarea
+                  rows={3}
+                  value={projectNotes}
+                  onChange={(e) => setProjectNotes(e.target.value)}
+                  placeholder="Como esse projeto sera usado pela familia"
+                  maxLength={240}
+                />
+              </div>
+              <div className="invite-form-actions">
+                <button type="button" className="btn-cancel" onClick={() => setProjectOpen(false)}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn-send" disabled={saving}>
+                  {saving ? 'Salvando...' : 'Criar projeto'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

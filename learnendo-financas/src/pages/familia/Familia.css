@@ -349,6 +349,57 @@
   flex-direction: column;
   gap: 0.4rem;
 }
+.projects-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.project-item {
+  border: 1px solid var(--color-border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--color-surface);
+  padding: 0.85rem;
+}
+.project-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.project-head,
+.project-values,
+.project-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.project-kind,
+.project-target,
+.project-meta,
+.project-notes {
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+.project-progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  overflow: hidden;
+}
+.project-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb, #22c55e);
+}
+.project-notes {
+  margin: 0;
+}
 
 .ledger-item {
   display: flex;
@@ -407,7 +458,8 @@
 .form-group    { display: flex; flex-direction: column; gap: 0.3rem; }
 .form-group label { font-size: 0.8rem; font-weight: 600; color: var(--color-text-muted); }
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
   padding: 0.6rem 0.75rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -415,9 +467,14 @@
   background: #fff;
 }
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
+}
+.form-group textarea {
+  resize: vertical;
+  min-height: 92px;
 }
 .form-hint { font-size: 0.72rem; color: var(--color-text-muted); }
 
