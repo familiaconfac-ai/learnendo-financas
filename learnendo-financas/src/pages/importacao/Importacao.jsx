@@ -217,7 +217,7 @@ export default function Importacao() {
 
       if (importType === 'receipt') {
         const outerRow = Array.isArray(raw) && raw.length === 1 ? raw[0] : null
-        const isReceiptImage = outerRow?.source === 'image_receipt'
+        const isReceiptImage = (outerRow?.source === 'image_receipt' || outerRow?.source === 'pdf_receipt')
           && Array.isArray(outerRow.receiptItems)
           && outerRow.receiptItems.length > 0
 
