@@ -7,6 +7,7 @@ import { useAccounts } from '../../hooks/useAccounts'
 import { useCards } from '../../hooks/useCards'
 import { useCategories } from '../../hooks/useCategories'
 import { addTransaction, deleteTransaction, fetchAllTransactionsForWorkspace } from '../../services/transactionService'
+import { createRecurrenceRule, prefillRecurringTransactions } from '../../services/recurrenceService'
 import { isReceiptAiFallbackConfigured } from '../../services/receiptAiFallbackService'
 import { parseReceiptPdfFile } from '../../utils/receiptImageParser'
 import { parseStatementFile } from '../../utils/statementParser'
@@ -189,6 +190,14 @@ function resolveInvoiceCompetencyMonth(row, summary, selectedCard, selectedMonth
   }
 
   return todayIso().slice(0, 7)
+}
+
+function shouldCreateFutureRecurrence(recurrenceType, currentInstallment, totalInstallments) {
+  if (recurrenceType === 'indefinite') return true
+  if (recurrenceType !== 'fixed') return false
+  const current = Number(currentInstallment || 0)
+  const total = Number(totalInstallments || 0)
+  return total > 0 && current > 0 && current < total
 }
 
 export default function Importacao() {
@@ -560,6 +569,44 @@ export default function Importacao() {
             installmentNumber: row.installmentNumber ?? null,
             receiptPlaceholderEnabled: false,
           }, { workspaceId: activeWorkspaceId })
+
+          const bankTransactionDate = row.date || todayIso()
+          const bankCompetencyMonth = String(bankTransactionDate).slice(0, 7)
+          if (!row.recurringId && shouldCreateFutureRecurrence(row.recurrenceType, row.currentInstallment, row.totalInstallments)) {
+            const recurrence = await createRecurrenceRule(user.uid, {
+              workspaceId: activeWorkspaceId,
+              userId: user.uid,
+              createdBy: user.uid,
+              type: inferRowType(row, importType),
+              description: row.description || 'Lancamento importado',
+              amount: normalizeAmount(row.amount),
+              date: bankTransactionDate,
+              competencyMonth: bankCompetencyMonth,
+              accountId,
+              categoryId: row.categoryId || null,
+              categoryName: row.categoryName || null,
+              subcategoryId: row.subcategoryId || null,
+              subcategoryName: row.subcategoryName || null,
+              notes: row.rawLine || '',
+              paymentMethod: row.direction === 'credit' ? null : 'pix',
+              transactionNatureId: row.transactionNatureId || null,
+              transactionNatureKey: row.transactionNatureKey || null,
+              transactionNatureLabel: row.transactionNatureLabel || null,
+              affectsBudget: typeof row.affectsBudget === 'boolean' ? row.affectsBudget : undefined,
+              balanceImpact: typeof row.balanceImpact === 'boolean' ? row.balanceImpact : undefined,
+              recurringInstanceMonth: bankCompetencyMonth,
+            }, {
+              recurrenceType: row.recurrenceType,
+              startDate: row.recurringStartDate || `${bankCompetencyMonth}-01`,
+              endDate: row.recurrenceType === 'fixed' ? (row.recurringEndDate || null) : null,
+              totalInstallments: row.totalInstallments ?? null,
+              startInstallment: row.currentInstallment ?? 1,
+              currentInstallment: row.currentInstallment ?? 1,
+              active: true,
+            }, { workspaceId: activeWorkspaceId })
+
+            await prefillRecurringTransactions(user.uid, recurrence, { workspaceId: activeWorkspaceId, monthsAhead: 12 })
+          }
         }
 
         if (selectedAccount) {
@@ -619,6 +666,48 @@ export default function Importacao() {
             receiptPlaceholderEnabled: false,
             ...recurringFields,
           }, { workspaceId: activeWorkspaceId })
+
+          const recurrenceType = recurringFields.recurrenceType || row.recurrenceType || null
+          const currentInstallment = recurringFields.currentInstallment ?? row.currentInstallment ?? recurringFields.installmentNumber ?? null
+          const totalInstallments = recurringFields.totalInstallments ?? row.totalInstallments ?? null
+          const recurringStartDate = recurringFields.recurringStartDate || row.recurringStartDate || `${competencyMonth}-01`
+          const recurringEndDate = recurringFields.recurringEndDate || row.recurringEndDate || null
+
+          if (!row.recurringId && shouldCreateFutureRecurrence(recurrenceType, currentInstallment, totalInstallments)) {
+            const recurrence = await createRecurrenceRule(user.uid, {
+              workspaceId: activeWorkspaceId,
+              userId: user.uid,
+              createdBy: user.uid,
+              type: 'expense',
+              description: row.description || 'Compra importada da fatura',
+              amount: normalizeAmount(row.amount),
+              date: transactionDate,
+              competencyMonth,
+              cardId,
+              categoryId: row.categoryId || null,
+              categoryName: row.categoryName || null,
+              subcategoryId: row.subcategoryId || null,
+              subcategoryName: row.subcategoryName || null,
+              notes: row.rawLine || '',
+              paymentMethod: 'credit_card',
+              transactionNatureId: row.transactionNatureId || null,
+              transactionNatureKey: row.transactionNatureKey || null,
+              transactionNatureLabel: row.transactionNatureLabel || null,
+              affectsBudget: typeof row.affectsBudget === 'boolean' ? row.affectsBudget : true,
+              balanceImpact: typeof row.balanceImpact === 'boolean' ? row.balanceImpact : true,
+              recurringInstanceMonth: competencyMonth,
+            }, {
+              recurrenceType,
+              startDate: recurringStartDate,
+              endDate: recurrenceType === 'fixed' ? recurringEndDate : null,
+              totalInstallments,
+              startInstallment: currentInstallment ?? 1,
+              currentInstallment: currentInstallment ?? 1,
+              active: true,
+            }, { workspaceId: activeWorkspaceId })
+
+            await prefillRecurringTransactions(user.uid, recurrence, { workspaceId: activeWorkspaceId, monthsAhead: 12 })
+          }
         }
 
         if (selectedCard) {

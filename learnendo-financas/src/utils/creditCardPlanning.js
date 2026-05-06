@@ -83,7 +83,7 @@ export function detectCardCommitment(description) {
     }
   }
 
-  if (/\bassinatura\b|\bmensalidade\b|\bplano\b|\bnetflix\b|\bspotify\b|\bdisney\b|\bmax\b|\bamazon prime\b|\bprime video\b|\byoutube premium\b|\bapple\.com\/bill\b|\bgoogle\b|\badobe\b|\bcanva\b/.test(normalized)) {
+  if (/\bassinatura\b|\bmensalidade\b|\bplano\b|\bnetflix\b|\bspotify\b|\bdisney\b|\bmax\b|\bamazon prime\b|\bprime video\b|\byoutube premium\b|\bapple\.com\/bill\b|\bgoogle\b|\badobe\b|\bcanva\b|\bopenai\b|\bchatgpt\b/.test(normalized)) {
     return {
       recurring: true,
       recurrenceType: 'indefinite',
