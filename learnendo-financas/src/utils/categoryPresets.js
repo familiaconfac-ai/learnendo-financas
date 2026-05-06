@@ -32,13 +32,21 @@ function normalizedKey(type, name) {
   return `${type || 'expense'}::${normalizeTaxonomyText(name)}`
 }
 
+function compareByName(a, b) {
+  return String(a?.name || '').localeCompare(String(b?.name || ''), 'pt-BR', { sensitivity: 'base' })
+}
+
+function sortSubcategories(subcategories = []) {
+  return [...subcategories].sort(compareByName)
+}
+
 export function mergeCategoriesWithDefaults(categories = []) {
   const merged = new Map()
 
   getDefaultCategories().forEach((category) => {
     merged.set(normalizedKey(category.type, category.name), {
       ...category,
-      subcategories: [...(category.subcategories || [])],
+      subcategories: sortSubcategories(category.subcategories || []),
     })
   })
 
@@ -48,7 +56,7 @@ export function mergeCategoriesWithDefaults(categories = []) {
     if (!existing) {
       merged.set(key, {
         ...category,
-        subcategories: [...(Array.isArray(category.subcategories) ? category.subcategories : [])],
+        subcategories: sortSubcategories(Array.isArray(category.subcategories) ? category.subcategories : []),
       })
       return
     }
@@ -63,9 +71,9 @@ export function mergeCategoriesWithDefaults(categories = []) {
       ...existing,
       ...category,
       icon: category.icon || existing.icon,
-      subcategories: [...(existing.subcategories || []), ...extraSubcategories],
+      subcategories: sortSubcategories([...(existing.subcategories || []), ...extraSubcategories]),
     })
   })
 
-  return [...merged.values()]
+  return [...merged.values()].sort(compareByName)
 }

@@ -671,6 +671,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
 
     try {
       await updateCategory(category.id, {
+        name: category.name,
+        icon: category.icon || defaultCategoryIcon(category.type),
+        type: category.type || form.type || 'expense',
         subcategories: [...(Array.isArray(category.subcategories) ? category.subcategories : []), nextSubcategory],
       })
       setForm((f) => ({

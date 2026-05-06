@@ -6,12 +6,15 @@ import { useWorkspace } from '../../context/WorkspaceContext'
 import { useAccounts } from '../../hooks/useAccounts'
 import { useCards } from '../../hooks/useCards'
 import { useCategories } from '../../hooks/useCategories'
-import { addTransaction } from '../../services/transactionService'
+import { addTransaction, fetchAllTransactionsForWorkspace } from '../../services/transactionService'
 import { isReceiptAiFallbackConfigured } from '../../services/receiptAiFallbackService'
 import { parseReceiptPdfFile } from '../../utils/receiptImageParser'
 import { parseStatementFile } from '../../utils/statementParser'
 import { handleImport } from '../../utils/importRules'
 import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
+import { findRecurringImportMatch } from '../../utils/recurringImportMatcher'
+import { findImportedTransactionDuplicateCandidate } from '../../utils/importExistingDuplicateMatcher'
+import { findReceiptPaymentReconciliationCandidate } from '../../utils/receiptPaymentReconciliation'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { addMonthsToMonthKey, buildCardCommitmentRecurringFields, computeCreditCardCompetencyMonth } from '../../utils/creditCardPlanning'
 import Card from '../../components/ui/Card'
@@ -141,6 +144,25 @@ function validateStatementKindForImport(importType, statementSummary = null) {
   }
 }
 
+function buildReceiptMatchLabel(match) {
+  const merchant = String(match?.merchantName || '').trim()
+  const itemCount = Number(match?.itemCount || 0)
+  if (merchant && itemCount > 0) return `Bate com cupom ${merchant} (${itemCount} item(ns))`
+  if (merchant) return `Bate com cupom ${merchant}`
+  if (itemCount > 0) return `Bate com cupom detalhado (${itemCount} item(ns))`
+  return 'Bate com cupom detalhado'
+}
+
+function buildRecurringMatchLabel(match) {
+  const label = String(match?.recurringMatchLabel || '').trim()
+  return label ? `Recorrente conhecido: ${label}` : 'Recorrente conhecido'
+}
+
+function buildImportedDuplicateLabel(match) {
+  const description = String(match?.description || '').trim()
+  return description ? `Ja lancado neste mes: ${description}` : 'Ja lancado neste mes'
+}
+
 function signedRowAmount(row) {
   const amount = normalizeAmount(row?.amount)
   if (amount === 0) return 0
@@ -168,7 +190,7 @@ export default function Importacao() {
   const [searchParams] = useSearchParams()
   const { user } = useAuth()
   const { selectedMonth, selectedYear } = useFinance()
-  const { activeWorkspaceId } = useWorkspace()
+  const { activeWorkspaceId, myRole } = useWorkspace()
   const { accounts, update: updateAccount } = useAccounts()
   const { cards, update: updateCard } = useCards()
   const { categories } = useCategories()
@@ -223,7 +245,7 @@ export default function Importacao() {
 
   function handleSelectAllNew() {
     const onlyFreshRows = parsedRows
-      .filter((row) => !row.isDuplicate && row.status !== 'duplicate')
+      .filter((row) => !row.isDuplicate && row.status !== 'duplicate' && !row.receiptMatch)
       .map((row) => row.id)
     setSelectedIds(new Set(onlyFreshRows))
   }
@@ -300,13 +322,71 @@ export default function Importacao() {
       })
       validateStatementKindForImport(importType, handled.summary || raw?.__summary || null)
 
-      const rowsWithId = handled.rows.map((row, index) => ({
-        ...row,
-        id: row.id || `${importType}-${index}-${Date.now()}`,
-        date: row.date || todayIso(),
-        amount: normalizeAmount(row.amount),
-        isDuplicate: row.isDuplicate || row.status === 'duplicate',
-      }))
+      const existingTransactions = (importType === 'bank' || importType === 'invoice') && user?.uid && activeWorkspaceId
+        ? await fetchAllTransactionsForWorkspace(user.uid, {
+            workspaceId: activeWorkspaceId,
+            viewerRole: myRole,
+            viewerUid: user.uid,
+          }).catch(() => [])
+        : []
+
+      const rowsWithId = handled.rows.map((row, index) => {
+        const resolvedCompetencyMonth = importType === 'invoice'
+          ? resolveInvoiceCompetencyMonth(row, handled.summary || raw?.__summary || null, selectedCard, selectedMonthKey)
+          : String(row?.date || todayIso()).slice(0, 7)
+        const receiptMatch = importType === 'invoice'
+          ? findReceiptPaymentReconciliationCandidate(row, existingTransactions, {
+              importType: 'invoice',
+              cardId,
+            })
+          : importType === 'bank'
+            ? findReceiptPaymentReconciliationCandidate(row, existingTransactions, {
+                importType: 'bank',
+                accountId,
+              })
+            : null
+        const recurringMatch = findRecurringImportMatch(row, existingTransactions, {
+          importType,
+          cardId,
+          accountId,
+        })
+        const importedDuplicateMatch = findImportedTransactionDuplicateCandidate(
+          { ...row, competencyMonth: resolvedCompetencyMonth },
+          existingTransactions,
+          {
+            importType,
+            cardId,
+            accountId,
+            targetMonth: resolvedCompetencyMonth,
+          },
+        )
+
+        return {
+          ...row,
+          id: row.id || `${importType}-${index}-${Date.now()}`,
+          date: row.date || todayIso(),
+          competencyMonth: resolvedCompetencyMonth,
+          amount: normalizeAmount(row.amount),
+          isDuplicate: row.isDuplicate || row.status === 'duplicate' || !!importedDuplicateMatch,
+          categoryId: recurringMatch?.categoryId || row.categoryId || null,
+          categoryName: recurringMatch?.categoryName || row.categoryName || null,
+          subcategoryId: recurringMatch?.subcategoryId || row.subcategoryId || null,
+          subcategoryName: recurringMatch?.subcategoryName || row.subcategoryName || null,
+          recurringId: recurringMatch?.recurringId || row.recurringId || null,
+          recurrenceType: recurringMatch?.recurrenceType || row.recurrenceType || null,
+          recurringStartDate: recurringMatch?.recurringStartDate || row.recurringStartDate || null,
+          recurringEndDate: recurringMatch?.recurringEndDate || row.recurringEndDate || null,
+          totalInstallments: recurringMatch?.totalInstallments ?? row.totalInstallments ?? null,
+          currentInstallment: recurringMatch?.currentInstallment ?? row.currentInstallment ?? null,
+          installmentNumber: recurringMatch?.installmentNumber ?? row.installmentNumber ?? null,
+          recurringMatch,
+          recurringMatchLabel: recurringMatch ? buildRecurringMatchLabel(recurringMatch) : '',
+          importedDuplicateMatch,
+          importedDuplicateLabel: importedDuplicateMatch ? buildImportedDuplicateLabel(importedDuplicateMatch) : '',
+          receiptMatch,
+          receiptMatchLabel: receiptMatch ? buildReceiptMatchLabel(receiptMatch) : '',
+        }
+      })
 
       if (rowsWithId.length === 0) {
         const importLabel = importType === 'invoice' ? 'fatura' : 'extrato'
@@ -315,7 +395,7 @@ export default function Importacao() {
 
       setParsedRows(rowsWithId)
       setSummary(handled.summary || raw?.__summary || null)
-      setSelectedIds(new Set(rowsWithId.filter((row) => !row.isDuplicate).map((row) => row.id)))
+      setSelectedIds(new Set(rowsWithId.filter((row) => !row.isDuplicate && !row.receiptMatch).map((row) => row.id)))
       setStep('preview')
     } catch (error) {
       console.error(error)
@@ -363,6 +443,11 @@ export default function Importacao() {
 
     try {
       if (importType === 'receipt') {
+        const receiptBatchId = `receipt_batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        const receiptBatchTotal = selectedRows.reduce((sum, row) => sum + normalizeAmount(row.amount), 0)
+        const receiptBatchDate = receiptMeta.purchaseDate || selectedRows[0]?.date || todayIso()
+        const receiptBatchItemCount = selectedRows.length
+
         for (const row of selectedRows) {
           const category = resolveCategoryForReceiptRow(row, expenseLookup)
           const transactionDate = row.date || receiptMeta.purchaseDate || todayIso()
@@ -398,6 +483,11 @@ export default function Importacao() {
             subcategoryName: row.detailSubcategoryLabel || null,
             receiptDetailEnabled: false,
             receiptItems: [],
+            receiptBatchId,
+            receiptBatchTotal,
+            receiptBatchItemCount,
+            receiptBatchDate,
+            receiptBatchMerchantName: receiptMeta.merchantName || '',
             receiptDocumentType,
             receiptPaymentMethod: paymentOrigin,
             cashOriginType: paymentOrigin === 'cash' ? cashOriginType : null,
@@ -422,14 +512,23 @@ export default function Importacao() {
             origin: 'bank_import',
             paymentMethod: row.direction === 'credit' ? null : 'pix',
             accountId,
-            categoryId: null,
+            categoryId: row.categoryId || null,
             categoryName: row.categoryName || null,
+            subcategoryId: row.subcategoryId || null,
+            subcategoryName: row.subcategoryName || null,
             transactionNatureId: row.transactionNatureId || null,
             transactionNatureKey: row.transactionNatureKey || null,
             affectsBudget: typeof row.affectsBudget === 'boolean' ? row.affectsBudget : undefined,
             balanceImpact: typeof row.balanceImpact === 'boolean' ? row.balanceImpact : undefined,
             classificationConfidence: row.classification?.confidence || null,
             notes: row.rawLine || '',
+            recurringId: row.recurringId || null,
+            recurrenceType: row.recurrenceType || null,
+            recurringStartDate: row.recurringStartDate || null,
+            recurringEndDate: row.recurringEndDate || null,
+            totalInstallments: row.totalInstallments ?? null,
+            currentInstallment: row.currentInstallment ?? null,
+            installmentNumber: row.installmentNumber ?? null,
           }, { workspaceId: activeWorkspaceId })
         }
 
@@ -476,14 +575,17 @@ export default function Importacao() {
             origin: 'credit_card_import',
             paymentMethod: 'credit_card',
             cardId,
-            categoryId: null,
+            categoryId: row.categoryId || null,
             categoryName: row.categoryName || null,
+            subcategoryId: row.subcategoryId || null,
+            subcategoryName: row.subcategoryName || null,
             transactionNatureId: row.transactionNatureId || null,
             transactionNatureKey: row.transactionNatureKey || null,
             affectsBudget: typeof row.affectsBudget === 'boolean' ? row.affectsBudget : true,
             balanceImpact: typeof row.balanceImpact === 'boolean' ? row.balanceImpact : true,
             classificationConfidence: row.classification?.confidence || null,
             notes: row.rawLine || '',
+            recurringId: row.recurringId || null,
             ...recurringFields,
           }, { workspaceId: activeWorkspaceId })
         }
@@ -738,6 +840,34 @@ export default function Importacao() {
               </div>
             )}
 
+            {parsedRows.some((row) => !!row.receiptMatch) && (
+              <div className="parse-warning-box import-inline-error">
+                <strong>Possiveis duplicidades com cupom</strong>
+                <p>
+                  Encontramos itens da {importType === 'invoice' ? 'fatura' : 'movimentacao bancária'} que batem com cupons detalhados ja lancados.
+                  Eles vieram desmarcados para evitar duplicidade, mas voce pode marcar manualmente se quiser manter a linha generica.
+                </p>
+              </div>
+            )}
+
+            {parsedRows.some((row) => !!row.importedDuplicateMatch) && (
+              <div className="parse-warning-box import-inline-error">
+                <strong>Lancamentos ja existentes neste mes</strong>
+                <p>
+                  Alguns itens batem com lancamentos que ja existem no mes de competencia. Eles vieram destacados e desmarcados para evitar duplicidade, mas voce pode revisar manualmente se precisar manter algum.
+                </p>
+              </div>
+            )}
+
+            {parsedRows.some((row) => !!row.recurringMatch) && (
+              <div className="parse-warning-box import-inline-error">
+                <strong>Recorrencias reconhecidas</strong>
+                <p>
+                  Alguns itens foram associados a lancamentos recorrentes ja confirmados. A categoria e a configuracao de recorrencia anteriores foram reaproveitadas para evitar retrabalho.
+                </p>
+              </div>
+            )}
+
             <div className="preview-rows">
               {parsedRows.map((row) => {
                 const checked = selectedIds.has(row.id)
@@ -773,7 +903,10 @@ export default function Importacao() {
                         {footerPieces.map((piece) => (
                           <span key={`${row.id}-${piece}`} className="preview-date">{piece}</span>
                         ))}
-                        {row.isDuplicate && <span className="preview-review-tag">Duplicado</span>}
+                        {row.recurringMatch && <span className="preview-review-tag preview-review-tag--info">{row.recurringMatchLabel || 'Recorrente conhecido'}</span>}
+                        {row.importedDuplicateMatch && <span className="preview-review-tag">{row.importedDuplicateLabel || 'Ja lancado neste mes'}</span>}
+                        {row.isDuplicate && !row.importedDuplicateMatch && <span className="preview-review-tag">Duplicado</span>}
+                        {row.receiptMatch && <span className="preview-review-tag preview-review-tag--info">{row.receiptMatchLabel || 'Bate com cupom'}</span>}
                         {importType !== 'receipt' && row.status === 'confirmed' && (
                           <span className="preview-review-tag preview-review-tag--info">Auto confirmado</span>
                         )}

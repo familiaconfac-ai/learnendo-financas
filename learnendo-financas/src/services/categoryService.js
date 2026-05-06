@@ -9,8 +9,8 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  setDoc,
   serverTimestamp,
-  updateDoc,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
 
@@ -57,13 +57,14 @@ export async function addCategory(uid, data, options = {}) {
 export async function updateCategory(uid, catId, data, options = {}) {
   const workspaceId = options.workspaceId || data.workspaceId || null
   try {
-    await updateDoc(catDoc(uid, catId, workspaceId), {
+    await setDoc(catDoc(uid, catId, workspaceId), {
       ...(data.name !== undefined ? { name: data.name } : {}),
       ...(data.icon !== undefined ? { icon: data.icon } : {}),
       ...(data.type !== undefined ? { type: data.type } : {}),
       ...(data.subcategories !== undefined ? { subcategories: Array.isArray(data.subcategories) ? data.subcategories : [] } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
       updatedAt: serverTimestamp(),
-    })
+    }, { merge: true })
   } catch (err) {
     console.error('[CategoryService] Update failed:', err.code, err.message)
     throw err
