@@ -611,6 +611,43 @@ function trimLikelyOcrDuplicates(items, expectedTotal) {
   return nextItems
 }
 
+function sliceReceiptDetailLines(lines) {
+  const source = Array.isArray(lines) ? lines : []
+  if (source.length === 0) return []
+
+  let startIndex = source.findIndex((line) => /detalhe da venda/i.test(String(line || '')))
+  if (startIndex < 0) startIndex = source.findIndex((line) => /item\s+cod/i.test(normalize(line)))
+  if (startIndex < 0) startIndex = 0
+
+  let endIndex = source.findIndex((line, index) => (
+    index > startIndex
+    && /(total de itens|valor total|forma de pagamento|valor a pagar)/i.test(normalize(line))
+  ))
+  if (endIndex < 0) endIndex = source.length
+
+  return source.slice(startIndex + 1, endIndex)
+}
+
+function finalizeLocalReceiptItems(items, summary = {}) {
+  const source = Array.isArray(items) ? items : []
+  const expectedCount = Number(summary?.itemCount || 0)
+  const withAmount = source.filter((item) => Number(item?.amount || 0) > 0 && String(item?.description || '').trim().length >= 2)
+
+  if (expectedCount > 0 && withAmount.length > expectedCount * 1.5) {
+    const deduped = []
+    const seen = new Set()
+    for (const item of withAmount) {
+      const key = `${normalize(item.description)}|${Number(item.amount || 0).toFixed(2)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      deduped.push(item)
+    }
+    return deduped
+  }
+
+  return withAmount
+}
+
 function parseReceiptItems(lines, expectedTotal = 0) {
   const items = []
   let carriedDiscountTotal = 0
@@ -660,15 +697,10 @@ function parseReceiptItems(lines, expectedTotal = 0) {
     const normalized = normalize(description)
     if (hasSummaryKeyword(normalized)) continue
 
-    // Permite criar item mesmo sem valor
-    let status = 'identified'
-    if (!(Number.isFinite(finalAmount) && finalAmount > 0)) {
-      finalAmount = ''
-      status = 'partial'
-    }
+    if (!(Number.isFinite(finalAmount) && finalAmount > 0)) continue
 
     const item = createReceiptItem(description, finalAmount, extractQuantity(line))
-    item.status = status
+    item.status = 'identified'
     items.push(item)
   }
 
@@ -766,13 +798,16 @@ export async function parseReceiptImageFile(file) {
   const merchantName = findMerchantName(lines, file)
   const purchaseDate = findReceiptDate(lines)
   const summary = parseReceiptSummary(lines)
+  const detailLines = sliceReceiptDetailLines(lines)
   const expectedTotal = findTotalAmount(summary, 0)
-  let receiptItems = hydrateReceiptItemsFromCache(parseReceiptItems(lines, expectedTotal))
+  let receiptItems = hydrateReceiptItemsFromCache(
+    finalizeLocalReceiptItems(parseReceiptItems(detailLines, expectedTotal), summary),
+  )
   let itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   let totalAmount = findTotalAmount(summary, itemTotal)
   let aiWarningMessage = ''
 
-  if (shouldUseAiFallback(receiptItems, totalAmount) || shouldForceAiFallback(receiptItems, summary, totalAmount)) {
+  if (isReceiptAiFallbackConfigured()) {
     try {
       const aiFallback = await analyzeReceiptWithAiFallback({
         file,
@@ -782,6 +817,7 @@ export async function parseReceiptImageFile(file) {
           merchantName,
           purchaseDate,
           totalAmount,
+          expectedItemCount: summary.itemCount || 0,
           localItemCount: receiptItems.length,
           localItems: receiptItems.slice(0, 25).map((item) => ({
             description: item.description,
@@ -809,6 +845,8 @@ export async function parseReceiptImageFile(file) {
       }
       console.warn('[ReceiptAI] AI fallback unavailable, keeping local OCR result:', error.message)
     }
+  } else if (shouldUseAiFallback(receiptItems, totalAmount) || shouldForceAiFallback(receiptItems, summary, totalAmount)) {
+    aiWarningMessage = 'Leitura automatica avancada indisponivel. Configure a chave Gemini para melhorar cupons longos.'
   }
 
   const topHints = [...new Set(receiptItems.flatMap((item) => item.budgetCategoryHints || []))].slice(0, 4)

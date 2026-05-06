@@ -9,8 +9,8 @@ import {
   isGeminiRateLimitError,
 } from './geminiService'
 
-const RECEIPT_ANALYSIS_CACHE_KEY = 'learnendo.receipt.analysis.v1'
-const RECEIPT_ITEM_CACHE_KEY = 'learnendo.receipt.items.v1'
+const RECEIPT_ANALYSIS_CACHE_KEY = 'learnendo.receipt.analysis.v2'
+const RECEIPT_ITEM_CACHE_KEY = 'learnendo.receipt.items.v2'
 
 function readLocalCache(key) {
   if (typeof window === 'undefined' || !window.localStorage) return {}
@@ -78,10 +78,14 @@ async function toGeminiImagePart(file) {
 
 function buildPrompt({ fileName, ocrText, localSummary }) {
   const taxonomy = getReceiptAiTaxonomyPayload()
+  const expectedCount = Number(localSummary?.expectedItemCount || 0)
 
   return [
     'Analise esta imagem de cupom fiscal.',
     'Extraia cada item com: Nome do Produto, Valor Unitario, Quantidade quando existir e Sugestao de Subcategoria.',
+    'Nao junte linhas diferentes em um item so.',
+    'Nao repita item. Nao invente item. Nao devolva item com valor zero.',
+    expectedCount > 0 ? `O cupom indica aproximadamente ${expectedCount} itens. Tente preservar essa quantidade real sem duplicar linhas.` : 'O cupom pode ter muitos itens; mantenha a lista completa.',
     'Baseie a classificacao SOMENTE na taxonomia JSON abaixo.',
     'Categorias validas: Transporte, Habitacao, Alimentacao, Saude/Pessoal e Outros quando realmente nao houver encaixe melhor.',
     'Identifique itens de limpeza automotiva, estetica automotiva ou manutencao do carro e classifique em Transporte > Estetica Automotiva ou Transporte > Mecanica, mesmo se o cupom for de supermercado.',

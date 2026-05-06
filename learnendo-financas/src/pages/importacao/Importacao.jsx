@@ -146,6 +146,7 @@ export default function Importacao() {
   const [summary, setSummary] = useState(null)
   const [fileName, setFileName] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
+  const [warningMessage, setWarningMessage] = useState('')
   const [receiptMeta, setReceiptMeta] = useState({
     merchantName: '',
     totalAmount: 0,
@@ -172,6 +173,7 @@ export default function Importacao() {
     setFileName('')
     setReceiptMeta({ merchantName: '', totalAmount: 0, purchaseDate: '' })
     setErrorMessage('')
+    setWarningMessage('')
     setStep('idle')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -198,6 +200,7 @@ export default function Importacao() {
 
     setStep('parsing')
     setErrorMessage('')
+    setWarningMessage('')
     setParsedRows([])
     setSelectedIds(new Set())
     setSummary(null)
@@ -238,6 +241,7 @@ export default function Importacao() {
           totalAmount: normalizeAmount(outerRow.totalAmount),
           purchaseDate: outerRow.date || todayIso(),
         })
+        setWarningMessage(outerRow.aiWarningMessage || '')
         setParsedRows(rowsWithId)
         setSelectedIds(new Set(rowsWithId.map((row) => row.id)))
         setStep('preview')
@@ -561,20 +565,31 @@ export default function Importacao() {
 
       {step === 'idle' && (
         <Card>
-          <label className="dropzone" htmlFor="import-file-input">
+          <div
+            className="dropzone"
+            role="button"
+            tabIndex={0}
+            onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                fileInputRef.current?.click()
+              }
+            }}
+          >
             <span className="dropzone-icon">{importType === 'receipt' ? '🧾' : importType === 'bank' ? '🏦' : '💳'}</span>
             <p className="dropzone-title">{config.cta}</p>
             <p className="dropzone-sub">{config.accept.replaceAll(',', ' • ')}</p>
             <span className="dropzone-btn">Escolher arquivo</span>
-            <input
-              id="import-file-input"
-              ref={fileInputRef}
-              type="file"
-              accept={config.accept}
-              onChange={(event) => handleFile(event.target.files?.[0])}
-              hidden
-            />
-          </label>
+          </div>
+          <input
+            id="import-file-input"
+            ref={fileInputRef}
+            type="file"
+            accept={config.accept}
+            onChange={(event) => handleFile(event.target.files?.[0])}
+            hidden
+          />
         </Card>
       )}
 
@@ -629,6 +644,13 @@ export default function Importacao() {
 
           <Card>
             {renderTargetSelector()}
+
+            {warningMessage && (
+              <div className="parse-warning-box import-inline-error">
+                <strong>Leitura parcial do cupom</strong>
+                <p>{warningMessage}</p>
+              </div>
+            )}
 
             <div className="preview-bulk-row">
               <span className="preview-bulk-info">{selectedCount} item(ns) selecionado(s)</span>
