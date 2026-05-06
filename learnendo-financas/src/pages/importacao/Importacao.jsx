@@ -7,6 +7,7 @@ import { useCards } from '../../hooks/useCards'
 import { useCategories } from '../../hooks/useCategories'
 import { addTransaction } from '../../services/transactionService'
 import { isReceiptAiFallbackConfigured } from '../../services/receiptAiFallbackService'
+import { parseReceiptPdfFile } from '../../utils/receiptImageParser'
 import { parseStatementFile } from '../../utils/statementParser'
 import { handleImport } from '../../utils/importRules'
 import { normalizeReceiptItems } from '../../utils/receiptDetailCatalog'
@@ -199,6 +200,7 @@ export default function Importacao() {
 
   async function handleFile(file) {
     if (!file) return
+    const extension = String(file.name || '').toLowerCase().split('.').pop()
 
     setStep('parsing')
     setErrorMessage('')
@@ -209,7 +211,9 @@ export default function Importacao() {
     setFileName(file.name || '')
 
     try {
-      const raw = await parseStatementFile(file)
+      const raw = importType === 'receipt' && extension === 'pdf'
+        ? await parseReceiptPdfFile(file)
+        : await parseStatementFile(file)
 
       if (importType === 'receipt') {
         const outerRow = Array.isArray(raw) && raw.length === 1 ? raw[0] : null

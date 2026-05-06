@@ -783,13 +783,98 @@ async function preprocessReceiptImage(file) {
   }
 }
 
-export async function parseReceiptImageFile(file) {
-  const ocrText = await extractTextWithOcr(file)
-  const rawLines = ocrText
+function groupReceiptPdfTextToLines(items) {
+  const sorted = [...(items || [])]
+    .map((item) => ({
+      text: String(item.str || '').trim(),
+      x: item.transform?.[4] || 0,
+      y: item.transform?.[5] || 0,
+    }))
+    .filter((item) => item.text)
+    .sort((left, right) => {
+      const deltaY = Math.abs(right.y - left.y)
+      if (deltaY > 2.5) return right.y - left.y
+      return left.x - right.x
+    })
+
+  const rows = []
+  for (const item of sorted) {
+    const last = rows[rows.length - 1]
+    if (!last || Math.abs(last.y - item.y) > 2.5) {
+      rows.push({ y: item.y, parts: [item] })
+      continue
+    }
+    last.parts.push(item)
+  }
+
+  return rows.map((row) => row.parts
+    .sort((left, right) => left.x - right.x)
+    .map((part) => part.text)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim())
+}
+
+async function extractTextFromReceiptPdf(file) {
+  const { getDocument, GlobalWorkerOptions } = await import('pdfjs-dist')
+  GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
+
+  const buffer = await file.arrayBuffer()
+  const pdf = await getDocument({ data: new Uint8Array(buffer) }).promise
+  const lines = []
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+    const page = await pdf.getPage(pageNum)
+    const content = await page.getTextContent()
+    lines.push(...groupReceiptPdfTextToLines(content.items || []))
+  }
+
+  return lines.filter(Boolean).join('\n')
+}
+
+function buildReceiptResultFromText(rawText, file, aiWarningMessage = '') {
+  const rawLines = String(rawText || '')
     .split(/\r?\n/)
     .map(cleanLine)
     .filter(Boolean)
 
+  if (rawLines.length === 0) {
+    throw new Error('Nao foi possivel extrair texto legivel do cupom.')
+  }
+
+  const lines = rebuildReceiptLines(rawLines)
+  const merchantName = findMerchantName(lines, file)
+  const purchaseDate = findReceiptDate(lines)
+  const summary = parseReceiptSummary(lines)
+  const detailLines = sliceReceiptDetailLines(lines)
+  const expectedTotal = findTotalAmount(summary, 0)
+  const receiptItems = hydrateReceiptItemsFromCache(
+    finalizeLocalReceiptItems(parseReceiptItems(detailLines, expectedTotal), summary),
+  )
+  const itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const totalAmount = findTotalAmount(summary, itemTotal)
+
+  return [{
+    date: purchaseDate,
+    description: merchantName ? `Cupom ${merchantName}` : 'Cupom importado',
+    amount: totalAmount > 0 ? totalAmount : itemTotal,
+    type: 'expense',
+    direction: 'debit',
+    balance: null,
+    rawLine: lines.slice(0, 12).join(' | ').slice(0, 600),
+    source: 'pdf_receipt',
+    categoryHints: [...new Set(receiptItems.flatMap((item) => item.budgetCategoryHints || []))].slice(0, 4),
+    requiresReview: true,
+    receiptDetailEnabled: receiptItems.length > 0,
+    receiptItems,
+    aiWarningMessage,
+    ocrPreviewLines: lines.slice(0, 30),
+  }]
+}
+
+export async function parseReceiptImageFile(file) {
+  const ocrText = await extractTextWithOcr(file)
+  const rawLines = ocrText.split(/\r?\n/).map(cleanLine).filter(Boolean)
   if (rawLines.length === 0) {
     throw new Error('Nao foi possivel extrair texto legivel da imagem do cupom.')
   }
@@ -800,9 +885,7 @@ export async function parseReceiptImageFile(file) {
   const summary = parseReceiptSummary(lines)
   const detailLines = sliceReceiptDetailLines(lines)
   const expectedTotal = findTotalAmount(summary, 0)
-  let receiptItems = hydrateReceiptItemsFromCache(
-    finalizeLocalReceiptItems(parseReceiptItems(detailLines, expectedTotal), summary),
-  )
+  let receiptItems = hydrateReceiptItemsFromCache(finalizeLocalReceiptItems(parseReceiptItems(detailLines, expectedTotal), summary))
   let itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   let totalAmount = findTotalAmount(summary, itemTotal)
   let aiWarningMessage = ''
@@ -870,4 +953,9 @@ export async function parseReceiptImageFile(file) {
     aiWarningMessage,
     ocrPreviewLines: lines.slice(0, 30),
   }]
+}
+
+export async function parseReceiptPdfFile(file) {
+  const text = await extractTextFromReceiptPdf(file)
+  return buildReceiptResultFromText(text, file)
 }
