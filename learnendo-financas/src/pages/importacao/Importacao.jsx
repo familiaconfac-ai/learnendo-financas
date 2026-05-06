@@ -127,6 +127,26 @@ function normalizeAmount(value) {
   return Number.isFinite(parsed) ? Math.abs(parsed) : 0
 }
 
+function signedRowAmount(row) {
+  const amount = normalizeAmount(row?.amount)
+  if (amount === 0) return 0
+  return row?.direction === 'credit' ? amount : -amount
+}
+
+function resolveInvoiceCompetencyMonth(row, summary, selectedCard) {
+  const dueMonth = String(summary?.dueDate || '').slice(0, 7)
+  if (/^\d{4}-\d{2}$/.test(dueMonth)) return dueMonth
+
+  const rowDate = String(row?.date || '').slice(0, 10)
+  if (rowDate) {
+    const computed = computeCreditCardCompetencyMonth(rowDate, selectedCard)
+    if (/^\d{4}-\d{2}$/.test(computed)) return computed
+    return rowDate.slice(0, 7)
+  }
+
+  return todayIso().slice(0, 7)
+}
+
 export default function Importacao() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -167,6 +187,8 @@ export default function Importacao() {
   const selectedRows = parsedRows.filter((row) => selectedIds.has(row.id))
   const selectedCount = selectedRows.length
   const selectedTotal = selectedRows.reduce((sum, row) => sum + normalizeAmount(row.amount), 0)
+  const selectedSignedTotal = selectedRows.reduce((sum, row) => sum + signedRowAmount(row), 0)
+  const previewTotal = importType === 'bank' ? selectedSignedTotal : selectedTotal
   const receiptAiAvailable = isReceiptAiFallbackConfigured()
 
   function resetPreview() {
@@ -419,7 +441,7 @@ export default function Importacao() {
       if (importType === 'invoice') {
         for (const row of selectedRows) {
           const transactionDate = row.date || todayIso()
-          const competencyMonth = computeCreditCardCompetencyMonth(transactionDate, selectedCard)
+          const competencyMonth = resolveInvoiceCompetencyMonth(row, summary, selectedCard)
           const recurringFields = buildCardCommitmentRecurringFields(row.description, competencyMonth)
 
           await addTransaction(user.uid, {
@@ -663,8 +685,8 @@ export default function Importacao() {
                 )}
               </span>
             </div>
-            <div className={`psb-net ${selectedTotal >= 0 ? 'pos' : 'neg'}`}>
-              {formatCurrency(selectedTotal)}
+            <div className={`psb-net ${previewTotal >= 0 ? 'pos' : 'neg'}`}>
+              {formatCurrency(previewTotal)}
             </div>
           </div>
 
