@@ -262,6 +262,8 @@ export async function createWorkspaceProject(workspaceId, payload = {}, actorUid
     targetAmount: Number.isFinite(targetAmount) ? targetAmount : 0,
     currentAmount: Number.isFinite(currentAmount) ? currentAmount : 0,
     progress,
+    ownerMemberId: payload.ownerMemberId || '',
+    ownerMemberName: payload.ownerMemberName || '',
     linkedAccountId: payload.linkedAccountId || '',
     linkedAccountLabel: payload.linkedAccountLabel || '',
     matchText: String(payload.matchText || '').trim(),
@@ -273,6 +275,32 @@ export async function createWorkspaceProject(workspaceId, payload = {}, actorUid
   })
 
   return ref.id
+}
+
+export async function updateWorkspaceProject(workspaceId, projectId, payload = {}) {
+  if (!workspaceId || !projectId) throw new Error('Projeto nao selecionado')
+
+  const targetAmount = Number(payload.targetAmount || 0)
+  const currentAmount = Number(payload.currentAmount || 0)
+  const progress = targetAmount > 0
+    ? Math.max(0, Math.min(100, (currentAmount / targetAmount) * 100))
+    : 0
+
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'projects', projectId), {
+    name: String(payload.name || '').trim() || 'Projeto familiar',
+    kind: payload.kind || 'caixinha',
+    targetAmount: Number.isFinite(targetAmount) ? targetAmount : 0,
+    currentAmount: Number.isFinite(currentAmount) ? currentAmount : 0,
+    progress,
+    ownerMemberId: payload.ownerMemberId || '',
+    ownerMemberName: payload.ownerMemberName || '',
+    linkedAccountId: payload.linkedAccountId || '',
+    linkedAccountLabel: payload.linkedAccountLabel || '',
+    matchText: String(payload.matchText || '').trim(),
+    notes: payload.notes || '',
+    status: payload.status || 'active',
+    updatedAt: serverTimestamp(),
+  })
 }
 
 function normalizeSearchText(value) {

@@ -21,6 +21,7 @@ function createId(prefix) {
 const AMOUNT_PATTERN_SOURCE = String.raw`\d{1,3}(?:[.\s]\d{3})*,\d{2}|\d+(?:,\d{2})|\d{1,3}(?:,\d{3})*\.\d{2}`
 const AMOUNT_PATTERN = new RegExp(AMOUNT_PATTERN_SOURCE, 'g')
 const RECEIPT_DATE_PATTERN = /\b(\d{2})[\/.-](\d{2})[\/.-](\d{2,4})\b/g
+const RECEIPT_ITEM_COUNT_PATTERN = /(?:qtd\.?\s*)?total\s+de\s+itens?\D+(\d{1,4})/i
 
 function todayLocalIso() {
   const now = new Date()
@@ -241,6 +242,11 @@ function extractQuantity(line) {
   return Number.isFinite(quantity) && quantity > 0 ? quantity : ''
 }
 
+function normalizeQuantityNumber(value) {
+  const quantity = Number(String(value || '').replace(',', '.'))
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : ''
+}
+
 function cleanTrailingAmountTokens(text) {
   return String(text || '')
     .replace(new RegExp(`(?:${AMOUNT_PATTERN_SOURCE})(?:\\s+(?:${AMOUNT_PATTERN_SOURCE}))*\\s*$`), ' ')
@@ -277,6 +283,38 @@ function shouldUseAiFallback(receiptItems, totalAmount) {
   return genericCount === items.length
 }
 
+function isLikelyCorruptedDescription(description) {
+  const text = String(description || '').trim()
+  if (!text) return true
+
+  const tokens = text.split(/\s+/).filter(Boolean)
+  const oneLetterTokens = tokens.filter((token) => token.length === 1).length
+  const vowelCount = (normalize(text).match(/[aeiou]/g) || []).length
+  const suspiciousChunkCount = (text.match(/[A-Z0-9]{8,}/g) || []).length
+
+  return (
+    (text.length >= 18 && oneLetterTokens >= 4)
+    || (text.length >= 14 && vowelCount <= 1)
+    || suspiciousChunkCount >= 2
+  )
+}
+
+function shouldForceAiFallback(receiptItems, summary = {}, totalAmount = 0) {
+  const items = Array.isArray(receiptItems) ? receiptItems : []
+  const expectedCount = Number(summary?.itemCount || 0)
+  const partialCount = items.filter((item) => item?.status === 'partial' || !(Number(item?.amount) > 0)).length
+  const corruptedCount = items.filter((item) => isLikelyCorruptedDescription(item?.description)).length
+  const parsedTotal = items.reduce((sum, item) => sum + Number(item?.amount || 0), 0)
+  const totalDelta = Number(totalAmount) > 0 ? Math.abs(parsedTotal - Number(totalAmount)) : 0
+
+  if (expectedCount > 0 && items.length < Math.max(8, Math.floor(expectedCount * 0.65))) return true
+  if (items.length > 0 && partialCount / items.length >= 0.25) return true
+  if (items.length > 0 && corruptedCount / items.length >= 0.3) return true
+  if (Number(totalAmount) > 0 && totalDelta > Math.max(8, totalAmount * 0.18)) return true
+
+  return false
+}
+
 function isReceiptNoise(line) {
   const normalized = normalize(line)
   if (!normalized) return true
@@ -302,6 +340,38 @@ function cleanItemDescription(text) {
         .trim()
     )
   )
+}
+
+function looksStructuredReceiptItemLine(line) {
+  const structuredPattern = new RegExp(
+    String.raw`^\d{1,3}\s+\d{2,}\s+.+?\s+\d+(?:[.,]\d{1,3})?\s*(?:un|und|kg|g|ml|lt|l)\s*[xX]\s*(?:${AMOUNT_PATTERN_SOURCE})\s+(?:${AMOUNT_PATTERN_SOURCE})$`,
+    'i',
+  )
+  return structuredPattern.test(String(line || '').trim())
+}
+
+function parseStructuredReceiptItemLine(line) {
+  const structuredPattern = new RegExp(
+    String.raw`^(?:\d{1,3})\s+(?:\d{2,})\s+(?<description>.+?)\s+(?<quantity>\d+(?:[.,]\d{1,3})?)\s*(?:un|und|kg|g|ml|lt|l)\s*[xX]\s*(?<unitAmount>${AMOUNT_PATTERN_SOURCE})\s+(?<totalAmount>${AMOUNT_PATTERN_SOURCE})$`,
+    'i',
+  )
+
+  const match = String(line || '').trim().match(structuredPattern)
+  if (!match?.groups) return null
+
+  const description = cleanItemDescription(match.groups.description)
+  const amount = parseAmount(match.groups.totalAmount)
+  const unitAmount = parseAmount(match.groups.unitAmount)
+  const quantity = normalizeQuantityNumber(match.groups.quantity)
+
+  if (!description || !(amount > 0)) return null
+
+  return {
+    description,
+    amount,
+    quantity,
+    unitAmount: unitAmount > 0 ? unitAmount : null,
+  }
 }
 
 function classifyReceiptItem(description) {
@@ -456,9 +526,15 @@ function parseReceiptSummary(lines) {
     subtotal: 0,
     discountTotal: 0,
     surchargeTotal: 0,
+    itemCount: 0,
   }
 
   for (const line of lines) {
+    const itemCountMatch = String(line || '').match(RECEIPT_ITEM_COUNT_PATTERN)
+    if (itemCountMatch) {
+      summary.itemCount = Number(itemCountMatch[1] || 0)
+    }
+
     if (!lineHasAmount(line)) continue
     const amount = parseAmount(line)
     if (amount <= 0) continue
@@ -534,6 +610,17 @@ function parseReceiptItems(lines, expectedTotal = 0) {
       continue
     }
 
+    const structuredItem = looksStructuredReceiptItemLine(line)
+      ? parseStructuredReceiptItemLine(line)
+      : null
+    if (structuredItem) {
+      const item = createReceiptItem(structuredItem.description, structuredItem.amount, structuredItem.quantity)
+      item.status = 'identified'
+      item.unitAmount = structuredItem.unitAmount
+      items.push(item)
+      continue
+    }
+
     const amounts = extractLineAmounts(line)
     let finalAmount = 0
     if (amounts.length > 0) {
@@ -575,12 +662,64 @@ function parseReceiptItems(lines, expectedTotal = 0) {
 async function extractTextWithOcr(file) {
   const { createWorker } = await import('tesseract.js')
   const worker = await createWorker('por')
+  const input = await preprocessReceiptImage(file)
 
   try {
-    const { data } = await worker.recognize(file)
+    await worker.setParameters({
+      tessedit_pageseg_mode: '4',
+      preserve_interword_spaces: '1',
+    })
+    const { data } = await worker.recognize(input)
     return String(data?.text || '')
   } finally {
     await worker.terminate()
+  }
+}
+
+async function preprocessReceiptImage(file) {
+  if (!file || typeof document === 'undefined' || !String(file.type || '').startsWith('image/')) return file
+
+  const url = URL.createObjectURL(file)
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('Nao foi possivel abrir a imagem do cupom.'))
+      img.src = url
+    })
+
+    const scale = Math.max(1.8, 1800 / Math.max(image.width || 1, 1))
+    const width = Math.round(image.width * scale)
+    const height = Math.round(image.height * scale)
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return file
+
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, width, height)
+    context.filter = 'grayscale(1) contrast(1.55) brightness(1.08) saturate(0)'
+    context.drawImage(image, 0, 0, width, height)
+    context.filter = 'none'
+
+    const imageData = context.getImageData(0, 0, width, height)
+    const { data } = imageData
+    for (let index = 0; index < data.length; index += 4) {
+      const luminance = (data[index] * 0.299) + (data[index + 1] * 0.587) + (data[index + 2] * 0.114)
+      const pixel = luminance > 168 ? 255 : 0
+      data[index] = pixel
+      data[index + 1] = pixel
+      data[index + 2] = pixel
+    }
+    context.putImageData(imageData, 0, 0)
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+    return blob || file
+  } catch {
+    return file
+  } finally {
+    URL.revokeObjectURL(url)
   }
 }
 
@@ -605,7 +744,7 @@ export async function parseReceiptImageFile(file) {
   let totalAmount = findTotalAmount(summary, itemTotal)
   let aiWarningMessage = ''
 
-  if (shouldUseAiFallback(receiptItems, totalAmount)) {
+  if (shouldUseAiFallback(receiptItems, totalAmount) || shouldForceAiFallback(receiptItems, summary, totalAmount)) {
     try {
       const aiFallback = await analyzeReceiptWithAiFallback({
         file,
@@ -629,6 +768,12 @@ export async function parseReceiptImageFile(file) {
         receiptItems = aiFallback.items
         itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
         totalAmount = Number(aiFallback.totalAmount || totalAmount || itemTotal)
+        if (aiFallback.purchaseDate) {
+          summary.purchaseDate = aiFallback.purchaseDate
+        }
+        if (aiFallback.merchantName) {
+          summary.merchantName = aiFallback.merchantName
+        }
       }
     } catch (error) {
       if (isGeminiRateLimitError(error)) {
@@ -639,10 +784,12 @@ export async function parseReceiptImageFile(file) {
   }
 
   const topHints = [...new Set(receiptItems.flatMap((item) => item.budgetCategoryHints || []))].slice(0, 4)
+  const finalMerchantName = summary.merchantName || merchantName
+  const finalPurchaseDate = summary.purchaseDate || purchaseDate
 
   return [{
-    date: purchaseDate,
-    description: merchantName ? `Cupom ${merchantName}` : 'Cupom importado por imagem',
+    date: finalPurchaseDate,
+    description: finalMerchantName ? `Cupom ${finalMerchantName}` : 'Cupom importado por imagem',
     amount: totalAmount > 0 ? totalAmount : itemTotal,
     type: 'expense',
     direction: 'debit',

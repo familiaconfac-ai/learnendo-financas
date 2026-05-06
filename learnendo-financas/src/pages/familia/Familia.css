@@ -377,12 +377,26 @@
   gap: 0.75rem;
   flex-wrap: wrap;
 }
+.project-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
 .project-kind,
 .project-target,
 .project-meta,
 .project-notes {
   color: var(--color-text-muted);
   font-size: 0.82rem;
+}
+.project-edit-btn {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.78rem;
+  cursor: pointer;
 }
 .project-progress-track {
   width: 100%;

@@ -72,6 +72,7 @@ export default function Familia() {
     members: workspaceMembers,
     myRole: workspaceRole,
     addProject,
+    editProject,
   } = useWorkspace()
   const {
     family, members, invitations, loading, error,
@@ -102,9 +103,12 @@ export default function Familia() {
   const [addMemberNote,      setAddMemberNote]       = useState('')
   const [addMemberRole,      setAddMemberRole]       = useState('membro')
   const [projectOpen,        setProjectOpen]         = useState(false)
+  const [editingProjectId,   setEditingProjectId]    = useState(null)
   const [projectName,        setProjectName]         = useState('')
   const [projectTarget,      setProjectTarget]       = useState('')
   const [projectCurrent,     setProjectCurrent]      = useState('')
+  const [projectOwnerId,     setProjectOwnerId]      = useState('')
+  const [projectOwnerName,   setProjectOwnerName]    = useState('')
   const [projectAccount,     setProjectAccount]      = useState('')
   const [projectAccountId,   setProjectAccountId]    = useState('')
   const [projectMatchText,   setProjectMatchText]    = useState('')
@@ -316,29 +320,73 @@ export default function Familia() {
 
     setSaving(true)
     try {
-      await addProject({
+      const payload = {
         name: projectName.trim(),
         targetAmount: projectTarget,
         currentAmount: projectCurrent,
+        ownerMemberId: projectOwnerId,
+        ownerMemberName: projectOwnerName.trim(),
         linkedAccountId: projectAccountId,
         linkedAccountLabel: projectAccount.trim(),
         matchText: projectMatchText.trim(),
         notes: projectNotes.trim(),
-      })
+      }
+
+      if (editingProjectId) {
+        await editProject(editingProjectId, payload)
+      } else {
+        await addProject(payload)
+      }
       setProjectOpen(false)
+      setEditingProjectId(null)
       setProjectName('')
       setProjectTarget('')
       setProjectCurrent('')
+      setProjectOwnerId('')
+      setProjectOwnerName('')
       setProjectAccount('')
       setProjectAccountId('')
       setProjectMatchText('')
       setProjectNotes('')
-      showToast('Projeto familiar criado ✅')
+      showToast(editingProjectId ? 'Projeto familiar atualizado ✅' : 'Projeto familiar criado ✅')
     } catch (err) {
-      showToast('Erro ao criar projeto: ' + err.message, 'err')
+      showToast('Erro ao salvar projeto: ' + err.message, 'err')
     } finally {
       setSaving(false)
     }
+  }
+
+  function handleProjectModalClose() {
+    setProjectOpen(false)
+    setEditingProjectId(null)
+    setProjectName('')
+    setProjectTarget('')
+    setProjectCurrent('')
+    setProjectOwnerId('')
+    setProjectOwnerName('')
+    setProjectAccount('')
+    setProjectAccountId('')
+    setProjectMatchText('')
+    setProjectNotes('')
+  }
+
+  function handleProjectEditOpen(project) {
+    setEditingProjectId(project.id)
+    setProjectName(project.name || '')
+    setProjectTarget(String(project.targetAmount || ''))
+    setProjectCurrent(String(project.currentAmount || ''))
+    setProjectOwnerId(project.ownerMemberId || '')
+    setProjectOwnerName(project.ownerMemberName || '')
+    setProjectAccount(project.linkedAccountLabel || '')
+    setProjectAccountId(project.linkedAccountId || '')
+    setProjectMatchText(project.matchText || '')
+    setProjectNotes(project.notes || '')
+    setProjectOpen(true)
+  }
+
+  function handleProjectCreateOpen() {
+    handleProjectModalClose()
+    setProjectOpen(true)
   }
 
   async function handleShareApp() {
@@ -512,7 +560,7 @@ export default function Familia() {
           />
           {canManage && (
             <div className="members-header-btns">
-              <button className="btn-add-member" onClick={() => setProjectOpen(true)}>
+              <button className="btn-add-member" onClick={handleProjectCreateOpen}>
                 + Projeto
               </button>
             </div>
@@ -524,7 +572,7 @@ export default function Familia() {
             <p className="familia-empty-title">Nenhum projeto criado ainda</p>
             <p className="familia-empty-sub">Use projetos para acompanhar viagem, reserva, reforma ou outra caixinha da familia.</p>
             {canManage && (
-              <button className="btn-add-member" onClick={() => setProjectOpen(true)}>
+              <button className="btn-add-member" onClick={handleProjectCreateOpen}>
                 + Criar primeiro projeto
               </button>
             )}
@@ -543,7 +591,14 @@ export default function Familia() {
                   <div className="project-main">
                     <div className="project-head">
                       <strong>{project.name}</strong>
-                      <span className="project-kind">{project.kind === 'caixinha' ? 'Caixinha' : project.kind}</span>
+                      <div className="project-head-actions">
+                        <span className="project-kind">{project.kind === 'caixinha' ? 'Caixinha' : project.kind}</span>
+                        {canManage && (
+                          <button className="project-edit-btn" onClick={() => handleProjectEditOpen(project)}>
+                            Editar
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="project-values">
                       <span>{formatCurrency(currentAmount)}</span>
@@ -554,6 +609,7 @@ export default function Familia() {
                     </div>
                     <div className="project-meta">
                       <span>{progress.toFixed(0)}% concluido</span>
+                      {project.ownerMemberName && <span>Responsavel: {project.ownerMemberName}</span>}
                       {project.linkedAccountLabel && <span>Conta: {project.linkedAccountLabel}</span>}
                       {project.matchText && <span>Filtro: {project.matchText}</span>}
                       {project.isAutoTracked && <span>Auto: {project.trackedTransactionsCount} lancamentos</span>}
@@ -973,9 +1029,9 @@ export default function Familia() {
       )}
 
       {projectOpen && (
-        <div className="modal-overlay" onClick={() => setProjectOpen(false)}>
+        <div className="modal-overlay" onClick={handleProjectModalClose}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">Novo projeto familiar</h3>
+            <h3 className="modal-title">{editingProjectId ? 'Editar projeto familiar' : 'Novo projeto familiar'}</h3>
             <form onSubmit={handleCreateProject} className="invite-form">
               <div className="form-group">
                 <label>Nome do projeto</label>
@@ -988,6 +1044,25 @@ export default function Familia() {
                   autoFocus
                   maxLength={80}
                 />
+              </div>
+              <div className="form-group">
+                <label>Membro responsavel</label>
+                <select
+                  value={projectOwnerId}
+                  onChange={(e) => {
+                    const nextId = e.target.value
+                    const selectedMember = familyMembers.find((member) => (member.id ?? member.uid) === nextId)
+                    setProjectOwnerId(nextId)
+                    setProjectOwnerName(selectedMember?.displayName || '')
+                  }}
+                >
+                  <option value="">Selecione um membro</option>
+                  {familyMembers.map((member) => (
+                    <option key={member.id ?? member.uid} value={member.id ?? member.uid}>
+                      {member.displayName}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="form-group">
                 <label>Meta total</label>
@@ -1061,11 +1136,11 @@ export default function Familia() {
                 />
               </div>
               <div className="invite-form-actions">
-                <button type="button" className="btn-cancel" onClick={() => setProjectOpen(false)}>
+                <button type="button" className="btn-cancel" onClick={handleProjectModalClose}>
                   Cancelar
                 </button>
                 <button type="submit" className="btn-send" disabled={saving}>
-                  {saving ? 'Salvando...' : 'Criar projeto'}
+                  {saving ? 'Salvando...' : (editingProjectId ? 'Salvar projeto' : 'Criar projeto')}
                 </button>
               </div>
             </form>

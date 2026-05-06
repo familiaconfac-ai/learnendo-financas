@@ -16,6 +16,7 @@ import {
   upsertWorkspaceNature,
   createWorkspaceContact,
   createWorkspaceProject,
+  updateWorkspaceProject,
   buildContactDebtLedger,
   buildWorkspaceFinancialSummary,
   buildWorkspaceProjectSnapshots,
@@ -198,6 +199,12 @@ export function WorkspaceProvider({ children }) {
     return projectId
   }
 
+  async function editProject(projectId, data) {
+    if (!user?.uid || !activeWorkspaceId) throw new Error('Workspace nao selecionado')
+    await updateWorkspaceProject(activeWorkspaceId, projectId, data)
+    await reloadWorkspaceData()
+  }
+
   async function createNewWorkspace(name, type = 'family') {
     if (!user?.uid) throw new Error('Usuário não autenticado')
     const workspaceId = await createWorkspace(user.uid, { name, type, role: 'gestor' })
@@ -234,6 +241,7 @@ export function WorkspaceProvider({ children }) {
         renameNatureInline,
         addExternalContact,
         addProject,
+        editProject,
         createNewWorkspace,
         createInviteLink,
       }}
