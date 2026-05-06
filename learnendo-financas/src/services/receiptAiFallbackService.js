@@ -98,6 +98,27 @@ function buildPrompt({ fileName, ocrText, localSummary }) {
   ].join('\n')
 }
 
+function buildTextOnlyPrompt({ fileName, extractedText, localSummary }) {
+  const expectedCount = Number(localSummary?.expectedItemCount || 0)
+
+  return [
+    'Analise este texto extraido de um cupom fiscal ou nota.',
+    'Extraia os itens linha por linha, sem resumir.',
+    'Seu trabalho principal e estruturar descricao do produto, quantidade, valor unitario e valor total de cada linha.',
+    'Nao junte linhas diferentes em um item so.',
+    'Nao repita item. Nao invente item. Nao devolva item com valor zero.',
+    expectedCount > 0 ? `O cupom indica ${expectedCount} itens. Tente retornar exatamente essa quantidade se o texto permitir.` : 'Mantenha a lista completa de itens.',
+    'Se uma descricao estiver abreviada, preserve a abreviacao original em vez de inventar nome novo.',
+    'Responda apenas JSON valido neste formato:',
+    '{"merchantName":"string","purchaseDate":"YYYY-MM-DD|null","totalAmount":0,"items":[{"description":"string","amount":0,"unitAmount":0,"quantity":null}]}',
+    '',
+    `Arquivo: ${fileName || 'cupom'}`,
+    `Resumo local: ${JSON.stringify(localSummary || {})}`,
+    'Texto extraido:',
+    String(extractedText || '').slice(0, 12000),
+  ].join('\n')
+}
+
 function normalizeAmount(value) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Number(parsed.toFixed(2)) : 0
@@ -275,6 +296,40 @@ export async function analyzeReceiptWithAiFallback({
   }
 
   storeReceiptAnalysisCache(fingerprint, result)
+  storeItemClassificationCache(items)
+  return result
+}
+
+export async function analyzeReceiptTextWithAiFallback({
+  extractedText,
+  fileName,
+  localSummary = {},
+}) {
+  if (!isReceiptAiFallbackConfigured()) return null
+  if (!String(extractedText || '').trim()) return null
+
+  const prompt = buildTextOnlyPrompt({ fileName, extractedText, localSummary })
+  const raw = await callGeminiForJson([
+    { text: prompt },
+  ], {
+    temperature: 0,
+    maxOutputTokens: 8192,
+  })
+
+  const items = normalizeAiItems(raw?.items)
+  if (items.length === 0) return null
+
+  const merchantName = String(raw?.merchantName || '').trim()
+  const totalAmount = normalizeAmount(raw?.totalAmount) || items.reduce((sum, item) => sum + item.amount, 0)
+  const result = {
+    merchantName: merchantName && normalizeTaxonomyText(merchantName) ? merchantName : '',
+    purchaseDate: normalizeDate(raw?.purchaseDate),
+    totalAmount,
+    items,
+    topBudgetHints: [...new Set(items.flatMap((item) => item.budgetCategoryHints || []))],
+    source: 'gemini_text',
+  }
+
   storeItemClassificationCache(items)
   return result
 }

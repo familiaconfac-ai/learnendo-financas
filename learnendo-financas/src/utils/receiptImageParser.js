@@ -1,6 +1,7 @@
 import { classifyReceiptItemByTaxonomy } from './financeTaxonomy'
 import {
   analyzeReceiptWithAiFallback,
+  analyzeReceiptTextWithAiFallback,
   hydrateReceiptItemsFromCache,
   isReceiptAiFallbackConfigured,
   isGeminiRateLimitError,
@@ -872,6 +873,34 @@ function buildReceiptResultFromText(rawText, file, aiWarningMessage = '') {
   }]
 }
 
+function buildReceiptEnvelope({
+  lines,
+  file,
+  merchantName,
+  purchaseDate,
+  totalAmount,
+  receiptItems,
+  source,
+  aiWarningMessage = '',
+}) {
+  return [{
+    date: purchaseDate,
+    description: merchantName ? `Cupom ${merchantName}` : 'Cupom importado',
+    amount: totalAmount,
+    type: 'expense',
+    direction: 'debit',
+    balance: null,
+    rawLine: lines.slice(0, 12).join(' | ').slice(0, 600),
+    source,
+    categoryHints: [...new Set((receiptItems || []).flatMap((item) => item.budgetCategoryHints || []))].slice(0, 4),
+    requiresReview: true,
+    receiptDetailEnabled: (receiptItems || []).length > 0,
+    receiptItems,
+    aiWarningMessage,
+    ocrPreviewLines: lines.slice(0, 30),
+  }]
+}
+
 export async function parseReceiptImageFile(file) {
   const ocrText = await extractTextWithOcr(file)
   const rawLines = ocrText.split(/\r?\n/).map(cleanLine).filter(Boolean)
@@ -957,5 +986,64 @@ export async function parseReceiptImageFile(file) {
 
 export async function parseReceiptPdfFile(file) {
   const text = await extractTextFromReceiptPdf(file)
-  return buildReceiptResultFromText(text, file)
+  const rawLines = String(text || '').split(/\r?\n/).map(cleanLine).filter(Boolean)
+  if (rawLines.length === 0) {
+    throw new Error('Nao foi possivel extrair texto legivel do PDF do cupom.')
+  }
+
+  const lines = rebuildReceiptLines(rawLines)
+  const merchantName = findMerchantName(lines, file)
+  const purchaseDate = findReceiptDate(lines)
+  const summary = parseReceiptSummary(lines)
+  const detailLines = sliceReceiptDetailLines(lines)
+  const expectedTotal = findTotalAmount(summary, 0)
+  let receiptItems = hydrateReceiptItemsFromCache(
+    finalizeLocalReceiptItems(parseReceiptItems(detailLines, expectedTotal), summary),
+  )
+  let itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  let totalAmount = findTotalAmount(summary, itemTotal)
+
+  const needsAdvancedRead = shouldUseAiFallback(receiptItems, totalAmount) || shouldForceAiFallback(receiptItems, summary, totalAmount)
+  if (isReceiptAiFallbackConfigured() && needsAdvancedRead) {
+    const aiResult = await analyzeReceiptTextWithAiFallback({
+      extractedText: text,
+      fileName: file?.name,
+      localSummary: {
+        merchantName,
+        purchaseDate,
+        totalAmount,
+        expectedItemCount: summary.itemCount || 0,
+        localItemCount: receiptItems.length,
+      },
+    }).catch(() => null)
+
+    if (aiResult?.items?.length) {
+      receiptItems = aiResult.items
+      itemTotal = receiptItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+      totalAmount = Number(aiResult.totalAmount || totalAmount || itemTotal)
+      return buildReceiptEnvelope({
+        lines,
+        file,
+        merchantName: aiResult.merchantName || merchantName,
+        purchaseDate: aiResult.purchaseDate || purchaseDate,
+        totalAmount: totalAmount > 0 ? totalAmount : itemTotal,
+        receiptItems,
+        source: 'pdf_receipt',
+      })
+    }
+  }
+
+  if (receiptItems.length === 0) {
+    throw new Error('O PDF foi lido, mas os itens do cupom nao foram identificados.')
+  }
+
+  return buildReceiptEnvelope({
+    lines,
+    file,
+    merchantName,
+    purchaseDate,
+    totalAmount: totalAmount > 0 ? totalAmount : itemTotal,
+    receiptItems,
+    source: 'pdf_receipt',
+  })
 }
