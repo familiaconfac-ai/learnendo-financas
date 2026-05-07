@@ -1,5 +1,6 @@
 import {
   collection,
+  collectionGroup,
   doc,
   getDoc,
   getDocs,
@@ -48,6 +49,10 @@ function workspaceProjectsCol(workspaceId) {
 
 function userMembershipDoc(uid, workspaceId) {
   return doc(db, 'users', uid, 'workspaceMemberships', workspaceId)
+}
+
+function workspaceIdFromMemberSnapshot(memberSnapshot) {
+  return memberSnapshot?.ref?.parent?.parent?.id || null
 }
 
 function userSettingsDoc(uid) {
@@ -147,7 +152,36 @@ export async function createWorkspace(ownerUid, payload = {}) {
 
 export async function fetchUserWorkspaces(uid) {
   const membershipSnap = await getDocs(collection(db, 'users', uid, 'workspaceMemberships'))
-  const memberships = membershipSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  const membershipMap = new Map(
+    membershipSnap.docs.map((d) => {
+      const data = { id: d.id, ...d.data() }
+      return [data.workspaceId || d.id, data]
+    }),
+  )
+
+  try {
+    const legacyMemberSnap = await getDocs(query(
+      collectionGroup(db, 'members'),
+      where('uid', '==', uid),
+    ))
+
+    legacyMemberSnap.docs.forEach((memberDoc) => {
+      const memberData = memberDoc.data()
+      if (memberData?.status && memberData.status !== 'active') return
+
+      const workspaceId = workspaceIdFromMemberSnapshot(memberDoc)
+      if (!workspaceId || membershipMap.has(workspaceId)) return
+      membershipMap.set(workspaceId, {
+        id: workspaceId,
+        workspaceId,
+        ...memberData,
+      })
+    })
+  } catch (error) {
+    console.warn('[workspaceService] Legacy workspace fallback skipped:', error?.message || error)
+  }
+
+  const memberships = [...membershipMap.values()]
   if (memberships.length === 0) return []
 
   const workspaceDocs = await Promise.all(

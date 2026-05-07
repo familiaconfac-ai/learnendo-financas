@@ -42,6 +42,16 @@ function normalizeMonthKey(value) {
   return /^\d{4}-\d{2}$/.test(raw) ? raw : null
 }
 
+function resolveStoredMonthKey(raw = {}) {
+  return (
+    normalizeMonthKey(raw.competencyMonth)
+    || normalizeMonthKey(raw.recurringInstanceMonth)
+    || normalizeMonthKey(raw.salaryReferenceMonth)
+    || normalizeMonthKey(monthKeyFromDate(raw.date))
+    || null
+  )
+}
+
 function normalizeReceiptPaymentMethod(value) {
   const normalized = String(value || '').trim().toLowerCase()
   if (normalized === 'account' || normalized === 'card' || normalized === 'cash') return normalized
@@ -119,7 +129,24 @@ function applyViewerScope(docs, options = {}) {
   return docs
 }
 
-function mapTransactionSnapshot(docSnapshot) {
+function resolveLegacyPersonalSource(tx, workspaceId) {
+  if (!workspaceId) {
+    return !tx.workspaceId ? 'legacy_personal' : null
+  }
+  if (!tx.workspaceId) return 'legacy_personal'
+  if (tx.workspaceId === workspaceId) return 'legacy_workspace_tagged'
+  return 'legacy_other_workspace'
+}
+
+function normalizeResolvedDocSource(source) {
+  if (source === 'workspace') return 'workspace'
+  if (source === 'legacy_personal') return 'legacy_personal'
+  if (source === 'legacy_workspace_tagged') return 'legacy_workspace_tagged'
+  if (source === 'legacy_other_workspace') return 'legacy_other_workspace'
+  return 'personal'
+}
+
+function mapTransactionSnapshot(docSnapshot, meta = {}) {
   const raw = docSnapshot.data()
   return {
     id: docSnapshot.id,
@@ -153,6 +180,183 @@ function mapTransactionSnapshot(docSnapshot) {
     currentInstallment: Number.isFinite(Number(raw.currentInstallment)) ? Number(raw.currentInstallment) : null,
     createdAt: raw.createdAt?.toDate?.().toISOString() ?? raw.createdAt ?? null,
     updatedAt: raw.updatedAt?.toDate?.().toISOString() ?? raw.updatedAt ?? null,
+    _resolvedDocPath: meta.docPath || docSnapshot.ref?.path || '',
+    _resolvedDocSource: normalizeResolvedDocSource(meta.docSource),
+  }
+}
+
+function preferredResolvedSourceRank(source) {
+  if (source === 'workspace') return 4
+  if (source === 'legacy_workspace_tagged') return 3
+  if (source === 'legacy_personal') return 2
+  if (source === 'legacy_other_workspace') return 1
+  return 1
+}
+
+function resolvedExplicitIdentityKeys(tx) {
+  const keys = []
+
+  if (tx?.id) keys.push(`doc:${tx.id}`)
+  if (tx?.legacySourceId) keys.push(`legacySourceId:${tx.legacySourceId}`)
+  if (tx?.mirrorOf) keys.push(`mirrorOf:${tx.mirrorOf}`)
+  if (tx?.originalTransactionId) keys.push(`originalTransactionId:${tx.originalTransactionId}`)
+  if (tx?.sourceTransactionId) keys.push(`sourceTransactionId:${tx.sourceTransactionId}`)
+  if (tx?.resolvedTransactionKey) keys.push(`resolvedTransactionKey:${tx.resolvedTransactionKey}`)
+
+  return keys.filter(Boolean)
+}
+
+function dedupeResolvedTransactions(transactions = []) {
+  const byPath = new Map()
+  const byExplicitIdentity = new Map()
+  const preserved = []
+
+  transactions.forEach((tx) => {
+    const pathKey = tx?._resolvedDocPath || null
+    if (pathKey && byPath.has(pathKey)) return
+
+    const identityKeys = resolvedExplicitIdentityKeys(tx)
+    if (identityKeys.length === 0) {
+      if (pathKey) byPath.set(pathKey, tx)
+      preserved.push(tx)
+      return
+    }
+
+    let current = null
+    for (const identityKey of identityKeys) {
+      if (byExplicitIdentity.has(identityKey)) {
+        current = byExplicitIdentity.get(identityKey)
+        break
+      }
+    }
+
+    if (!current) {
+      if (pathKey) byPath.set(pathKey, tx)
+      identityKeys.forEach((identityKey) => byExplicitIdentity.set(identityKey, tx))
+      preserved.push(tx)
+      return
+    }
+
+    const currentRank = preferredResolvedSourceRank(current._resolvedDocSource)
+    const nextRank = preferredResolvedSourceRank(tx._resolvedDocSource)
+    const preferred = nextRank > currentRank ? tx : current
+    const discarded = preferred === tx ? current : tx
+
+    if (preferred !== current) {
+      const preservedIndex = preserved.findIndex((item) => item === current)
+      if (preservedIndex >= 0) preserved[preservedIndex] = tx
+    }
+
+    if (pathKey && preferred === tx) byPath.set(pathKey, tx)
+    identityKeys.forEach((identityKey) => byExplicitIdentity.set(identityKey, preferred))
+
+    if (discarded?._resolvedDocPath && byPath.get(discarded._resolvedDocPath) === discarded) {
+      byPath.delete(discarded._resolvedDocPath)
+    }
+  })
+
+  return preserved
+}
+
+async function fetchMonthAwareDocs(collectionRef, monthStr = null) {
+  if (!monthStr) {
+    const fullSnap = await getDocs(collectionRef)
+    return {
+      docs: fullSnap.docs,
+      exactCompetencyMatchDocs: fullSnap.docs.length,
+      fallbackMonthDocs: 0,
+    }
+  }
+
+  const exactSnap = await getDocs(query(collectionRef, where('competencyMonth', '==', monthStr)))
+  const exactIds = new Set(exactSnap.docs.map((docSnapshot) => docSnapshot.id))
+  const fullSnap = await getDocs(collectionRef)
+  const fallbackDocs = fullSnap.docs.filter((docSnapshot) => {
+    if (exactIds.has(docSnapshot.id)) return false
+    return resolveStoredMonthKey(docSnapshot.data?.() || {}) === monthStr
+  })
+
+  return {
+    docs: [...exactSnap.docs, ...fallbackDocs],
+    exactCompetencyMatchDocs: exactSnap.docs.length,
+    fallbackMonthDocs: fallbackDocs.length,
+  }
+}
+
+async function fetchResolvedTransactionCandidates(uid, options = {}) {
+  const workspaceId = options.workspaceId || null
+  const monthStr = options.monthKey || null
+
+  const workspaceDocs = []
+  const personalDocs = []
+
+  if (workspaceId) {
+    const workspaceResult = await fetchMonthAwareDocs(txCol(uid, workspaceId), monthStr)
+
+    workspaceResult.docs.forEach((docSnapshot) => {
+      workspaceDocs.push(mapTransactionSnapshot(docSnapshot, {
+        docSource: 'workspace',
+        docPath: docSnapshot.ref?.path,
+      }))
+    })
+  }
+
+  const shouldReadPersonal = !workspaceId || options.includeLegacyPersonal !== false
+  if (shouldReadPersonal) {
+    const personalResult = await fetchMonthAwareDocs(txCol(uid, null), monthStr)
+
+    const rawPersonalDocs = personalResult.docs
+
+    rawPersonalDocs.forEach((docSnapshot) => {
+      const mapped = mapTransactionSnapshot(docSnapshot, {
+        docSource: 'personal',
+        docPath: docSnapshot.ref?.path,
+      })
+
+      if (workspaceId) {
+        const legacySource = resolveLegacyPersonalSource(mapped, workspaceId)
+        if (!legacySource) return
+        mapped._resolvedDocSource = legacySource
+      }
+
+      personalDocs.push(mapped)
+    })
+  }
+
+  return [...workspaceDocs, ...personalDocs]
+}
+
+export async function getResolvedTransactions(uid, options = {}) {
+  const workspaceId = options.workspaceId || null
+  const monthKey = options.monthKey || (
+    Number.isFinite(Number(options.year)) && Number.isFinite(Number(options.month))
+      ? `${options.year}-${String(options.month).padStart(2, '0')}`
+      : null
+  )
+
+  try {
+    const rawDocs = await fetchResolvedTransactionCandidates(uid, {
+      workspaceId,
+      monthKey,
+      includeLegacyPersonal: options.includeLegacyPersonal,
+    })
+
+    let docs = dedupeResolvedTransactions(rawDocs)
+    docs = applyViewerScope(docs, options)
+
+    if (options.includeRecurringAuto === false) {
+      docs = docs.filter((tx) => tx.origin !== 'recurring_auto')
+    }
+
+    if (options.salaryReferenceMonth) {
+      const salaryReferenceMonth = normalizeMonthKey(options.salaryReferenceMonth)
+      docs = docs.filter((tx) => tx.salaryReferenceMonth === salaryReferenceMonth)
+    }
+
+    return docs
+  } catch (err) {
+    console.error('[TransactionService] Resolved fetch failed:', err.code, err.message)
+    throw err
   }
 }
 
@@ -360,84 +564,18 @@ export async function fetchTransactions(uid, year, month, options = {}) {
 }
 
 export async function fetchAllTransactionsForWorkspace(uid, options = {}) {
-  const workspaceId = options.workspaceId || null
-
-  try {
-    let docs = []
-
-    if (workspaceId) {
-      const workspaceSnap = await getDocs(txCol(uid, workspaceId))
-      docs = workspaceSnap.docs.map(mapTransactionSnapshot)
-    } else {
-      const personalSnap = await getDocs(txCol(uid, null))
-      docs = personalSnap.docs.map(mapTransactionSnapshot)
-    }
-
-    if (workspaceId && options.includeLegacyPersonal !== false) {
-      const legacySnap = await getDocs(txCol(uid, null))
-      const legacyDocs = legacySnap.docs
-        .map(mapTransactionSnapshot)
-        .filter((tx) => !tx.workspaceId)
-      docs = [...docs, ...legacyDocs]
-    }
-
-    docs = applyViewerScope(docs, options)
-
-    const includeRecurringAuto = options.includeRecurringAuto !== false
-    return includeRecurringAuto ? docs : docs.filter((tx) => tx.origin !== 'recurring_auto')
-  } catch (err) {
-    console.error('[TransactionService] Fetch all failed:', err.code, err.message)
-    throw err
-  }
+  return getResolvedTransactions(uid, options)
 }
 
 export async function fetchTransactionsWithOptions(uid, year, month, options = {}) {
-  const monthStr = `${year}-${String(month).padStart(2, '0')}`
-  const workspaceId = options.workspaceId || null
-
-  try {
-    const q = query(txCol(uid, workspaceId), where('competencyMonth', '==', monthStr))
-    const snap = await getDocs(q)
-    let docs = snap.docs.map(mapTransactionSnapshot)
-
-    if (workspaceId && options.includeLegacyPersonal !== false) {
-      const legacySnap = await getDocs(query(txCol(uid, null), where('competencyMonth', '==', monthStr)))
-      const legacyDocs = legacySnap.docs
-        .map(mapTransactionSnapshot)
-        .filter((tx) => !tx.workspaceId)
-
-      docs = [...docs, ...legacyDocs]
-    }
-
-    docs = applyViewerScope(docs, options)
-
-    const includeRecurringAuto = options.includeRecurringAuto !== false
-    return includeRecurringAuto
-      ? docs
-      : docs.filter((tx) => tx.origin !== 'recurring_auto')
-  } catch (err) {
-    console.error('[TransactionService] Fetch failed:', err.code, err.message)
-    throw err
-  }
+  return getResolvedTransactions(uid, { ...options, year, month })
 }
 
 export async function fetchTransactionsBySalaryReferenceMonth(uid, salaryReferenceMonth, options = {}) {
   const normalizedReferenceMonth = normalizeMonthKey(salaryReferenceMonth)
   if (!normalizedReferenceMonth) return []
-
-  const workspaceId = options.workspaceId || null
-  const q = query(txCol(uid, workspaceId), where('salaryReferenceMonth', '==', normalizedReferenceMonth))
-  const snap = await getDocs(q)
-  let docs = snap.docs.map(mapTransactionSnapshot)
-
-  if (workspaceId && options.includeLegacyPersonal !== false) {
-    const legacySnap = await getDocs(query(txCol(uid, null), where('salaryReferenceMonth', '==', normalizedReferenceMonth)))
-    const legacyDocs = legacySnap.docs
-      .map(mapTransactionSnapshot)
-      .filter((tx) => !tx.workspaceId)
-
-    docs = [...docs, ...legacyDocs]
-  }
-
-  return applyViewerScope(docs, options)
+  return getResolvedTransactions(uid, {
+    ...options,
+    salaryReferenceMonth: normalizedReferenceMonth,
+  })
 }

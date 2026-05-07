@@ -49,6 +49,38 @@ export function WorkspaceProvider({ children }) {
   )
   const permissions = useMemo(() => getPermissionsByRole(myRole), [myRole])
 
+  const resolveBestWorkspaceId = useCallback(async (workspaceList, preferredId = null) => {
+    const preferredExists = workspaceList.some((ws) => ws.id === preferredId)
+    const initialId = preferredExists ? preferredId : (workspaceList[0]?.id || null)
+    if (!user?.uid || !initialId || workspaceList.length <= 1) return initialId
+
+    const workspaceScores = await Promise.all(
+      workspaceList.map(async (ws) => {
+        const role = normalizeWorkspaceRole(ws?.memberRole)
+        const tx = await fetchAllTransactionsForWorkspace(user.uid, {
+          workspaceId: ws.id,
+          viewerRole: role,
+          viewerUid: user.uid,
+          includeRecurringAuto: true,
+          includeLegacyPersonal: true,
+        })
+        return {
+          workspaceId: ws.id,
+          txCount: tx.length,
+        }
+      }),
+    )
+
+    const preferredScore = workspaceScores.find((item) => item.workspaceId === initialId)?.txCount || 0
+    if (preferredScore > 0) return initialId
+
+    const bestWorkspace = workspaceScores
+      .filter((item) => item.txCount > 0)
+      .sort((a, b) => b.txCount - a.txCount)[0]
+
+    return bestWorkspace?.workspaceId || initialId
+  }, [user?.uid])
+
   const reloadWorkspaceData = useCallback(async () => {
     if (!user?.uid || !activeWorkspaceId) return
 
@@ -98,8 +130,7 @@ export function WorkspaceProvider({ children }) {
       setWorkspaces(list)
 
       const preferred = await getActiveWorkspaceId(user.uid, list[0]?.id)
-      const preferredExists = list.some((ws) => ws.id === preferred)
-      const chosenId = preferredExists ? preferred : (list[0]?.id || null)
+      const chosenId = await resolveBestWorkspaceId(list, preferred)
       setActiveWorkspace(chosenId)
 
       if (chosenId && chosenId !== preferred) {
@@ -137,7 +168,7 @@ export function WorkspaceProvider({ children }) {
     } finally {
       setLoading(false)
     }
-  }, [profile, user?.uid])
+  }, [profile, resolveBestWorkspaceId, user?.uid])
 
   useEffect(() => {
     reload()

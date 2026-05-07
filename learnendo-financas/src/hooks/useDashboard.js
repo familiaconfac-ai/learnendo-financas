@@ -19,10 +19,13 @@ import { useTransactions } from './useTransactions'
  */
 export function useDashboard(year, month) {
   const { user } = useAuth()
-  const { activeWorkspaceId, myRole } = useWorkspace()
+  const { activeWorkspaceId, activeWorkspace, myRole } = useWorkspace()
   const { transactions, loading, error, reload } = useTransactions(year, month)
   const { accounts, loading: accountsLoading } = useAccounts()
-  const { budgetItems, loading: budgetLoading } = useBudget(year, month)
+  const {
+    budgetItems,
+    loading: budgetLoading,
+  } = useBudget(year, month)
   const [linkedAdvanceTransactions, setLinkedAdvanceTransactions] = useState([])
   const [linkedAdvanceLoading, setLinkedAdvanceLoading] = useState(false)
 
@@ -69,8 +72,12 @@ export function useDashboard(year, month) {
       .reduce((sum, item) => sum + Number(item.plannedAmount || 0), 0)
 
     return {
-      scope: 'personal',
-      ownerName: '',
+      scope: activeWorkspace?.type === 'family'
+        ? 'family'
+        : activeWorkspace?.type === 'shared'
+          ? 'shared'
+          : 'personal',
+      ownerName: activeWorkspace?.name || '',
       receitas: baseSummary.receitas,
       despesas: baseSummary.despesas,
       investimentos: baseSummary.investimentos,
@@ -87,7 +94,16 @@ export function useDashboard(year, month) {
       reconciliationAccountsCount: reconcilableAccounts.length,
       recentTransactions: baseSummary.recentTransactions,
     }
-  }, [transactions, budgetItems, linkedAdvanceTransactions, year, month, accounts])
+  }, [
+    transactions,
+    budgetItems,
+    linkedAdvanceTransactions,
+    year,
+    month,
+    accounts,
+    activeWorkspace?.name,
+    activeWorkspace?.type,
+  ])
 
   return {
     summary,

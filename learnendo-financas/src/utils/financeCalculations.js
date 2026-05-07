@@ -55,34 +55,35 @@ function isSalaryAdvanceNature(tx) {
   return tx?.transactionNatureId === 'nature_salary_advance'
 }
 
-export function calculateMonthlySummary(transactions, debugTag = '') {
+export function calculateMonthlySummary(transactions, debugTag = '', options = {}) {
   const source = Array.isArray(transactions) ? transactions : []
-  const confirmedTransactions = source.filter((t) => t.status === 'confirmed')
+  const includePending = options.includePending === true
+  const effectiveTransactions = includePending
+    ? source.filter((t) => t.status === 'confirmed' || t.status === 'pending')
+    : source.filter((t) => t.status === 'confirmed')
 
-  const receitas = confirmedTransactions
-    .filter((t) => t.type === 'income')
-    .reduce((sum, t) => sum + toNumber(t.amount), 0)
+  const incomeTransactions = effectiveTransactions.filter((t) => t.type === 'income')
+  const receitas = incomeTransactions.reduce((sum, t) => sum + toNumber(t.amount), 0)
 
-  const despesas = confirmedTransactions
-    .filter((t) => t.type === 'expense' && impactsBudget(t))
-    .reduce((sum, t) => sum + toNumber(t.amount), 0)
+  const expenseTransactions = effectiveTransactions.filter((t) => t.type === 'expense')
+  const expenseBudgetTransactions = expenseTransactions.filter((t) => impactsBudget(t))
+  const despesas = expenseBudgetTransactions.reduce((sum, t) => sum + toNumber(t.amount), 0)
 
-  const investimentos = confirmedTransactions
-    .filter((t) => t.type === 'investment' && impactsBudget(t))
-    .reduce((sum, t) => sum + toNumber(t.amount), 0)
+  const investmentTransactions = effectiveTransactions.filter((t) => t.type === 'investment')
+  const investmentBudgetTransactions = investmentTransactions.filter((t) => impactsBudget(t))
+  const investimentos = investmentBudgetTransactions.reduce((sum, t) => sum + toNumber(t.amount), 0)
 
-  const transferencias = confirmedTransactions
-    .filter((t) => canonicalType(t.type) === 'transfer')
-    .reduce((sum, t) => sum + toNumber(t.amount), 0)
+  const transferTransactions = effectiveTransactions.filter((t) => canonicalType(t.type) === 'transfer')
+  const transferencias = transferTransactions.reduce((sum, t) => sum + toNumber(t.amount), 0)
 
   const saldo = receitas - despesas - investimentos
   const pendingCount = source.filter((t) => t.status === 'pending').length
 
-  const recentTransactions = [...confirmedTransactions].slice(0, 6)
-  const salaryActual = confirmedTransactions
+  const recentTransactions = [...effectiveTransactions].slice(0, 6)
+  const salaryActual = effectiveTransactions
     .filter((t) => t.type === 'income' && isSalaryNature(t))
     .reduce((sum, t) => sum + toNumber(t.amount), 0)
-  const salaryAdvancesReceived = confirmedTransactions
+  const salaryAdvancesReceived = effectiveTransactions
     .filter((t) => t.type === 'income' && isSalaryAdvanceNature(t))
     .reduce((sum, t) => sum + toNumber(t.amount), 0)
 
@@ -140,10 +141,14 @@ export function buildSalaryInsight(currentMonthTransactions, linkedAdvanceTransa
   }
 }
 
-export function buildBudgetSpentMap(transactions, debugTag = '') {
-  const source = Array.isArray(transactions) ? transactions.filter((tx) => tx.status === 'confirmed') : []
+export function buildBudgetSpentMap(transactions, debugTag = '', options = {}) {
+  const includePending = options.includePending === true
+  const source = Array.isArray(transactions)
+    ? transactions.filter((tx) => tx.status === 'confirmed' || (includePending && tx.status === 'pending'))
+    : []
   const spentByCategoryId = {}
   const spentByCategoryName = {}
+  const spentBySubcategoryName = {}
 
   source.forEach((tx) => {
     if (!['income', 'expense', 'investment'].includes(tx.type)) return
@@ -163,6 +168,14 @@ export function buildBudgetSpentMap(transactions, debugTag = '') {
         if (normalizedBudgetCategoryName) {
           const byNameKey = `${type}::${normalizedBudgetCategoryName}`
           spentByCategoryName[byNameKey] = (spentByCategoryName[byNameKey] || 0) + amount
+
+          const normalizedDetailSubcategoryName = normalizeText(
+            item.detailSubcategoryLabel || item.detailCategoryLabel || '',
+          )
+          if (normalizedDetailSubcategoryName) {
+            const bySubcategoryKey = `${type}::${normalizedBudgetCategoryName}::${normalizedDetailSubcategoryName}`
+            spentBySubcategoryName[bySubcategoryKey] = (spentBySubcategoryName[bySubcategoryKey] || 0) + amount
+          }
         }
       })
       return
@@ -179,6 +192,12 @@ export function buildBudgetSpentMap(transactions, debugTag = '') {
     if (normalizedCategoryName) {
       const byNameKey = `${type}::${normalizedCategoryName}`
       spentByCategoryName[byNameKey] = (spentByCategoryName[byNameKey] || 0) + amount
+
+      const normalizedSubcategoryName = normalizeText(tx.subcategoryName)
+      if (normalizedSubcategoryName) {
+        const bySubcategoryKey = `${type}::${normalizedCategoryName}::${normalizedSubcategoryName}`
+        spentBySubcategoryName[bySubcategoryKey] = (spentBySubcategoryName[bySubcategoryKey] || 0) + amount
+      }
     }
   })
 
@@ -187,10 +206,11 @@ export function buildBudgetSpentMap(transactions, debugTag = '') {
       txCount: source.length,
       byIdKeys: Object.keys(spentByCategoryId).length,
       byNameKeys: Object.keys(spentByCategoryName).length,
+      bySubcategoryKeys: Object.keys(spentBySubcategoryName).length,
     })
   }
 
-  return { spentByCategoryId, spentByCategoryName }
+  return { spentByCategoryId, spentByCategoryName, spentBySubcategoryName }
 }
 
 export function buildReceiptDetailAnalysis(transactions, debugTag = '') {

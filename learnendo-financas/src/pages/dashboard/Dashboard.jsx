@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useFinance } from '../../context/FinanceContext'
@@ -57,6 +58,14 @@ export default function Dashboard() {
   const budgetRatio = summary.orcado > 0 ? summary.despesas / summary.orcado : 0
   const firstName = profile?.displayName?.split(' ')[0] ?? 'Usuario'
   const hasReconciliationData = Number(summary.reconciliationAccountsCount || 0) > 0
+  const dashboardPeriodLabel = useMemo(
+    () =>
+      new Date(selectedYear, selectedMonth - 1).toLocaleString('pt-BR', {
+        month: 'long',
+        year: 'numeric',
+      }),
+    [selectedYear, selectedMonth],
+  )
 
   return (
     <div className="dashboard-page">
@@ -64,10 +73,7 @@ export default function Dashboard() {
         <span>Ola, <strong>{firstName}</strong> 👋</span>
         <span className="dashboard-period">
           {summaryLoading && <span className="summary-loading-dot" title="Carregando...">⟳ </span>}
-          {new Date(selectedYear, selectedMonth - 1).toLocaleString('pt-BR', {
-            month: 'long',
-            year: 'numeric',
-          })}
+          {dashboardPeriodLabel}
         </span>
       </div>
 
@@ -75,7 +81,7 @@ export default function Dashboard() {
         <span className={`scope-pill ${scopeMeta.cls}`}>
           {scopeMeta.icon} Visao {scopeMeta.label}
         </span>
-        <span className="scope-owner">{summary.ownerName}</span>
+        {!!summary.ownerName && <span className="scope-owner">{summary.ownerName}</span>}
       </div>
 
       <div className="summary-grid">

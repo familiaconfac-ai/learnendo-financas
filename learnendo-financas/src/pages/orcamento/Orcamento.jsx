@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useFinance } from '../../context/FinanceContext'
 import { useBudget } from '../../hooks/useBudget'
+import { useTransactions } from '../../hooks/useTransactions'
 import { formatCurrency } from '../../utils/formatCurrency'
+import { calculateMonthlySummary } from '../../utils/financeCalculations'
 import { DEFAULT_EXPENSE_CATEGORY_PRESETS, DEFAULT_INCOME_CATEGORY_PRESETS } from '../../utils/categoryPresets'
 import './Orcamento.css'
 
@@ -14,13 +16,18 @@ const TAXONOMY_PRESET_EXPENSE_CATEGORIES = DEFAULT_EXPENSE_CATEGORY_PRESETS.map(
 function toAmount(value) {
   const normalized = String(value ?? '')
     .replace(/\s+/g, '')
+    .replace(/\./g, '')
     .replace(',', '.')
   const parsed = Number.parseFloat(normalized)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
 }
 
 function normalizeKey(value) {
-  return String(value || '').trim().toLowerCase()
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
 }
 
 function duplicateLabel(baseName, existingNames) {
@@ -39,17 +46,60 @@ function monthKey(year, month) {
   return `${year}-${String(month).padStart(2, '0')}`
 }
 
+function formatProgress(actual, target) {
+  const normalizedActual = Number(actual || 0)
+  const normalizedTarget = Number(target || 0)
+  if (normalizedTarget <= 0) {
+    return normalizedActual > 0 ? 'Sem meta' : '0%'
+  }
+  return `${Math.round((normalizedActual / normalizedTarget) * 100)}%`
+}
+
 function buildStructuredModel(budgetItems) {
+  const coalescedItems = new Map()
+
+  for (const item of budgetItems) {
+    const type = item.type || 'expense'
+    const categoryBaseName = item.parentCategoryName || item.categoryName || ''
+    const itemBaseName = type === 'income'
+      ? (item.itemName || item.subcategoryName || item.categoryName || 'Receita')
+      : (item.itemName || item.subcategoryName || item.categoryName || 'Subcategoria')
+    const key = type === 'income'
+      ? `${type}::${normalizeKey(itemBaseName)}`
+      : `${type}::${normalizeKey(categoryBaseName)}::${normalizeKey(itemBaseName)}`
+
+    const current = coalescedItems.get(key)
+    const nextAmount = Number(item.plannedAmount ?? 0)
+    const nextActual = Number(item.spent || 0)
+
+    if (!current) {
+      coalescedItems.set(key, {
+        ...item,
+        plannedAmount: nextAmount,
+        spent: nextActual,
+      })
+      continue
+    }
+
+    coalescedItems.set(key, {
+      ...current,
+      id: current.id || item.id,
+      plannedAmount: Math.max(Number(current.plannedAmount ?? 0), nextAmount),
+      spent: Math.max(Number(current.spent || 0), nextActual),
+    })
+  }
+
   const income = []
   const expenseByCategory = new Map()
 
-  for (const item of budgetItems) {
+  for (const item of coalescedItems.values()) {
     const type = item.type || 'expense'
     if (type === 'income') {
       income.push({
         id: item.id,
         name: item.itemName || item.subcategoryName || item.categoryName || 'Receita',
         amount: String(item.plannedAmount ?? 0),
+        actual: Number(item.spent || 0),
       })
       continue
     }
@@ -60,20 +110,23 @@ function buildStructuredModel(budgetItems) {
     const itemName = item.itemName || item.subcategoryName || item.categoryName || 'Subcategoria'
 
     if (!expenseByCategory.has(categoryName)) {
-      expenseByCategory.set(categoryName, { name: categoryName, items: [] })
+      expenseByCategory.set(categoryName, { name: categoryName, items: [], actual: 0 })
     }
 
-    expenseByCategory.get(categoryName).items.push({
+    const group = expenseByCategory.get(categoryName)
+    group.items.push({
       id: item.id,
       name: itemName,
       amount: String(item.plannedAmount ?? 0),
+      actual: Number(item.spent || 0),
     })
+    group.actual += Number(item.spent || 0)
   }
 
   const hasAnyPersistedRows = Array.isArray(budgetItems) && budgetItems.length > 0
   if (!hasAnyPersistedRows && income.length === 0) {
     for (const defaultName of TAXONOMY_INITIAL_INCOME_ITEMS) {
-      income.push({ id: null, name: defaultName, amount: '0' })
+      income.push({ id: null, name: defaultName, amount: '0', actual: 0 })
     }
   }
 
@@ -83,7 +136,7 @@ function buildStructuredModel(budgetItems) {
 
     for (const subName of preset.items) {
       const match = existing?.items.find((row) => normalizeKey(row.name) === normalizeKey(subName))
-      mergedItems.push(match || { id: null, name: subName, amount: '0' })
+      mergedItems.push(match || { id: null, name: subName, amount: '0', actual: 0 })
     }
 
     if (existing) {
@@ -94,7 +147,7 @@ function buildStructuredModel(budgetItems) {
       expenseByCategory.delete(preset.name)
     }
 
-    return { name: preset.name, items: mergedItems }
+    return { name: preset.name, items: mergedItems, actual: Number(existing?.actual || 0) }
   })
 
   for (const extraCategory of expenseByCategory.values()) {
@@ -109,6 +162,7 @@ export default function Orcamento() {
   const { budgetItems, loading, error, add, update, remove } = useBudget(selectedYear, selectedMonth, {
     forceEdit: true,
   })
+  const { transactions, loading: transactionsLoading } = useTransactions(selectedYear, selectedMonth)
   const canEditBudget = true
 
   const [model, setModel] = useState({ income: [], expenses: [] })
@@ -136,6 +190,13 @@ export default function Orcamento() {
     [model.income],
   )
 
+  const liveMonthSummary = useMemo(
+    () => calculateMonthlySummary(transactions, 'orcamento'),
+    [transactions],
+  )
+
+  const totalIncomeActual = liveMonthSummary.receitas || 0
+
   const totalExpenses = useMemo(
     () => model.expenses.reduce((sum, category) => {
       return sum + category.items.reduce((catSum, row) => catSum + toAmount(row.amount), 0)
@@ -143,7 +204,13 @@ export default function Orcamento() {
     [model.expenses],
   )
 
+  const totalExpensesActual = (liveMonthSummary.despesas || 0) + (liveMonthSummary.investimentos || 0)
+
   const balance = totalIncome - totalExpenses
+  const actualBalance = liveMonthSummary.saldo || 0
+  const incomeProgress = formatProgress(totalIncomeActual, totalIncome)
+  const expenseProgress = formatProgress(totalExpensesActual, totalExpenses)
+  const balanceProgress = formatProgress(actualBalance, balance)
 
   function showToast(message, type = 'ok') {
     setToast({ message, type })
@@ -447,10 +514,34 @@ export default function Orcamento() {
           </div>
         </section>
 
-        {loading && <p className="budget-info">Carregando orçamento...</p>}
+        <section className="budget-summary budget-summary--comparison">
+          <div className="summary-box summary-income">
+            <div className="summary-copy">
+              <span>Receitas realizadas</span>
+              <small>Meta {formatCurrency(totalIncome)} · {incomeProgress}</small>
+            </div>
+            <strong>{formatCurrency(totalIncomeActual)}</strong>
+          </div>
+          <div className="summary-box summary-expense">
+            <div className="summary-copy">
+              <span>Despesas realizadas</span>
+              <small>Meta {formatCurrency(totalExpenses)} · {expenseProgress}</small>
+            </div>
+            <strong>{formatCurrency(totalExpensesActual)}</strong>
+          </div>
+          <div className={`summary-box ${actualBalance >= 0 ? 'summary-balance-positive' : 'summary-balance-negative'}`}>
+            <div className="summary-copy">
+              <span>Saldo realizado</span>
+              <small>Meta {formatCurrency(balance)} · {balanceProgress}</small>
+            </div>
+            <strong>{formatCurrency(actualBalance)}</strong>
+          </div>
+        </section>
+
+        {(loading || transactionsLoading) && <p className="budget-info">Carregando orçamento...</p>}
         {error && <p className="budget-error">Erro: {error}</p>}
 
-        {!loading && (
+        {!loading && !transactionsLoading && (
           <>
             <section className="budget-block income-block">
               <div className="budget-block-header">
@@ -461,6 +552,12 @@ export default function Orcamento() {
               </div>
 
               <div className="line-list">
+                <div className="budget-line budget-line--legend">
+                  <span className="legend-main">Receita</span>
+                  <span className="legend-value">Meta</span>
+                  <span className="legend-value">Realizado</span>
+                  <span className="legend-value">Dif.</span>
+                </div>
                 {model.income.map((row, index) => (
                   <div key={row.id || `income-${index}`} className="budget-line">
                     <input
@@ -490,6 +587,10 @@ export default function Orcamento() {
                       placeholder="0,00"
                       disabled={!canEditBudget}
                     />
+                    <div className="budget-line-metric">{formatCurrency(row.actual || 0)}</div>
+                    <div className={`budget-line-metric ${Number((row.actual || 0) - toAmount(row.amount)) <= 0 ? 'metric-positive' : 'metric-negative'}`}>
+                      {formatCurrency((row.actual || 0) - toAmount(row.amount))}
+                    </div>
                     <button
                       type="button"
                       className="line-action"
@@ -526,6 +627,9 @@ export default function Orcamento() {
                 const collapseKey = String(categoryIndex)
                 const isCollapsed = Boolean(collapsed[collapseKey])
                 const categoryTotal = category.items.reduce((sum, item) => sum + toAmount(item.amount), 0)
+                const categoryActual = Number(category.actual || 0)
+                const categoryDifference = categoryActual - categoryTotal
+                const categoryRatio = categoryTotal > 0 ? (categoryActual / categoryTotal) * 100 : 0
 
                 return (
                   <article key={`expense-category-${categoryIndex}`} className="expense-category">
@@ -551,12 +655,34 @@ export default function Orcamento() {
                         placeholder="Nome da categoria"
                         disabled={!canEditBudget}
                       />
-                      <strong className="category-total">{formatCurrency(categoryTotal)}</strong>
+                      <div className="category-totals">
+                        <strong className="category-total">Meta {formatCurrency(categoryTotal)}</strong>
+                        <strong className="category-total actual">Realizado {formatCurrency(categoryActual)}</strong>
+                        <span className={`category-diff ${categoryDifference <= 0 ? 'metric-positive' : 'metric-negative'}`}>
+                          {categoryDifference <= 0 ? 'Economia' : 'Excesso'} {formatCurrency(Math.abs(categoryDifference))}
+                        </span>
+                        <span className="category-ratio">{categoryRatio.toFixed(0)}%</span>
+                      </div>
+                    </div>
+
+                    <div className="category-progress">
+                      <div className="category-progress-track">
+                        <div
+                          className={`category-progress-fill${categoryDifference > 0 ? ' over' : ''}`}
+                          style={{ width: `${Math.min(categoryRatio, 100)}%` }}
+                        />
+                      </div>
                     </div>
 
                     {!isCollapsed && (
                       <>
                         <div className="line-list">
+                          <div className="budget-line budget-line--legend">
+                            <span className="legend-main">Subcategoria</span>
+                            <span className="legend-value">Meta</span>
+                            <span className="legend-value">Realizado</span>
+                            <span className="legend-value">Dif.</span>
+                          </div>
                           {category.items.map((item, itemIndex) => (
                             <div key={item.id || `expense-${categoryIndex}-${itemIndex}`} className="budget-line">
                               <input
@@ -586,6 +712,10 @@ export default function Orcamento() {
                                 placeholder="0,00"
                                 disabled={!canEditBudget}
                               />
+                              <div className="budget-line-metric">{formatCurrency(item.actual || 0)}</div>
+                              <div className={`budget-line-metric ${Number((item.actual || 0) - toAmount(item.amount)) <= 0 ? 'metric-positive' : 'metric-negative'}`}>
+                                {formatCurrency((item.actual || 0) - toAmount(item.amount))}
+                              </div>
                               <button
                                 type="button"
                                 className="line-action"

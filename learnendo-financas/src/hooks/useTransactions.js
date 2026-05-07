@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
 import {
-  fetchTransactionsWithOptions,
+  fetchTransactions,
   addTransaction,
   updateTransaction,
   deleteTransaction,
@@ -37,7 +37,9 @@ export function useTransactions(year, month) {
     setError(null)
     try {
       await ensureMonthlyRecurringTransactions(user.uid, year, month, { workspaceId: activeWorkspaceId })
-      const data = await fetchTransactionsWithOptions(user.uid, year, month, {
+      const data = await fetchTransactions(user.uid, year, month, {
+        // Unificação da fonte: utiliza a mesma função base de Metas/Orçamento
+        // Omitir workspaceId permite recuperar o histórico antigo/legado
         workspaceId: activeWorkspaceId,
         viewerRole: myRole,
         viewerUid: user.uid,

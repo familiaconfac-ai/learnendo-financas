@@ -55,6 +55,17 @@
   color: #475569;
 }
 
+.summary-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.summary-copy small {
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
 .summary-box strong {
   font-size: 0.95rem;
   color: #0f172a;
@@ -168,13 +179,44 @@
 
 .budget-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 110px;
+  grid-template-columns: minmax(0, 1fr) 96px 96px 96px auto auto;
   gap: 0.45rem;
   align-items: center;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 0.48rem;
   background: #ffffff;
+}
+
+.budget-line--legend {
+  background: #f8fafc;
+  border-style: dashed;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.legend-main,
+.legend-value {
+  font-weight: 700;
+}
+
+.budget-line-metric {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0.5rem 0.25rem;
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+}
+
+.metric-positive {
+  color: #047857;
+}
+
+.metric-negative {
+  color: #b91c1c;
 }
 
 .name-input,
@@ -262,6 +304,45 @@
   font-variant-numeric: tabular-nums;
 }
 
+.category-totals {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+}
+
+.category-total.actual {
+  color: #0f766e;
+}
+
+.category-diff,
+.category-ratio {
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.category-progress {
+  margin-top: -0.15rem;
+}
+
+.category-progress-track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.category-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
+}
+
+.category-progress-fill.over {
+  background: linear-gradient(90deg, #fb7185 0%, #dc2626 100%);
+}
+
 .saving-indicator {
   position: fixed;
   top: 74px;
@@ -302,6 +383,6 @@
   }
 
   .budget-line {
-    grid-template-columns: minmax(0, 1fr) 140px auto auto;
+    grid-template-columns: minmax(0, 1fr) 140px 120px 100px auto auto;
   }
 }
