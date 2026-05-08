@@ -557,6 +557,7 @@ export default function Orcamento() {
                   <span className="legend-value">Meta</span>
                   <span className="legend-value">Realizado</span>
                   <span className="legend-value">Dif.</span>
+                  <span className="legend-actions">Ações</span>
                 </div>
                 {model.income.map((row, index) => (
                   <div key={row.id || `income-${index}`} className="budget-line">
@@ -587,32 +588,38 @@ export default function Orcamento() {
                       placeholder="0,00"
                       disabled={!canEditBudget}
                     />
-                    <div className="budget-line-metric">{formatCurrency(row.actual || 0)}</div>
-                    <div className={`budget-line-metric ${Number((row.actual || 0) - toAmount(row.amount)) <= 0 ? 'metric-positive' : 'metric-negative'}`}>
-                      {formatCurrency((row.actual || 0) - toAmount(row.amount))}
+                    <div className="budget-line-metric">
+                      <span className="budget-line-metric-label">Realizado</span>
+                      <span>{formatCurrency(row.actual || 0)}</span>
                     </div>
-                    <button
-                      type="button"
-                      className="line-action"
-                      title="Duplicar"
-                      data-skip-blur-persist="1"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => duplicateIncome(index)}
-                      disabled={!canEditBudget}
-                    >
-                      Duplicar
-                    </button>
-                    <button
-                      type="button"
-                      className="line-action danger"
-                      title="Excluir"
-                      data-skip-blur-persist="1"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => deleteIncome(index)}
-                      disabled={!canEditBudget}
-                    >
-                      Excluir
-                    </button>
+                    <div className={`budget-line-metric ${Number((row.actual || 0) - toAmount(row.amount)) <= 0 ? 'metric-positive' : 'metric-negative'}`}>
+                      <span className="budget-line-metric-label">Dif.</span>
+                      <span>{formatCurrency((row.actual || 0) - toAmount(row.amount))}</span>
+                    </div>
+                    <div className="budget-line-actions">
+                      <button
+                        type="button"
+                        className="line-action"
+                        title="Duplicar"
+                        data-skip-blur-persist="1"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => duplicateIncome(index)}
+                        disabled={!canEditBudget}
+                      >
+                        Duplicar
+                      </button>
+                      <button
+                        type="button"
+                        className="line-action danger"
+                        title="Excluir"
+                        data-skip-blur-persist="1"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => deleteIncome(index)}
+                        disabled={!canEditBudget}
+                      >
+                        Excluir
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -682,6 +689,7 @@ export default function Orcamento() {
                             <span className="legend-value">Meta</span>
                             <span className="legend-value">Realizado</span>
                             <span className="legend-value">Dif.</span>
+                            <span className="legend-actions">Ações</span>
                           </div>
                           {category.items.map((item, itemIndex) => (
                             <div key={item.id || `expense-${categoryIndex}-${itemIndex}`} className="budget-line">
@@ -712,32 +720,38 @@ export default function Orcamento() {
                                 placeholder="0,00"
                                 disabled={!canEditBudget}
                               />
-                              <div className="budget-line-metric">{formatCurrency(item.actual || 0)}</div>
-                              <div className={`budget-line-metric ${Number((item.actual || 0) - toAmount(item.amount)) <= 0 ? 'metric-positive' : 'metric-negative'}`}>
-                                {formatCurrency((item.actual || 0) - toAmount(item.amount))}
+                              <div className="budget-line-metric">
+                                <span className="budget-line-metric-label">Realizado</span>
+                                <span>{formatCurrency(item.actual || 0)}</span>
                               </div>
-                              <button
-                                type="button"
-                                className="line-action"
-                                title="Duplicar"
-                                data-skip-blur-persist="1"
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={() => duplicateExpenseItem(categoryIndex, itemIndex)}
-                                disabled={!canEditBudget}
-                              >
-                                Duplicar
-                              </button>
-                              <button
-                                type="button"
-                                className="line-action danger"
-                                title="Excluir"
-                                data-skip-blur-persist="1"
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={() => deleteExpenseItem(categoryIndex, itemIndex)}
-                                disabled={!canEditBudget}
-                              >
-                                Excluir
-                              </button>
+                              <div className={`budget-line-metric ${Number((item.actual || 0) - toAmount(item.amount)) <= 0 ? 'metric-positive' : 'metric-negative'}`}>
+                                <span className="budget-line-metric-label">Dif.</span>
+                                <span>{formatCurrency((item.actual || 0) - toAmount(item.amount))}</span>
+                              </div>
+                              <div className="budget-line-actions">
+                                <button
+                                  type="button"
+                                  className="line-action"
+                                  title="Duplicar"
+                                  data-skip-blur-persist="1"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => duplicateExpenseItem(categoryIndex, itemIndex)}
+                                  disabled={!canEditBudget}
+                                >
+                                  Duplicar
+                                </button>
+                                <button
+                                  type="button"
+                                  className="line-action danger"
+                                  title="Excluir"
+                                  data-skip-blur-persist="1"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => deleteExpenseItem(categoryIndex, itemIndex)}
+                                  disabled={!canEditBudget}
+                                >
+                                  Excluir
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>

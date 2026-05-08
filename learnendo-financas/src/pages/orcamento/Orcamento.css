@@ -124,6 +124,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .budget-block-header h3 {
@@ -179,7 +180,11 @@
 
 .budget-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px 96px 96px auto auto;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  grid-template-areas:
+    "name amount"
+    "actual diff"
+    "actions actions";
   gap: 0.45rem;
   align-items: center;
   border: 1px solid #e2e8f0;
@@ -193,22 +198,32 @@
   border-style: dashed;
   font-size: 0.75rem;
   color: #64748b;
+  display: none;
 }
 
 .legend-main,
-.legend-value {
+.legend-value,
+.legend-actions {
   font-weight: 700;
 }
 
 .budget-line-metric {
   min-height: 42px;
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
   padding: 0.5rem 0.25rem;
   font-size: 0.84rem;
   font-variant-numeric: tabular-nums;
   color: #0f172a;
+}
+
+.budget-line-metric-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #64748b;
+  line-height: 1.1;
 }
 
 .metric-positive {
@@ -237,9 +252,14 @@
   width: 100%;
 }
 
+.name-input {
+  grid-area: name;
+}
+
 .amount-input {
   text-align: right;
   font-variant-numeric: tabular-nums;
+  grid-area: amount;
 }
 
 .name-input:hover,
@@ -273,6 +293,13 @@
   background: #fff1f2;
   border-color: #fecdd3;
   color: #be123c;
+}
+
+.budget-line-actions {
+  grid-area: actions;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
 }
 
 .expense-category {
@@ -372,6 +399,14 @@
   background: #dc2626;
 }
 
+.budget-line > .budget-line-metric:nth-of-type(1) {
+  grid-area: actual;
+}
+
+.budget-line > .budget-line-metric:nth-of-type(2) {
+  grid-area: diff;
+}
+
 @media (min-width: 700px) {
   .budget-layout {
     padding: 1.1rem;
@@ -383,6 +418,28 @@
   }
 
   .budget-line {
-    grid-template-columns: minmax(0, 1fr) 140px 120px 100px auto auto;
+    grid-template-columns: minmax(0, 1fr) 140px 120px 100px auto;
+    grid-template-areas: none;
+  }
+
+  .budget-line--legend {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px 120px 100px auto;
+  }
+
+  .budget-line-metric {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .budget-line-metric-label {
+    display: none;
+  }
+
+  .budget-line-actions {
+    grid-area: auto;
+    display: flex;
+    justify-content: flex-end;
   }
 }
