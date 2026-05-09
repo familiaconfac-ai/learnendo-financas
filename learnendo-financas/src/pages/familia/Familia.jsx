@@ -441,7 +441,7 @@ export default function Familia() {
   }
 
   // Só renderiza dados se family válido
-  if (!family) {
+  if (!family && !activeWorkspace) {
     return (
       <div className="familia-page">
         <div className="familia-empty">

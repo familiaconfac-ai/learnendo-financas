@@ -47,6 +47,18 @@ function workspaceProjectsCol(workspaceId) {
   return collection(db, 'workspaces', workspaceId, 'projects')
 }
 
+function familyDoc(familyId) {
+  return doc(db, 'families', familyId)
+}
+
+function familyMemberDoc(familyId, memberId) {
+  return doc(db, 'families', familyId, 'members', memberId)
+}
+
+function userFamilyDoc(uid) {
+  return doc(db, 'userFamilies', uid)
+}
+
 function userMembershipDoc(uid, workspaceId) {
   return doc(db, 'users', uid, 'workspaceMemberships', workspaceId)
 }
@@ -63,12 +75,76 @@ function inviteTokenDoc(token) {
   return doc(db, 'workspaceInviteTokens', token)
 }
 
+function userProfileDoc(uid) {
+  return doc(db, 'users', uid)
+}
+
 function randomToken() {
   return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
 }
 
 function isManager(role) {
   return role === 'gestor' || role === 'co-gestor'
+}
+
+async function getUserProfileData(uid) {
+  if (!uid) return null
+  try {
+    const snap = await getDoc(userProfileDoc(uid))
+    return snap.exists() ? snap.data() : null
+  } catch (_) {
+    return null
+  }
+}
+
+function buildMemberIdentity(uid, profile = null) {
+  const displayName = String(
+    profile?.displayName
+    || profile?.name
+    || profile?.fullName
+    || profile?.email
+    || 'Membro',
+  ).trim()
+  const email = String(profile?.email || '').trim().toLowerCase()
+  return {
+    uid,
+    displayName,
+    name: displayName,
+    email,
+    avatarInitial: displayName.charAt(0).toUpperCase() || 'M',
+  }
+}
+
+async function syncLegacyFamilyMirror(workspaceId, member, workspaceData = {}) {
+  if (!workspaceId || !member?.uid) return
+  const workspaceType = workspaceData?.type || 'family'
+  if (workspaceType !== 'family') return
+
+  await setDoc(familyDoc(workspaceId), {
+    name: workspaceData?.name || 'Familia',
+    plan: workspaceData?.plan || 'family',
+    ownerUid: workspaceData?.createdBy || member.uid,
+    workspaceId,
+    updatedAt: serverTimestamp(),
+    createdAt: workspaceData?.createdAt || serverTimestamp(),
+  }, { merge: true })
+
+  await setDoc(familyMemberDoc(workspaceId, member.uid), {
+    uid: member.uid,
+    email: member.email || '',
+    displayName: member.displayName || member.name || member.email || 'Membro',
+    name: member.name || member.displayName || member.email || 'Membro',
+    avatarInitial: member.avatarInitial || 'M',
+    role: member.role || 'membro',
+    status: member.status || 'active',
+    joinedAt: member.joinedAt || serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }, { merge: true })
+
+  await setDoc(userFamilyDoc(member.uid), {
+    familyId: workspaceId,
+    updatedAt: serverTimestamp(),
+  }, { merge: true })
 }
 
 export function normalizeWorkspaceRole(role) {
@@ -144,6 +220,19 @@ export async function createWorkspace(ownerUid, payload = {}) {
     joinedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  })
+
+  const ownerProfile = await getUserProfileData(ownerUid)
+  await syncLegacyFamilyMirror(ref.id, {
+    ...buildMemberIdentity(ownerUid, ownerProfile),
+    role,
+    status: 'active',
+    joinedAt: serverTimestamp(),
+  }, {
+    name: payload.name || 'Meu Workspace',
+    type: payload.type || 'family',
+    plan: payload.plan || 'family',
+    createdBy: ownerUid,
   })
 
   await ensureDefaultNatures(ref.id)
@@ -233,7 +322,19 @@ export async function setActiveWorkspaceId(uid, workspaceId) {
 
 export async function fetchWorkspaceMembers(workspaceId) {
   const snap = await getDocs(workspaceMembersCol(workspaceId))
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  const members = await Promise.all(
+    snap.docs.map(async (d) => {
+      const raw = { id: d.id, ...d.data() }
+      if (raw.displayName || !raw.uid) return raw
+      const profile = await getUserProfileData(raw.uid)
+      if (!profile) return raw
+      return {
+        ...raw,
+        ...buildMemberIdentity(raw.uid, profile),
+      }
+    }),
+  )
+  return members
 }
 
 export async function fetchWorkspaceContacts(workspaceId) {
@@ -474,9 +575,17 @@ export async function acceptWorkspaceInvite(uid, token) {
   if (invite.expired) throw new Error('Convite expirado')
 
   const role = invite.role || 'membro'
+  const workspaceSnap = await getDoc(workspaceDoc(invite.workspaceId))
+  const workspaceData = workspaceSnap.exists() ? workspaceSnap.data() : {}
+  const profile = await getUserProfileData(uid)
+  const memberIdentity = buildMemberIdentity(uid, profile)
 
   await setDoc(workspaceMemberDoc(invite.workspaceId, uid), {
     uid,
+    email: memberIdentity.email,
+    displayName: memberIdentity.displayName,
+    name: memberIdentity.name,
+    avatarInitial: memberIdentity.avatarInitial,
     role,
     status: 'active',
     joinedAt: serverTimestamp(),
@@ -498,6 +607,16 @@ export async function acceptWorkspaceInvite(uid, token) {
     updatedAt: serverTimestamp(),
   })
 
+  await syncLegacyFamilyMirror(invite.workspaceId, {
+    ...memberIdentity,
+    role,
+    status: 'active',
+    joinedAt: serverTimestamp(),
+  }, {
+    ...workspaceData,
+    workspaceId: invite.workspaceId,
+  })
+
   await setActiveWorkspaceId(uid, invite.workspaceId)
   return invite.workspaceId
 }
@@ -509,6 +628,15 @@ export async function removeWorkspaceMember(workspaceId, actor, memberUid) {
 
   await deleteDoc(workspaceMemberDoc(workspaceId, memberUid))
   await deleteDoc(userMembershipDoc(memberUid, workspaceId))
+  try {
+    await deleteDoc(familyMemberDoc(workspaceId, memberUid))
+    const linkedFamily = await getDoc(userFamilyDoc(memberUid))
+    if (linkedFamily.exists() && linkedFamily.data()?.familyId === workspaceId) {
+      await deleteDoc(userFamilyDoc(memberUid))
+    }
+  } catch (_) {
+    // Compatibilidade legada: nao interrompe remocao principal.
+  }
 }
 
 export async function updateWorkspaceMemberRole(workspaceId, actor, memberUid, role) {
@@ -525,6 +653,15 @@ export async function updateWorkspaceMemberRole(workspaceId, actor, memberUid, r
     role,
     updatedAt: serverTimestamp(),
   }, { merge: true })
+
+  try {
+    await setDoc(familyMemberDoc(workspaceId, memberUid), {
+      role,
+      updatedAt: serverTimestamp(),
+    }, { merge: true })
+  } catch (_) {
+    // Compatibilidade legada: nao interrompe alteracao principal.
+  }
 }
 
 function contactDebtDelta(tx) {
