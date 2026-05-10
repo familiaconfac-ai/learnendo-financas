@@ -47,6 +47,10 @@ function workspaceProjectsCol(workspaceId) {
   return collection(db, 'workspaces', workspaceId, 'projects')
 }
 
+function workspaceInviteDoc(workspaceId, inviteId) {
+  return doc(db, 'workspaces', workspaceId, 'invitations', inviteId)
+}
+
 function familyDoc(familyId) {
   return doc(db, 'families', familyId)
 }
@@ -382,6 +386,18 @@ export async function fetchWorkspaceProjects(workspaceId) {
     })
 }
 
+export async function fetchWorkspaceInvites(workspaceId) {
+  if (!workspaceId) return []
+  const snap = await getDocs(workspaceInvitesCol(workspaceId))
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => {
+      const aDate = a.createdAt?.toDate?.()?.getTime?.() || 0
+      const bDate = b.createdAt?.toDate?.()?.getTime?.() || 0
+      return bDate - aDate
+    })
+}
+
 export async function createWorkspaceProject(workspaceId, payload = {}, actorUid = null) {
   if (!workspaceId) throw new Error('Workspace nao selecionado')
 
@@ -542,9 +558,10 @@ export async function createWorkspaceInvite(workspaceId, inviterUid, role = 'mem
     updatedAt: serverTimestamp(),
   }
 
-  await addDoc(workspaceInvitesCol(workspaceId), invitePayload)
+  const inviteRef = await addDoc(workspaceInvitesCol(workspaceId), invitePayload)
   await setDoc(inviteTokenDoc(token), {
     ...invitePayload,
+    inviteId: inviteRef.id,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })
@@ -606,6 +623,15 @@ export async function acceptWorkspaceInvite(uid, token) {
     acceptedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })
+
+  if (invite.inviteId) {
+    await updateDoc(workspaceInviteDoc(invite.workspaceId, invite.inviteId), {
+      status: 'accepted',
+      acceptedBy: uid,
+      acceptedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  }
 
   await syncLegacyFamilyMirror(invite.workspaceId, {
     ...memberIdentity,

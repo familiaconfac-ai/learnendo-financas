@@ -11,6 +11,7 @@ import {
   fetchWorkspaceContacts,
   fetchWorkspaceNatures,
   fetchWorkspaceProjects,
+  fetchWorkspaceInvites,
   getPermissionsByRole,
   normalizeWorkspaceRole,
   upsertWorkspaceNature,
@@ -32,6 +33,7 @@ export function WorkspaceProvider({ children }) {
   const [members, setMembers] = useState([])
   const [contacts, setContacts] = useState([])
   const [transactionNatures, setTransactionNatures] = useState([])
+  const [invitations, setInvitations] = useState([])
   const [projects, setProjects] = useState([])
   const [debtLedger, setDebtLedger] = useState([])
   const [workspaceSummary, setWorkspaceSummary] = useState({ receitas: 0, despesas: 0, investimentos: 0, saldo: 0 })
@@ -84,16 +86,18 @@ export function WorkspaceProvider({ children }) {
   const reloadWorkspaceData = useCallback(async () => {
     if (!user?.uid || !activeWorkspaceId) return
 
-    const [projectList, memberList, contactList, naturesList] = await Promise.all([
+    const [projectList, memberList, contactList, naturesList, inviteList] = await Promise.all([
       fetchWorkspaceProjects(activeWorkspaceId),
       fetchWorkspaceMembers(activeWorkspaceId),
       fetchWorkspaceContacts(activeWorkspaceId),
       fetchWorkspaceNatures(activeWorkspaceId),
+      fetchWorkspaceInvites(activeWorkspaceId),
     ])
     setProjects(projectList)
     setMembers(memberList)
     setContacts(contactList)
     setTransactionNatures(naturesList)
+    setInvitations(inviteList)
 
     const tx = await fetchAllTransactionsForWorkspace(user.uid, {
       workspaceId: activeWorkspaceId,
@@ -114,6 +118,7 @@ export function WorkspaceProvider({ children }) {
       setMembers([])
       setContacts([])
       setTransactionNatures([])
+      setInvitations([])
       setProjects([])
       setDebtLedger([])
       setWorkspaceSummary({ receitas: 0, despesas: 0, investimentos: 0, saldo: 0 })
@@ -140,16 +145,18 @@ export function WorkspaceProvider({ children }) {
       if (chosenId) {
         const selected = list.find((ws) => ws.id === chosenId)
         const role = normalizeWorkspaceRole(selected?.memberRole)
-        const [projectList, memberList, contactList, naturesList] = await Promise.all([
+        const [projectList, memberList, contactList, naturesList, inviteList] = await Promise.all([
           fetchWorkspaceProjects(chosenId),
           fetchWorkspaceMembers(chosenId),
           fetchWorkspaceContacts(chosenId),
           fetchWorkspaceNatures(chosenId),
+          fetchWorkspaceInvites(chosenId),
         ])
 
         setMembers(memberList)
         setContacts(contactList)
         setTransactionNatures(naturesList)
+        setInvitations(inviteList)
 
         const tx = await fetchAllTransactionsForWorkspace(user.uid, {
           workspaceId: chosenId,
@@ -183,16 +190,18 @@ export function WorkspaceProvider({ children }) {
     const selected = workspaces.find((ws) => ws.id === nextWorkspaceId)
     const role = normalizeWorkspaceRole(selected?.memberRole)
 
-    const [projectList, memberList, contactList, naturesList] = await Promise.all([
+    const [projectList, memberList, contactList, naturesList, inviteList] = await Promise.all([
       fetchWorkspaceProjects(nextWorkspaceId),
       fetchWorkspaceMembers(nextWorkspaceId),
       fetchWorkspaceContacts(nextWorkspaceId),
       fetchWorkspaceNatures(nextWorkspaceId),
+      fetchWorkspaceInvites(nextWorkspaceId),
     ])
 
     setMembers(memberList)
     setContacts(contactList)
     setTransactionNatures(naturesList)
+    setInvitations(inviteList)
 
     const tx = await fetchAllTransactionsForWorkspace(user.uid, {
       workspaceId: nextWorkspaceId,
@@ -260,6 +269,7 @@ export function WorkspaceProvider({ children }) {
         permissions,
         members,
         contacts,
+        invitations,
         projects,
         debtLedger,
         workspaceSummary,

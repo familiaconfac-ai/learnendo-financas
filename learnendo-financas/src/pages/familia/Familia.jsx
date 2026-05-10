@@ -70,6 +70,7 @@ export default function Familia() {
     projects,
     workspaceSummary,
     members: workspaceMembers,
+    invitations: workspaceInvitations,
     myRole: workspaceRole,
     addProject,
     editProject,
@@ -78,7 +79,7 @@ export default function Familia() {
     family, members, invitations, loading, error,
     myRole, canManage, reload,
     create, editName, deleteFamily,
-    removeMember, changeRole, inviteMember,
+    removeMember, changeRole,
   } = useFamilia()
   const { toast, show: showToast } = useToast()
 
@@ -152,6 +153,8 @@ export default function Familia() {
   const familyName = activeWorkspace?.name || family?.name || 'Familia'
   const familyMembers = workspaceMembers?.length > 0 ? workspaceMembers : members
   const effectiveRole = workspaceRole || myRole
+  const visibleInvitations = (workspaceInvitations?.length > 0 ? workspaceInvitations : invitations)
+    .filter((item) => item.status === 'pending')
   const activeProjects = Array.isArray(projects) ? projects.filter((project) => project.status !== 'archived') : []
   const leadProject = activeProjects[0] || null
   const projectLabel = leadProject ? leadProject.name : 'Projetos'
@@ -220,16 +223,9 @@ export default function Familia() {
     e.preventDefault()
     const phone    = invitePhone.replace(/\D/g, '')
     const famName  = family?.name ?? 'nossa família'
-    const appUrl   = window.location.origin
-    const message  = `Olá! Você foi convidado(a) para participar de "${famName}" no Learnendo Finanças.\n\nAcesse o app: ${appUrl}`
+    const invite = await createInviteLink(inviteRole || 'membro', { phone, method: 'whatsapp' })
+    const message  = `Olá! Você foi convidado(a) para participar de "${famName}" no Learnendo Finanças.\n\nAceite por este link: ${invite.link}`
     const waUrl    = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
-
-    // Record invitation in Firestore
-    try {
-      await inviteMember({ phone, role: inviteRole, method: 'whatsapp' })
-    } catch (_) {
-      // non-blocking – still open WhatsApp
-    }
 
     window.open(waUrl, '_blank', 'noopener,noreferrer')
     setInviteOpen(false)
@@ -242,10 +238,18 @@ export default function Familia() {
     if (!inviteEmail.trim()) return
     setSaving(true)
     try {
-      await inviteMember({ email: inviteEmail.trim(), role: inviteRole, method: 'email' })
+      const invite = await createInviteLink(inviteRole || 'membro', {
+        email: inviteEmail.trim(),
+        method: 'email',
+      })
+      const subject = encodeURIComponent(`Convite para ${familyName}`)
+      const body = encodeURIComponent(
+        `Olá!\n\nVocê foi convidado(a) para participar de "${familyName}" no Learnendo Finanças.\n\nAceite por este link:\n${invite.link}`,
+      )
+      window.open(`mailto:${inviteEmail.trim()}?subject=${subject}&body=${body}`, '_blank', 'noopener,noreferrer')
       setInviteOpen(false)
       setInviteEmail('')
-      showToast('Convite registrado ✅')
+      showToast('Convite preparado ✅')
     } catch (err) {
       showToast('Erro ao convidar: ' + err.message, 'err')
     } finally {
@@ -721,13 +725,11 @@ export default function Familia() {
       </Card>
 
       {/* Convites pendentes */}
-      {invitations.filter((i) => i.status === 'pending').length > 0 && (
+      {visibleInvitations.length > 0 && (
         <Card>
           <CardHeader title="Convites enviados" subtitle="Aguardando resposta" />
           <ul className="invites-list">
-            {invitations
-              .filter((i) => i.status === 'pending')
-              .map((inv) => {
+            {visibleInvitations.map((inv) => {
                 const meta = INV_STATUS_META[inv.status] ?? { label: inv.status, cls: '' }
                 const dest = inv.email ?? inv.phone ?? '—'
                 const method = inv.method === 'whatsapp' ? '📲' : '📧'
