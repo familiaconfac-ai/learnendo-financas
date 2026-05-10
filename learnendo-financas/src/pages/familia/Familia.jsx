@@ -1,13 +1,15 @@
-import { useState, useEffect } from 'react'
-import { collection, getDocs } from 'firebase/firestore'
+import { useState, useEffect, useMemo } from 'react'
 import Card, { CardHeader } from '../../components/ui/Card'
 import { formatCurrency } from '../../utils/formatCurrency'
 import { useFamilia } from '../../hooks/useFamilia'
 import { useAccounts } from '../../hooks/useAccounts'
 import { useAuth } from '../../context/AuthContext'
+import { useFinance } from '../../context/FinanceContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { db } from '../../firebase/config'
 import { addMember } from '../../services/familyService'
+import { fetchAllTransactionsForWorkspace } from '../../services/transactionService'
+import { calculateMonthlySummary } from '../../utils/financeCalculations'
 import './Familia.css'
 
 // ── Role metadata (new canonical names) ────────────────────────────────────
@@ -60,15 +62,16 @@ function useToast() {
 
 export default function Familia() {
   const { user } = useAuth()
+  const { selectedMonth, selectedYear } = useFinance()
   const { accounts } = useAccounts()
   const {
     createInviteLink,
+    cancelInvite: cancelWorkspaceInvite,
     activeWorkspace,
     activeWorkspaceId,
     permissions,
     debtLedger,
     projects,
-    workspaceSummary,
     members: workspaceMembers,
     invitations: workspaceInvitations,
     myRole: workspaceRole,
@@ -79,7 +82,7 @@ export default function Familia() {
     family, members, invitations, loading, error,
     myRole, canManage, reload,
     create, editName, deleteFamily,
-    removeMember, changeRole,
+    removeMember, changeRole, cancelInvite: cancelLegacyInvite,
   } = useFamilia()
   const { toast, show: showToast } = useToast()
 
@@ -114,51 +117,77 @@ export default function Familia() {
   const [projectAccountId,   setProjectAccountId]    = useState('')
   const [projectMatchText,   setProjectMatchText]    = useState('')
   const [projectNotes,       setProjectNotes]        = useState('')
-  const [realIncome,         setRealIncome]          = useState(0)
-  const [realExpense,        setRealExpense]         = useState(0)
+  const [workspaceTransactions, setWorkspaceTransactions] = useState([])
   const [summaryLoading,     setSummaryLoading]      = useState(false)
+  const [summaryMode,        setSummaryMode]         = useState('month')
 
-  // ── Load real financial summary from Firestore ─────────────────────────────
+  // ── Load consolidated workspace transactions for summary ───────────────────
 
   useEffect(() => {
-    if (!user?.uid || !family?.id) return
+    if (!user?.uid || !activeWorkspaceId) {
+      setWorkspaceTransactions([])
+      return
+    }
     let cancelled = false
     setSummaryLoading(true)
     ;(async () => {
       try {
-        // Busca transações da família global (isolamento por familyId)
-        const snap = await getDocs(collection(db, 'families', family.id, 'transactions'))
-        let income = 0, expense = 0
-        snap.forEach((d) => {
-          const t = d.data()
-          if (t.type === 'income')  income  += Math.abs(t.amount ?? 0)
-          if (t.type === 'expense') expense += Math.abs(t.amount ?? 0)
+        const tx = await fetchAllTransactionsForWorkspace(user.uid, {
+          workspaceId: activeWorkspaceId,
+          viewerRole: workspaceRole,
+          viewerUid: user.uid,
+          includeRecurringAuto: true,
+          includeLegacyPersonal: false,
         })
-        if (!cancelled) { setRealIncome(income); setRealExpense(expense) }
+        if (!cancelled) setWorkspaceTransactions(tx)
       } catch (err) {
         console.error('[Familia] Resumo financeiro:', err.message)
+        if (!cancelled) setWorkspaceTransactions([])
       } finally {
         if (!cancelled) setSummaryLoading(false)
       }
     })()
     return () => { cancelled = true }
-  }, [user?.uid, family?.id])
+  }, [user?.uid, activeWorkspaceId, workspaceRole])
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
   const myMember   = members.find((m) => m.uid === user?.uid || m.id === user?.uid)
-  const totalReceitas = Number(workspaceSummary?.receitas || realIncome || 0)
-  const totalDespesas = Number(workspaceSummary?.despesas || realExpense || 0)
-  const totalSaldo    = Number(workspaceSummary?.saldo ?? (realIncome - realExpense))
   const familyName = activeWorkspace?.name || family?.name || 'Familia'
   const familyMembers = workspaceMembers?.length > 0 ? workspaceMembers : members
   const effectiveRole = workspaceRole || myRole
-  const visibleInvitations = (workspaceInvitations?.length > 0 ? workspaceInvitations : invitations)
-    .filter((item) => item.status === 'pending')
+  const visibleInvitations = useMemo(() => {
+    const modern = (workspaceInvitations || []).map((item) => ({ ...item, _source: 'workspace' }))
+    const legacy = (invitations || []).map((item) => ({ ...item, _source: 'legacy-family' }))
+    const merged = modern.length > 0 ? [...modern, ...legacy] : legacy
+    return merged.filter((item) => item.status === 'pending')
+  }, [workspaceInvitations, invitations])
   const activeProjects = Array.isArray(projects) ? projects.filter((project) => project.status !== 'archived') : []
   const leadProject = activeProjects[0] || null
   const projectLabel = leadProject ? leadProject.name : 'Projetos'
   const projectHighlight = leadProject ? formatCurrency(Number(leadProject.effectiveCurrentAmount || 0)) : String(activeProjects.length)
+  const selectedMonthKey = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`
+
+  const summaryTransactions = useMemo(() => {
+    const source = Array.isArray(workspaceTransactions) ? workspaceTransactions : []
+    if (summaryMode === 'year') {
+      return source.filter((tx) => String(tx.competencyMonth || tx.recurringInstanceMonth || tx.salaryReferenceMonth || tx.date || '').startsWith(String(selectedYear)))
+    }
+    return source.filter((tx) => String(tx.competencyMonth || tx.recurringInstanceMonth || tx.salaryReferenceMonth || tx.date || '').startsWith(selectedMonthKey))
+  }, [workspaceTransactions, summaryMode, selectedYear, selectedMonthKey])
+
+  const summarySnapshot = useMemo(
+    () => calculateMonthlySummary(summaryTransactions),
+    [summaryTransactions],
+  )
+  const totalReceitas = Number(summarySnapshot?.receitas || 0)
+  const totalDespesas = Number((summarySnapshot?.despesas || 0) + (summarySnapshot?.investimentos || 0))
+  const totalSaldo = Number(summarySnapshot?.saldo || 0)
+  const summarySubtitle = summaryLoading
+    ? 'Carregando…'
+    : summaryMode === 'year'
+      ? `Visão anual de ${selectedYear}`
+      : `Visão mensal de ${selectedMonthKey}`
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -222,7 +251,7 @@ export default function Familia() {
   async function handleInviteWhatsApp(e) {
     e.preventDefault()
     const phone    = invitePhone.replace(/\D/g, '')
-    const famName  = family?.name ?? 'nossa família'
+    const famName  = familyName || 'nossa família'
     const invite = await createInviteLink(inviteRole || 'membro', { phone, method: 'whatsapp' })
     const message  = `Olá! Você foi convidado(a) para participar de "${famName}" no Learnendo Finanças.\n\nAceite por este link: ${invite.link}`
     const waUrl    = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
@@ -419,6 +448,24 @@ export default function Familia() {
     }
   }
 
+  async function handleCancelInvite(invite) {
+    if (!invite?.id) return
+    setSaving(true)
+    try {
+      if (invite._source === 'legacy-family') {
+        await cancelLegacyInvite(invite.id)
+      } else {
+        await cancelWorkspaceInvite(invite.id)
+      }
+      await reload()
+      showToast('Convite cancelado ✅')
+    } catch (err) {
+      showToast('Erro ao cancelar convite: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // ── Loading / error / no-family states ───────────────────────────────────
 
   // Renderização condicional robusta
@@ -528,8 +575,24 @@ export default function Familia() {
       <Card>
         <CardHeader
           title="Resumo consolidado"
-          subtitle={summaryLoading ? 'Carregando…' : 'Suas transações (total)'}
+          subtitle={summarySubtitle}
         />
+        <div className="familia-summary-toolbar">
+          <button
+            type="button"
+            className={`familia-summary-toggle${summaryMode === 'month' ? ' active' : ''}`}
+            onClick={() => setSummaryMode('month')}
+          >
+            Mensal
+          </button>
+          <button
+            type="button"
+            className={`familia-summary-toggle${summaryMode === 'year' ? ' active' : ''}`}
+            onClick={() => setSummaryMode('year')}
+          >
+            Anual
+          </button>
+        </div>
         <div className="familia-summary-grid">
           <div className="familia-stat">
             <span className="familia-stat-label">Receitas</span>
@@ -739,6 +802,14 @@ export default function Familia() {
                     <span className="invite-email">{dest}</span>
                     <span className={`invite-status ${meta.cls}`}>{meta.label}</span>
                     <span className="invite-role">{ROLE_META[inv.role]?.label ?? inv.role}</span>
+                    <button
+                      type="button"
+                      className="invite-cancel-btn"
+                      onClick={() => handleCancelInvite(inv)}
+                      disabled={saving}
+                    >
+                      Excluir
+                    </button>
                   </li>
                 )
               })}

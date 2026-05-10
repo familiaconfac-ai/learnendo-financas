@@ -7,6 +7,7 @@ import {
   setActiveWorkspaceId,
   createWorkspace,
   createWorkspaceInvite,
+  cancelWorkspaceInvite,
   fetchWorkspaceMembers,
   fetchWorkspaceContacts,
   fetchWorkspaceNatures,
@@ -259,6 +260,13 @@ export function WorkspaceProvider({ children }) {
     return createWorkspaceInvite(activeWorkspaceId, user.uid, role, target)
   }
 
+  async function cancelInvite(inviteId) {
+    if (!user?.uid || !activeWorkspaceId || !inviteId) throw new Error('Convite não selecionado')
+    if (!permissions.canInvite) throw new Error('Seu papel não pode cancelar convites')
+    await cancelWorkspaceInvite(activeWorkspaceId, inviteId)
+    await reloadWorkspaceData()
+  }
+
   return (
     <WorkspaceContext.Provider
       value={{
@@ -285,6 +293,7 @@ export function WorkspaceProvider({ children }) {
         editProject,
         createNewWorkspace,
         createInviteLink,
+        cancelInvite,
       }}
     >
       {children}

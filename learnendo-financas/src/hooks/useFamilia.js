@@ -12,6 +12,7 @@ import {
   fetchInvitations,
   addInvitation,
   addMember,
+  cancelInvitation,
 } from '../services/familyService'
 import {
   MOCK_FAMILY,
@@ -200,6 +201,18 @@ export function useFamilia() {
     await loadAll()
   }
 
+  async function cancelInvite(inviteId) {
+    if (!user?.uid || !family?.id || !inviteId) return
+    if (IS_MOCK_MODE) {
+      setInvitations((current) => current.map((invite) => (
+        invite.id === inviteId ? { ...invite, status: 'cancelled' } : invite
+      )))
+      return
+    }
+    await cancelInvitation(user.uid, family.id, inviteId)
+    await loadAll()
+  }
+
   return {
     families,
     family,
@@ -216,6 +229,7 @@ export function useFamilia() {
     removeMember: removeMemberById,
     changeRole,
     inviteMember,
+    cancelInvite,
     setFamily,
   }
 }

@@ -97,6 +97,29 @@
   gap: 0.6rem;
   margin-top: 0.25rem;
 }
+
+.familia-summary-toolbar {
+  display: inline-flex;
+  gap: 0.4rem;
+  margin: 0.15rem 0 0.1rem;
+}
+
+.familia-summary-toggle {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.familia-summary-toggle.active {
+  border-color: var(--color-primary);
+  background: #dbeafe;
+  color: var(--color-primary);
+}
 .familia-stat {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -299,6 +322,21 @@
 .inv-declined { background: #fee2e2; color: #dc2626; }
 .inv-expired  { background: #f3f4f6; color: #6b7280; }
 .invite-role  { font-size: 0.72rem; color: var(--color-text-muted); white-space: nowrap; }
+.invite-cancel-btn {
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #be123c;
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.invite-cancel-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 
 /* ── Roles legend ──────────────────────────────────────────────────────── */
 

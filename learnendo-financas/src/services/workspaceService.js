@@ -390,12 +390,34 @@ export async function fetchWorkspaceInvites(workspaceId) {
   if (!workspaceId) return []
   const snap = await getDocs(workspaceInvitesCol(workspaceId))
   return snap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
+    .map((d) => ({ id: d.id, workspaceId, ...d.data() }))
     .sort((a, b) => {
       const aDate = a.createdAt?.toDate?.()?.getTime?.() || 0
       const bDate = b.createdAt?.toDate?.()?.getTime?.() || 0
       return bDate - aDate
     })
+}
+
+export async function cancelWorkspaceInvite(workspaceId, inviteId) {
+  if (!workspaceId || !inviteId) throw new Error('Convite nao selecionado')
+
+  const inviteRef = workspaceInviteDoc(workspaceId, inviteId)
+  const inviteSnap = await getDoc(inviteRef)
+  if (!inviteSnap.exists()) throw new Error('Convite nao encontrado')
+
+  const inviteData = inviteSnap.data() || {}
+
+  await updateDoc(inviteRef, {
+    status: 'cancelled',
+    updatedAt: serverTimestamp(),
+  })
+
+  if (inviteData.token) {
+    await updateDoc(inviteTokenDoc(inviteData.token), {
+      status: 'cancelled',
+      updatedAt: serverTimestamp(),
+    })
+  }
 }
 
 export async function createWorkspaceProject(workspaceId, payload = {}, actorUid = null) {
