@@ -81,6 +81,25 @@
   font-weight: 700;
 }
 
+.debt-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.debt-delete-btn {
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #be123c;
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .debt-values {
   margin-top: 0.6rem;
   border-top: 1px solid var(--color-border);

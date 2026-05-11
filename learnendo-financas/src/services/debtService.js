@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -435,4 +436,48 @@ export async function cancelDebtSettlement(workspaceId, debtId, settlementId, ac
       updatedAt: serverTimestamp(),
     })
   })
+}
+
+export async function deleteDebt(workspaceId, debtId) {
+  if (!workspaceId || !debtId) throw new Error('Divida nao encontrada')
+
+  const linkedPaymentsSnap = await getDocs(query(txCol(workspaceId), where('debtId', '==', debtId)))
+  const hasLinkedTransactions = linkedPaymentsSnap.docs.some((docSnapshot) => {
+    const tx = docSnapshot.data()
+    return DEBT_SETTLEMENT_NATURE_IDS.has(tx?.transactionNatureId)
+  })
+
+  if (hasLinkedTransactions) {
+    throw new Error('Esta divida possui pagamentos lancados em movimentacoes. Remova os lancamentos vinculados antes de excluir a divida.')
+  }
+
+  await deleteDoc(debtDoc(workspaceId, debtId))
+}
+
+export async function deleteDebtSettlement(workspaceId, debtId, settlementId) {
+  if (!workspaceId || !debtId || !settlementId) throw new Error('Restituicao nao encontrada')
+
+  await runTransaction(db, async (transaction) => {
+    const ref = debtDoc(workspaceId, debtId)
+    const snap = await transaction.get(ref)
+    if (!snap.exists()) throw new Error('Divida nao encontrada')
+
+    const debt = {
+      id: snap.id,
+      ...snap.data(),
+      settlements: normalizeDebtSettlements(snap.data()?.settlements),
+    }
+
+    const exists = debt.settlements.some((settlement) => settlement.id === settlementId)
+    if (!exists) throw new Error('Restituicao nao encontrada')
+
+    const nextSettlements = debt.settlements.filter((settlement) => settlement.id !== settlementId)
+
+    transaction.update(ref, {
+      settlements: nextSettlements,
+      updatedAt: serverTimestamp(),
+    })
+  })
+
+  await recalculateDebtBalance(workspaceId, debtId)
 }

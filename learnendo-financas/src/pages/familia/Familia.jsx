@@ -67,6 +67,13 @@ const INTERNAL_DEBT_REASON_OPTIONS = [
   { value: 'ajuste', label: 'Ajuste entre contas' },
 ]
 
+const EXTERNAL_DEBT_TYPE_OPTIONS = [
+  { value: 'pessoa', label: 'Pessoa de fora do app' },
+  { value: 'banco', label: 'Banco' },
+  { value: 'cartao', label: 'Cartao' },
+  { value: 'empresa', label: 'Empresa' },
+]
+
 function memberStableId(member) {
   return member?.uid || member?.id || ''
 }
@@ -95,6 +102,17 @@ function defaultSettlementForm() {
   return {
     debtId: '',
     amount: '',
+    notes: '',
+  }
+}
+
+function defaultExternalDebtForm() {
+  return {
+    name: '',
+    type: 'pessoa',
+    totalAmount: '',
+    paidAmount: '',
+    monthlyAmount: '',
     notes: '',
   }
 }
@@ -155,6 +173,8 @@ export default function Familia() {
     addSettlement,
     confirmSettlement,
     cancelSettlement,
+    removeDebt,
+    removeSettlement,
   } = useDebts()
   const {
     family, members, invitations, loading, error,
@@ -197,6 +217,8 @@ export default function Familia() {
   const [projectNotes,       setProjectNotes]        = useState('')
   const [memberDebtOpen,     setMemberDebtOpen]      = useState(false)
   const [memberDebtForm,     setMemberDebtForm]      = useState(defaultInternalDebtForm())
+  const [externalDebtOpen,   setExternalDebtOpen]    = useState(false)
+  const [externalDebtForm,   setExternalDebtForm]    = useState(defaultExternalDebtForm())
   const [settlementOpen,     setSettlementOpen]      = useState(false)
   const [settlementForm,     setSettlementForm]      = useState(defaultSettlementForm())
   const [activeMemberLedgerId, setActiveMemberLedgerId] = useState('')
@@ -261,6 +283,10 @@ export default function Familia() {
     () => (Array.isArray(debts) ? debts : []).filter((debt) => isFamilyInternalDebt(debt)),
     [debts],
   )
+  const externalDebts = useMemo(
+    () => (Array.isArray(debts) ? debts : []).filter((debt) => !isFamilyInternalDebt(debt)),
+    [debts],
+  )
   const familyDebtLedger = useMemo(
     () => buildFamilyDebtLedger(familyInternalDebts, user?.uid, familyMembers),
     [familyInternalDebts, familyMembers, user?.uid],
@@ -308,6 +334,16 @@ export default function Familia() {
     ), 0),
     [familyDebtLedger],
   )
+  const externalDebtSummary = useMemo(
+    () => externalDebts.reduce((acc, debt) => {
+      acc.total += Number(debt.totalAmount || 0)
+      acc.paid += Number(debt.paidAmount || 0)
+      acc.remaining += Number(debt.remainingAmount || 0)
+      return acc
+    }, { total: 0, paid: 0, remaining: 0 }),
+    [externalDebts],
+  )
+  const combinedDebtTotal = Number(familyDebtOverview.iOwe || 0) + Number(externalDebtSummary.remaining || 0)
   const legacyContactLedger = useMemo(
     () => (Array.isArray(debtLedger) ? debtLedger : []).filter((item) => !String(item.contactId || '').startsWith('member:')),
     [debtLedger],
@@ -675,6 +711,84 @@ export default function Familia() {
       showToast('Restituicao pendente cancelada.')
     } catch (err) {
       showToast('Erro ao cancelar restituição: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDeleteDebt(debt) {
+    if (!debt?.id) return
+    const confirmDelete = window.confirm(`Excluir a pendencia "${debt.name}"?`)
+    if (!confirmDelete) return
+
+    setSaving(true)
+    try {
+      await removeDebt(debt.id)
+      showToast('Pendencia excluida com sucesso.')
+    } catch (err) {
+      showToast('Erro ao excluir pendencia: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDeleteDebtSettlement(debt, settlement) {
+    if (!debt?.id || !settlement?.id) return
+    const confirmDelete = window.confirm(`Excluir o registro de ${formatCurrency(settlement.amount)}?`)
+    if (!confirmDelete) return
+
+    setSaving(true)
+    try {
+      await removeSettlement(debt.id, settlement.id)
+      showToast('Registro removido com sucesso.')
+    } catch (err) {
+      showToast('Erro ao excluir registro: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function handleExternalDebtModalClose() {
+    setExternalDebtOpen(false)
+    setExternalDebtForm(defaultExternalDebtForm())
+  }
+
+  async function handleCreateExternalDebt(e) {
+    e.preventDefault()
+
+    const totalAmount = Number(externalDebtForm.totalAmount || 0)
+    const paidAmount = Number(externalDebtForm.paidAmount || 0)
+    const monthlyAmount = Number(externalDebtForm.monthlyAmount || 0)
+
+    if (!externalDebtForm.name.trim()) {
+      showToast('Informe de quem e esta divida.', 'err')
+      return
+    }
+    if (!totalAmount || totalAmount <= 0) {
+      showToast('Informe o valor total da divida.', 'err')
+      return
+    }
+    if (paidAmount < 0 || paidAmount > totalAmount) {
+      showToast('O valor ja pago precisa ficar entre zero e o total.', 'err')
+      return
+    }
+
+    setSaving(true)
+    try {
+      await addDebt({
+        name: externalDebtForm.name.trim(),
+        type: externalDebtForm.type,
+        totalAmount,
+        paidAmount,
+        notes: externalDebtForm.notes.trim(),
+        installmentPlan: monthlyAmount > 0
+          ? { monthlyAmount, kind: 'manual_plan' }
+          : null,
+      })
+      handleExternalDebtModalClose()
+      showToast('Divida externa registrada. ✅')
+    } catch (err) {
+      showToast('Erro ao registrar divida externa: ' + err.message, 'err')
     } finally {
       setSaving(false)
     }
@@ -1154,6 +1268,14 @@ export default function Familia() {
                                         Registrar restituicao
                                       </button>
                                     )}
+                                    <button
+                                      type="button"
+                                      className="member-inline-btn member-inline-btn--ghost"
+                                      disabled={saving}
+                                      onClick={() => handleDeleteDebt(debt)}
+                                    >
+                                      Excluir conta
+                                    </button>
                                   </div>
                                   {settlements.length > 0 ? (
                                     <ul className="member-settlement-list">
@@ -1190,6 +1312,14 @@ export default function Familia() {
                                                   Cancelar
                                                 </button>
                                               )}
+                                              <button
+                                                type="button"
+                                                className="member-inline-btn member-inline-btn--ghost"
+                                                disabled={saving}
+                                                onClick={() => handleDeleteDebtSettlement(debt, settlement)}
+                                              >
+                                                Excluir registro
+                                              </button>
                                             </div>
                                           </li>
                                         )
@@ -1317,9 +1447,24 @@ export default function Familia() {
             <span className="familia-stat-label">Confirmacoes pendentes</span>
             <span className="familia-stat-value blue">{pendingSettlementCount}</span>
           </div>
+          <div className="familia-stat">
+            <span className="familia-stat-label">Dividas externas</span>
+            <span className="familia-stat-value red">{formatCurrency(externalDebtSummary.remaining)}</span>
+          </div>
+          <div className="familia-stat">
+            <span className="familia-stat-label">Minha divida total</span>
+            <span className="familia-stat-value red">{formatCurrency(combinedDebtTotal)}</span>
+          </div>
         </div>
-        {(familyDebtLedger.length > 0 || legacyContactLedger.length > 0) && (
-          <div className="member-actions-row" style={{ marginTop: '0.75rem' }}>
+        <div className="member-actions-row" style={{ marginTop: '0.75rem' }}>
+          <button
+            type="button"
+            className="member-inline-btn"
+            onClick={() => setExternalDebtOpen(true)}
+          >
+            + Divida externa
+          </button>
+          {(familyDebtLedger.length > 0 || legacyContactLedger.length > 0) && (
             <button
               type="button"
               className="member-inline-btn member-inline-btn--ghost"
@@ -1327,7 +1472,51 @@ export default function Familia() {
             >
               {generalLedgerExpanded ? 'Ocultar detalhes gerais' : 'Ver detalhes gerais'}
             </button>
+          )}
+        </div>
+        {externalDebts.length > 0 && (
+          <div className="family-debt-block">
+            <strong className="family-debt-block-title">Dividas externas em aberto</strong>
+            <ul className="family-debt-list">
+              {externalDebts
+                .filter((debt) => Number(debt.remainingAmount || 0) > 0)
+                .slice(0, 4)
+                .map((debt) => (
+                  <li key={debt.id} className="family-debt-item">
+                    <div className="family-debt-top">
+                      <div>
+                        <strong>{debt.name}</strong>
+                        <p>{EXTERNAL_DEBT_TYPE_OPTIONS.find((option) => option.value === debt.type)?.label || debt.type}</p>
+                      </div>
+                      <span className="family-debt-remaining">{formatCurrency(debt.remainingAmount)}</span>
+                    </div>
+                    <div className="family-debt-meta">
+                      <span>Total {formatCurrency(debt.totalAmount)}</span>
+                      <span>Pago {formatCurrency(debt.paidAmount)}</span>
+                      {Number(debt.installmentPlan?.monthlyAmount || 0) > 0 && (
+                        <span>Plano mensal {formatCurrency(debt.installmentPlan.monthlyAmount)}</span>
+                      )}
+                    </div>
+                    {debt.notes && <p className="family-debt-notes">{debt.notes}</p>}
+                    <div className="member-debt-entry-actions">
+                      <button
+                        type="button"
+                        className="member-inline-btn member-inline-btn--ghost"
+                        disabled={saving}
+                        onClick={() => handleDeleteDebt(debt)}
+                      >
+                        Excluir divida
+                      </button>
+                    </div>
+                  </li>
+                ))}
+            </ul>
           </div>
+        )}
+        {externalDebts.length === 0 && (
+          <p className="ledger-empty" style={{ marginTop: '0.75rem' }}>
+            Use "Divida externa" para registrar emprestimos de banco ou de parentes que nao usam o aplicativo.
+          </p>
         )}
         {familyDebtLedger.length === 0 && legacyContactLedger.length === 0 ? (
           <p className="ledger-empty">Nenhum saldo pendente entre pessoas no momento.</p>
@@ -1683,6 +1872,94 @@ export default function Familia() {
                 </button>
                 <button type="submit" className="btn-send" disabled={saving}>
                   {saving ? 'Salvando...' : 'Registrar saldo'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {externalDebtOpen && (
+        <div className="modal-overlay" onClick={handleExternalDebtModalClose}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Nova divida externa</h3>
+            <p className="modal-hint">
+              Use para emprestimos de banco, parentes ou qualquer pessoa que nao participa do app. Esse valor entra no total geral das suas dividas.
+            </p>
+            <form onSubmit={handleCreateExternalDebt} className="invite-form">
+              <div className="form-group">
+                <label>De quem e a divida</label>
+                <input
+                  type="text"
+                  value={externalDebtForm.name}
+                  onChange={(e) => setExternalDebtForm((current) => ({ ...current, name: e.target.value }))}
+                  placeholder="Ex: Banco do Brasil, Tio Joao"
+                  required
+                  autoFocus
+                  maxLength={80}
+                />
+              </div>
+              <div className="form-group">
+                <label>Tipo</label>
+                <select
+                  value={externalDebtForm.type}
+                  onChange={(e) => setExternalDebtForm((current) => ({ ...current, type: e.target.value }))}
+                >
+                  {EXTERNAL_DEBT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Valor total</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={externalDebtForm.totalAmount}
+                  onChange={(e) => setExternalDebtForm((current) => ({ ...current, totalAmount: e.target.value }))}
+                  placeholder="0,00"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Valor ja pago</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={externalDebtForm.paidAmount}
+                  onChange={(e) => setExternalDebtForm((current) => ({ ...current, paidAmount: e.target.value }))}
+                  placeholder="0,00"
+                />
+              </div>
+              <div className="form-group">
+                <label>Meta mensal de pagamento (opcional)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={externalDebtForm.monthlyAmount}
+                  onChange={(e) => setExternalDebtForm((current) => ({ ...current, monthlyAmount: e.target.value }))}
+                  placeholder="Ex: 250,00"
+                />
+              </div>
+              <div className="form-group">
+                <label>Observacao</label>
+                <textarea
+                  rows={3}
+                  value={externalDebtForm.notes}
+                  onChange={(e) => setExternalDebtForm((current) => ({ ...current, notes: e.target.value }))}
+                  placeholder="Ex: Vou pagando conforme entrar dinheiro, ou 12 parcelas no banco."
+                  maxLength={240}
+                />
+              </div>
+              <div className="invite-form-actions">
+                <button type="button" className="btn-cancel" onClick={handleExternalDebtModalClose}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn-send" disabled={saving}>
+                  {saving ? 'Salvando...' : 'Registrar divida'}
                 </button>
               </div>
             </form>

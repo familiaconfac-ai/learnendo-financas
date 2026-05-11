@@ -15,7 +15,7 @@ const DEBT_TYPES = [
 ]
 
 export default function Dividas() {
-  const { debts, paymentsByDebtId, loading, error, addDebt } = useDebts()
+  const { debts, paymentsByDebtId, loading, error, addDebt, removeDebt } = useDebts()
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ name: '', type: 'pessoa', totalAmount: '' })
@@ -53,6 +53,20 @@ export default function Dividas() {
       setModalOpen(false)
     } catch (err) {
       alert('Erro ao criar dívida: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDeleteDebt(debt) {
+    const confirmed = window.confirm(`Excluir a divida "${debt.name}"?`)
+    if (!confirmed) return
+
+    setSaving(true)
+    try {
+      await removeDebt(debt.id)
+    } catch (err) {
+      alert('Erro ao excluir divida: ' + err.message)
     } finally {
       setSaving(false)
     }
@@ -98,7 +112,12 @@ export default function Dividas() {
                     <h3 className="debt-name">{debt.name}</h3>
                     <p className="debt-type">{debt.type}</p>
                   </div>
-                  <span className="debt-badge">{payments.length} pagamento(s)</span>
+                  <div className="debt-header-actions">
+                    <span className="debt-badge">{payments.length} pagamento(s)</span>
+                    <button type="button" className="debt-delete-btn" onClick={() => handleDeleteDebt(debt)}>
+                      Excluir
+                    </button>
+                  </div>
                 </div>
 
                 <div className="debt-values">
