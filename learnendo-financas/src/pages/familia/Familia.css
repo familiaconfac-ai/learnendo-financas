@@ -656,6 +656,195 @@
   border: none;
   cursor: pointer;
 }
+
+.member-item {
+  align-items: flex-start;
+}
+
+.member-actions-row {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
+.member-inline-btn {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.member-inline-btn--ghost {
+  border-color: var(--color-border);
+  background: #fff;
+  color: var(--color-text-muted);
+}
+
+.member-inline-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.member-debt-panel {
+  margin-top: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: calc(var(--radius) - 2px);
+  background: #f8fafc;
+  padding: 0.8rem;
+}
+
+.member-debt-empty strong,
+.member-debt-empty p,
+.member-settlement-copy p {
+  margin: 0;
+}
+
+.member-debt-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.member-debt-empty p,
+.member-settlement-empty {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.member-debt-summary {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+
+.member-debt-summary-item {
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #334155;
+  padding: 0.28rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.member-debt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.member-debt-entry {
+  border: 1px solid #dbe4f0;
+  border-radius: calc(var(--radius) - 4px);
+  background: #fff;
+  padding: 0.75rem;
+}
+
+.member-debt-entry-top,
+.member-settlement-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.member-debt-entry-top p {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.member-debt-balance {
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.member-debt-balance.green {
+  color: #166534;
+}
+
+.member-debt-balance.red {
+  color: #b91c1c;
+}
+
+.member-debt-entry-actions {
+  margin-top: 0.7rem;
+}
+
+.member-settlement-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.member-settlement-item {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 0.55rem;
+}
+
+.member-settlement-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.member-settlement-copy strong {
+  font-size: 0.82rem;
+}
+
+.member-settlement-copy span {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
+.member-settlement-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.roles-legend--plain {
+  margin-top: 0.8rem;
+}
+
+.role-legend-item--plain {
+  gap: 0.35rem;
+}
+
+.family-ledger-overview {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .member-item {
+    flex-wrap: wrap;
+  }
+
+  .member-values {
+    width: 100%;
+    align-items: flex-start;
+    padding-left: 2.95rem;
+  }
+
+  .member-settlement-item,
+  .member-debt-entry-top {
+    flex-direction: column;
+  }
+
+  .member-settlement-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
 .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-whatsapp {

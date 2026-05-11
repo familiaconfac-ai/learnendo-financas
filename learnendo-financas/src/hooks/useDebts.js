@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useWorkspace } from '../context/WorkspaceContext'
-import { createDebt, fetchDebtPayments, fetchDebts } from '../services/debtService'
+import {
+  cancelDebtSettlement,
+  confirmDebtSettlement,
+  createDebt,
+  fetchDebtPayments,
+  fetchDebts,
+  requestDebtSettlement,
+} from '../services/debtService'
 
 export function useDebts() {
   const { user } = useAuth()
@@ -46,13 +53,40 @@ export function useDebts() {
   }, [reload])
 
   async function addDebt(data) {
-    if (!user?.uid) throw new Error('Usuário não autenticado')
-    if (!activeWorkspaceId) throw new Error('Workspace não selecionado')
-    if (!permissions.canLaunch) throw new Error('Seu papel não permite criar dívidas neste workspace')
+    if (!user?.uid) throw new Error('Usuario nao autenticado')
+    if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
+    if (!permissions.canLaunch) throw new Error('Seu papel nao permite criar dividas neste workspace')
 
     const id = await createDebt(activeWorkspaceId, data, user.uid)
     await reload()
     return id
+  }
+
+  async function addSettlement(debtId, data) {
+    if (!user?.uid) throw new Error('Usuario nao autenticado')
+    if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
+    if (!permissions.canLaunch) throw new Error('Seu papel nao permite registrar restituicoes neste workspace')
+
+    await requestDebtSettlement(activeWorkspaceId, debtId, data, user.uid)
+    await reload()
+  }
+
+  async function confirmSettlement(debtId, settlementId) {
+    if (!user?.uid) throw new Error('Usuario nao autenticado')
+    if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
+    if (!permissions.canConfirm) throw new Error('Seu papel nao permite confirmar restituicoes neste workspace')
+
+    await confirmDebtSettlement(activeWorkspaceId, debtId, settlementId, user.uid)
+    await reload()
+  }
+
+  async function cancelSettlement(debtId, settlementId) {
+    if (!user?.uid) throw new Error('Usuario nao autenticado')
+    if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
+    if (!permissions.canLaunch) throw new Error('Seu papel nao permite cancelar restituicoes neste workspace')
+
+    await cancelDebtSettlement(activeWorkspaceId, debtId, settlementId, user.uid)
+    await reload()
   }
 
   return {
@@ -62,5 +96,8 @@ export function useDebts() {
     error,
     reload,
     addDebt,
+    addSettlement,
+    confirmSettlement,
+    cancelSettlement,
   }
 }

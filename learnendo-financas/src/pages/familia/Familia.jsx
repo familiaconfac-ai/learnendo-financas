@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import Card, { CardHeader } from '../../components/ui/Card'
 import { formatCurrency } from '../../utils/formatCurrency'
+import { formatDateBR } from '../../utils/formatDate'
 import { useFamilia } from '../../hooks/useFamilia'
 import { useAccounts } from '../../hooks/useAccounts'
 import { useDebts } from '../../hooks/useDebts'
@@ -90,9 +91,30 @@ function defaultInternalDebtForm() {
   }
 }
 
+function defaultSettlementForm() {
+  return {
+    debtId: '',
+    amount: '',
+    notes: '',
+  }
+}
+
 function membersLabel(count) {
   if (count === 1) return '1 pessoa'
   return `${count} pessoas`
+}
+
+function counterpartMemberIdForDebt(debt, currentUserId) {
+  if (!debt) return ''
+  if (debt.creditorMemberId === currentUserId) return debt.debtorMemberId || debt.counterpartyMemberId || ''
+  if (debt.debtorMemberId === currentUserId) return debt.creditorMemberId || debt.counterpartyMemberId || ''
+  return debt.counterpartyMemberId || debt.creditorMemberId || debt.debtorMemberId || ''
+}
+
+function debtSettlementStatusLabel(status) {
+  if (status === 'confirmed') return 'Confirmado'
+  if (status === 'cancelled') return 'Cancelado'
+  return 'Aguardando confirmacao'
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -126,7 +148,14 @@ export default function Familia() {
     addProject,
     editProject,
   } = useWorkspace()
-  const { debts, paymentsByDebtId, addDebt } = useDebts()
+  const {
+    debts,
+    paymentsByDebtId,
+    addDebt,
+    addSettlement,
+    confirmSettlement,
+    cancelSettlement,
+  } = useDebts()
   const {
     family, members, invitations, loading, error,
     myRole, canManage, reload,
@@ -168,6 +197,11 @@ export default function Familia() {
   const [projectNotes,       setProjectNotes]        = useState('')
   const [memberDebtOpen,     setMemberDebtOpen]      = useState(false)
   const [memberDebtForm,     setMemberDebtForm]      = useState(defaultInternalDebtForm())
+  const [settlementOpen,     setSettlementOpen]      = useState(false)
+  const [settlementForm,     setSettlementForm]      = useState(defaultSettlementForm())
+  const [activeMemberLedgerId, setActiveMemberLedgerId] = useState('')
+  const [rolesExpanded,      setRolesExpanded]       = useState(false)
+  const [generalLedgerExpanded, setGeneralLedgerExpanded] = useState(false)
   const [workspaceTransactions, setWorkspaceTransactions] = useState([])
   const [summaryLoading,     setSummaryLoading]      = useState(false)
   const [summaryMode,        setSummaryMode]         = useState('month')
@@ -212,7 +246,6 @@ export default function Familia() {
   const canRemoveMembers = Boolean(permissions?.canRemoveMember || (!activeWorkspace && canManage))
   const canManageProjects = Boolean(permissions?.canEditBudget || (!activeWorkspace && canManage))
   const canRegisterInternalDebt = Boolean(permissions?.canLaunch || (!activeWorkspace && canManage))
-  const canViewAllMemberDebts = Boolean(permissions?.viewPrivateOthers || (!activeWorkspace && canManage))
   const visibleInvitations = useMemo(() => {
     const modern = (workspaceInvitations || []).map((item) => ({ ...item, _source: 'workspace' }))
     const legacy = (invitations || []).map((item) => ({ ...item, _source: 'legacy-family' }))
@@ -228,29 +261,51 @@ export default function Familia() {
     () => (Array.isArray(debts) ? debts : []).filter((debt) => isFamilyInternalDebt(debt)),
     [debts],
   )
-  const visibleFamilyInternalDebts = useMemo(
-    () => familyInternalDebts
-      .filter((debt) => {
-        const involvesMe = debt.creditorMemberId === user?.uid || debt.debtorMemberId === user?.uid
-        return canViewAllMemberDebts || involvesMe
-      })
-      .sort((a, b) => {
-        const remainingDiff = Number(b.remainingAmount || 0) - Number(a.remainingAmount || 0)
-        if (remainingDiff !== 0) return remainingDiff
-        return String(a.name || '').localeCompare(String(b.name || ''))
-      }),
-    [canViewAllMemberDebts, familyInternalDebts, user?.uid],
-  )
-  const openFamilyInternalDebts = useMemo(
-    () => visibleFamilyInternalDebts.filter((debt) => Number(debt.remainingAmount || 0) > 0),
-    [visibleFamilyInternalDebts],
-  )
   const familyDebtLedger = useMemo(
     () => buildFamilyDebtLedger(familyInternalDebts, user?.uid, familyMembers),
     [familyInternalDebts, familyMembers, user?.uid],
   )
   const memberDebtSummaryById = useMemo(
     () => new Map(familyDebtLedger.map((entry) => [entry.memberId, entry])),
+    [familyDebtLedger],
+  )
+  const memberDebtDetailsById = useMemo(
+    () => new Map(
+      familyDebtLedger.map((entry) => [
+        entry.memberId,
+        [...(entry.debts || [])].sort((a, b) => {
+          const remainingDiff = Number(b.remainingAmount || 0) - Number(a.remainingAmount || 0)
+          if (remainingDiff !== 0) return remainingDiff
+          return String(a.name || '').localeCompare(String(b.name || ''))
+        }),
+      ]),
+    ),
+    [familyDebtLedger],
+  )
+  const openFamilyInternalDebts = useMemo(
+    () => familyDebtLedger
+      .flatMap((entry) => entry.debts || [])
+      .filter((debt) => Number(debt.remainingAmount || 0) > 0)
+      .sort((a, b) => Number(b.remainingAmount || 0) - Number(a.remainingAmount || 0)),
+    [familyDebtLedger],
+  )
+  const familyDebtOverview = useMemo(
+    () => familyDebtLedger.reduce((acc, entry) => {
+      acc.owesToMe += Number(entry.owesToMe || 0)
+      acc.iOwe += Number(entry.iOwe || 0)
+      acc.openDebtsCount += Number(entry.openDebtsCount || 0)
+      return acc
+    }, { owesToMe: 0, iOwe: 0, openDebtsCount: 0 }),
+    [familyDebtLedger],
+  )
+  const pendingSettlementCount = useMemo(
+    () => familyDebtLedger.reduce((acc, entry) => (
+      acc + (entry.debts || []).reduce((debtSum, debt) => (
+        debtSum + (Array.isArray(debt.settlements)
+          ? debt.settlements.filter((settlement) => settlement.status === 'pending').length
+          : 0)
+      ), 0)
+    ), 0),
     [familyDebtLedger],
   )
   const legacyContactLedger = useMemo(
@@ -484,6 +539,15 @@ export default function Familia() {
     setMemberDebtForm(defaultInternalDebtForm())
   }
 
+  function handleMemberDebtOpen(member = null) {
+    const nextMemberId = member ? memberStableId(member) : ''
+    setMemberDebtForm({
+      ...defaultInternalDebtForm(),
+      memberId: nextMemberId,
+    })
+    setMemberDebtOpen(true)
+  }
+
   async function handleCreateMemberDebt(e) {
     e.preventDefault()
     const selectedMember = familyMembers.find((member) => memberStableId(member) === memberDebtForm.memberId)
@@ -531,6 +595,86 @@ export default function Familia() {
       showToast('Pendencia interna registrada ✅')
     } catch (err) {
       showToast('Erro ao registrar pendencia: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function handleSettlementModalClose() {
+    setSettlementOpen(false)
+    setSettlementForm(defaultSettlementForm())
+  }
+
+  function handleSettlementOpen(debt) {
+    setSettlementForm({
+      debtId: debt?.id || '',
+      amount: '',
+      notes: '',
+    })
+    setSettlementOpen(true)
+  }
+
+  async function handleCreateSettlement(e) {
+    e.preventDefault()
+
+    const debt = familyInternalDebts.find((item) => item.id === settlementForm.debtId)
+    const amount = Number(settlementForm.amount || 0)
+
+    if (!debt) {
+      showToast('Selecione uma pendencia valida.', 'err')
+      return
+    }
+    if (debt.debtorMemberId !== user?.uid) {
+      showToast('Somente quem deve pode informar uma restituição.', 'err')
+      return
+    }
+    if (!amount || amount <= 0) {
+      showToast('Informe o valor enviado.', 'err')
+      return
+    }
+    if (amount > Number(debt.remainingAmount || 0)) {
+      showToast('O valor nao pode ser maior que o saldo em aberto.', 'err')
+      return
+    }
+
+    setSaving(true)
+    try {
+      await addSettlement(debt.id, {
+        amount,
+        note: settlementForm.notes.trim(),
+        createdByName: currentMemberLabel,
+        paymentMethod: 'pix',
+      })
+      handleSettlementModalClose()
+      showToast('Restituicao registrada. Agora falta a confirmacao do recebedor. ✅')
+    } catch (err) {
+      showToast('Erro ao registrar restituição: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleConfirmDebtSettlement(debt, settlement) {
+    if (!debt?.id || !settlement?.id) return
+    setSaving(true)
+    try {
+      await confirmSettlement(debt.id, settlement.id)
+      showToast('Recebimento confirmado. O saldo foi abatido. ✅')
+    } catch (err) {
+      showToast('Erro ao confirmar recebimento: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleCancelDebtSettlement(debt, settlement) {
+    if (!debt?.id || !settlement?.id) return
+    setSaving(true)
+    try {
+      await cancelSettlement(debt.id, settlement.id)
+      showToast('Restituicao pendente cancelada.')
+    } catch (err) {
+      showToast('Erro ao cancelar restituição: ' + err.message, 'err')
     } finally {
       setSaving(false)
     }
@@ -880,6 +1024,9 @@ export default function Familia() {
             const canEdit = !memberPermissions.readOnly
             const canEditRoleTarget = canChangeMemberRoles && !isMe
             const memberDebtSummary = memberDebtSummaryById.get(memberId)
+            const memberDebts = memberDebtDetailsById.get(memberId) || []
+            const hasMemberDebtPanel = !isMe && (memberDebts.length > 0 || canRegisterInternalDebt)
+            const isLedgerOpen = activeMemberLedgerId === memberId
             return (
               <li key={memberId} className="member-item">
                 <div className="member-avatar" data-role={m.role}>
@@ -924,6 +1071,140 @@ export default function Familia() {
                         <span className="member-ledger-chip member-ledger-chip--red">
                           Voce deve {formatCurrency(memberDebtSummary.iOwe)}
                         </span>
+                      )}
+                    </div>
+                  )}
+                  {hasMemberDebtPanel && (
+                    <div className="member-actions-row">
+                      <button
+                        type="button"
+                        className="member-inline-btn"
+                        onClick={() => handleMemberDebtOpen(m)}
+                      >
+                        {memberDebts.length > 0 ? 'Atualizar saldo' : 'Registrar saldo'}
+                      </button>
+                      <button
+                        type="button"
+                        className="member-inline-btn member-inline-btn--ghost"
+                        onClick={() => setActiveMemberLedgerId((current) => (current === memberId ? '' : memberId))}
+                      >
+                        {isLedgerOpen ? 'Fechar conta' : 'Abrir conta'}
+                      </button>
+                    </div>
+                  )}
+                  {hasMemberDebtPanel && isLedgerOpen && (
+                    <div className="member-debt-panel">
+                      {memberDebts.length === 0 ? (
+                        <div className="member-debt-empty">
+                          <strong>Nenhum saldo aberto com {m.displayName}.</strong>
+                          <p>Use "Registrar saldo" quando surgir um emprestimo, troca ou compra no cartao da familia.</p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="member-debt-summary">
+                            <span className="member-debt-summary-item">
+                              Em aberto: <strong>{formatCurrency((memberDebtSummary?.owesToMe || 0) + (memberDebtSummary?.iOwe || 0))}</strong>
+                            </span>
+                            {memberDebtSummary?.owesToMe > 0 && (
+                              <span className="member-debt-summary-item">Ele te deve {formatCurrency(memberDebtSummary.owesToMe)}</span>
+                            )}
+                            {memberDebtSummary?.iOwe > 0 && (
+                              <span className="member-debt-summary-item">Voce deve {formatCurrency(memberDebtSummary.iOwe)}</span>
+                            )}
+                          </div>
+                          <div className="member-debt-list">
+                            {memberDebts.map((debt) => {
+                              const remainingAmount = Number(debt.remainingAmount || 0)
+                              const paidAmount = Number(debt.paidAmount || 0)
+                              const totalAmount = Number(debt.totalAmount || 0)
+                              const debtPayments = paymentsByDebtId[debt.id] || []
+                              const settlements = Array.isArray(debt.settlements) ? debt.settlements : []
+                              const isDebtor = debt.debtorMemberId === user?.uid
+                              const isCreditor = debt.creditorMemberId === user?.uid
+                              const counterpartName = m.displayName || debt.counterpartyMemberName || 'Membro'
+                              const relationLabel = isCreditor
+                                ? `${counterpartName} te deve`
+                                : `Voce deve para ${counterpartName}`
+
+                              return (
+                                <div key={debt.id} className="member-debt-entry">
+                                  <div className="member-debt-entry-top">
+                                    <div>
+                                      <strong>{debt.name}</strong>
+                                      <p>{relationLabel}</p>
+                                    </div>
+                                    <span className={`member-debt-balance ${isCreditor ? 'green' : 'red'}`}>
+                                      {formatCurrency(remainingAmount)}
+                                    </span>
+                                  </div>
+                                  <div className="family-debt-meta">
+                                    <span>{debt.reasonLabel || debtReasonLabel(debt.reasonType)}</span>
+                                    <span>Total {formatCurrency(totalAmount)}</span>
+                                    <span>Ja compensado {formatCurrency(paidAmount)}</span>
+                                    <span>{debtPayments.length} confirmacao(oes)</span>
+                                  </div>
+                                  {debt.notes && <p className="family-debt-notes">{debt.notes}</p>}
+                                  <div className="member-debt-entry-actions">
+                                    {isDebtor && remainingAmount > 0 && (
+                                      <button
+                                        type="button"
+                                        className="member-inline-btn"
+                                        onClick={() => handleSettlementOpen(debt)}
+                                      >
+                                        Registrar restituicao
+                                      </button>
+                                    )}
+                                  </div>
+                                  {settlements.length > 0 ? (
+                                    <ul className="member-settlement-list">
+                                      {settlements.map((settlement) => {
+                                        const canConfirmPending = isCreditor && settlement.status === 'pending'
+                                        const canCancelPending = isDebtor && settlement.status === 'pending' && settlement.createdByUid === user?.uid
+                                        return (
+                                          <li key={settlement.id} className="member-settlement-item">
+                                            <div className="member-settlement-copy">
+                                              <strong>{formatCurrency(settlement.amount)}</strong>
+                                              <span>
+                                                {debtSettlementStatusLabel(settlement.status)} · {formatDateBR(settlement.confirmedAt || settlement.createdAt)}
+                                              </span>
+                                              {settlement.note && <p>{settlement.note}</p>}
+                                            </div>
+                                            <div className="member-settlement-actions">
+                                              {canConfirmPending && (
+                                                <button
+                                                  type="button"
+                                                  className="member-inline-btn"
+                                                  disabled={saving}
+                                                  onClick={() => handleConfirmDebtSettlement(debt, settlement)}
+                                                >
+                                                  Confirmar recebido
+                                                </button>
+                                              )}
+                                              {canCancelPending && (
+                                                <button
+                                                  type="button"
+                                                  className="member-inline-btn member-inline-btn--ghost"
+                                                  disabled={saving}
+                                                  onClick={() => handleCancelDebtSettlement(debt, settlement)}
+                                                >
+                                                  Cancelar
+                                                </button>
+                                              )}
+                                            </div>
+                                          </li>
+                                        )
+                                      })}
+                                    </ul>
+                                  ) : (
+                                    <p className="member-settlement-empty">
+                                      Nenhuma restituicao registrada ainda nesta conta.
+                                    </p>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </>
                       )}
                     </div>
                   )}
@@ -986,31 +1267,71 @@ export default function Familia() {
 
       {/* Papéis e permissões */}
       <Card>
-        <CardHeader title="Papéis e permissões" />
-        <ul className="roles-legend">
+        <div className="familia-members-header">
+          <CardHeader title="Papeis e permissoes" subtitle="Abra apenas quando precisar consultar" />
+          <button
+            type="button"
+            className="member-inline-btn member-inline-btn--ghost"
+            onClick={() => setRolesExpanded((current) => !current)}
+          >
+            {rolesExpanded ? 'Ocultar' : 'Ver papeis'}
+          </button>
+        </div>
+        {rolesExpanded && <ul className="roles-legend roles-legend--plain">
           {Object.entries(ROLE_META).map(([key, meta]) => (
-            <li key={key} className="role-legend-item">
-              <span className={`role-badge ${meta.cls}`}>{meta.icon} {meta.label}</span>
+            <li key={key} className="role-legend-item role-legend-item--plain">
+              <strong>{meta.label}:</strong>
               <span className="role-legend-desc">{ROLE_DESC[key]}</span>
             </li>
           ))}
-        </ul>
+        </ul>}
       </Card>
 
       <Card>
         <div className="familia-members-header">
-          <CardHeader title="Saldo entre pessoas" subtitle="Empréstimos, trocas internas e cartão da família" />
+          <CardHeader title="Resumo geral entre membros" subtitle="Seu total consolidado com toda a família" />
           {canRegisterInternalDebt && (
             <div className="members-header-btns">
-              <button className="btn-add-member" onClick={() => setMemberDebtOpen(true)}>
+              <button className="btn-add-member" onClick={() => handleMemberDebtOpen()}>
                 + Registrar saldo
               </button>
             </div>
           )}
         </div>
+        <div className="familia-summary-grid family-ledger-overview">
+          <div className="familia-stat">
+            <span className="familia-stat-label">Te devem</span>
+            <span className="familia-stat-value green">{formatCurrency(familyDebtOverview.owesToMe)}</span>
+          </div>
+          <div className="familia-stat">
+            <span className="familia-stat-label">Voce deve</span>
+            <span className="familia-stat-value red">{formatCurrency(familyDebtOverview.iOwe)}</span>
+          </div>
+          <div className="familia-stat">
+            <span className="familia-stat-label">Saldo liquido</span>
+            <span className={`familia-stat-value ${familyDebtOverview.owesToMe - familyDebtOverview.iOwe >= 0 ? 'green' : 'red'}`}>
+              {formatCurrency(Math.abs(familyDebtOverview.owesToMe - familyDebtOverview.iOwe))}
+            </span>
+          </div>
+          <div className="familia-stat">
+            <span className="familia-stat-label">Confirmacoes pendentes</span>
+            <span className="familia-stat-value blue">{pendingSettlementCount}</span>
+          </div>
+        </div>
+        {(familyDebtLedger.length > 0 || legacyContactLedger.length > 0) && (
+          <div className="member-actions-row" style={{ marginTop: '0.75rem' }}>
+            <button
+              type="button"
+              className="member-inline-btn member-inline-btn--ghost"
+              onClick={() => setGeneralLedgerExpanded((current) => !current)}
+            >
+              {generalLedgerExpanded ? 'Ocultar detalhes gerais' : 'Ver detalhes gerais'}
+            </button>
+          </div>
+        )}
         {familyDebtLedger.length === 0 && legacyContactLedger.length === 0 ? (
           <p className="ledger-empty">Nenhum saldo pendente entre pessoas no momento.</p>
-        ) : (
+        ) : generalLedgerExpanded ? (
           <>
             {familyDebtLedger.length > 0 && (
               <ul className="ledger-list">
@@ -1087,7 +1408,7 @@ export default function Familia() {
               </div>
             )}
           </>
-        )}
+        ) : null}
       </Card>
 
       {/* Compartilhar app */}
@@ -1262,6 +1583,9 @@ export default function Familia() {
         <div className="modal-overlay" onClick={handleMemberDebtModalClose}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">Registrar saldo interno</h3>
+            <p className="modal-hint">
+              Este formulario cria a pendencia principal. Quando houver devolucao, use o botao "Registrar restituicao" dentro da conta do membro para nao abrir um saldo novo.
+            </p>
             <form onSubmit={handleCreateMemberDebt} className="invite-form">
               <div className="form-group">
                 <label>Membro relacionado</label>
@@ -1359,6 +1683,73 @@ export default function Familia() {
                 </button>
                 <button type="submit" className="btn-send" disabled={saving}>
                   {saving ? 'Salvando...' : 'Registrar saldo'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {settlementOpen && (
+        <div className="modal-overlay" onClick={handleSettlementModalClose}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Registrar restituicao</h3>
+            <p className="modal-hint">
+              Use este passo quando o dinheiro ja foi enviado. O saldo so sera abatido depois que a outra pessoa confirmar o recebimento.
+            </p>
+            <form onSubmit={handleCreateSettlement} className="invite-form">
+              <div className="form-group">
+                <label>Conta em aberto</label>
+                <select
+                  value={settlementForm.debtId}
+                  onChange={(e) => setSettlementForm((current) => ({ ...current, debtId: e.target.value }))}
+                >
+                  <option value="">Selecione uma pendencia</option>
+                  {familyInternalDebts
+                    .filter((debt) => debt.debtorMemberId === user?.uid && Number(debt.remainingAmount || 0) > 0)
+                    .map((debt) => {
+                      const counterpartId = counterpartMemberIdForDebt(debt, user?.uid)
+                      const counterpartName = memberDebtSummaryById.get(counterpartId)?.memberName
+                        || debt.counterpartyMemberName
+                        || debt.creditorMemberName
+                        || debt.debtorMemberName
+                        || 'Membro'
+                      return (
+                        <option key={debt.id} value={debt.id}>
+                          {debt.name} · {counterpartName} · restante {formatCurrency(debt.remainingAmount)}
+                        </option>
+                      )
+                    })}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Valor enviado</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={settlementForm.amount}
+                  onChange={(e) => setSettlementForm((current) => ({ ...current, amount: e.target.value }))}
+                  placeholder="0,00"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Observacao (opcional)</label>
+                <textarea
+                  rows={3}
+                  value={settlementForm.notes}
+                  onChange={(e) => setSettlementForm((current) => ({ ...current, notes: e.target.value }))}
+                  placeholder="Ex: Enviei no Pix agora, aguardando ele conferir a conta."
+                  maxLength={240}
+                />
+              </div>
+              <div className="invite-form-actions">
+                <button type="button" className="btn-cancel" onClick={handleSettlementModalClose}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn-send" disabled={saving}>
+                  {saving ? 'Salvando...' : 'Registrar envio'}
                 </button>
               </div>
             </form>

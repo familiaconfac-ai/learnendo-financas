@@ -5,6 +5,7 @@ import {
   getDoc,
   getDocs,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
@@ -40,6 +41,74 @@ function normalizeFamilyReasonType(value) {
   if (normalized === 'cartao_familia') return 'cartao_familia'
   if (normalized === 'ajuste') return 'ajuste'
   return 'emprestimo'
+}
+
+function createSettlementId() {
+  const randomPart = Math.random().toString(36).slice(2, 8)
+  return `settlement_${Date.now()}_${randomPart}`
+}
+
+function normalizeSettlementStatus(value) {
+  if (value === 'confirmed') return 'confirmed'
+  if (value === 'cancelled') return 'cancelled'
+  return 'pending'
+}
+
+function settlementSortValue(entry) {
+  const value = entry?.confirmedAt || entry?.cancelledAt || entry?.createdAt || entry?.date || ''
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+export function normalizeDebtSettlements(value = []) {
+  return (Array.isArray(value) ? value : [])
+    .map((entry, index) => {
+      const amount = toAmount(entry?.amount)
+      if (!amount) return null
+
+      return {
+        id: String(entry?.id || createSettlementId() || `settlement_${index}`),
+        amount,
+        status: normalizeSettlementStatus(entry?.status),
+        createdAt: entry?.createdAt || entry?.date || new Date().toISOString(),
+        createdByUid: normalizeOptionalString(entry?.createdByUid),
+        createdByName: normalizeOptionalString(entry?.createdByName),
+        confirmedAt: entry?.confirmedAt || null,
+        confirmedByUid: normalizeOptionalString(entry?.confirmedByUid),
+        cancelledAt: entry?.cancelledAt || null,
+        cancelledByUid: normalizeOptionalString(entry?.cancelledByUid),
+        paymentMethod: normalizeOptionalString(entry?.paymentMethod) || 'pix',
+        note: normalizeOptionalString(entry?.note),
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => settlementSortValue(b) - settlementSortValue(a))
+}
+
+function buildSettlementHistoryEntry(settlement) {
+  return {
+    id: settlement.id,
+    amount: settlement.amount,
+    date: settlement.confirmedAt || settlement.createdAt,
+    description: settlement.note || 'Restituicao confirmada',
+    origin: 'debt_settlement',
+    status: settlement.status,
+    paymentMethod: settlement.paymentMethod || 'pix',
+    createdAt: settlement.createdAt,
+    createdByName: settlement.createdByName || null,
+  }
+}
+
+function buildConfirmedSettlementEntries(debt) {
+  return normalizeDebtSettlements(debt?.settlements)
+    .filter((settlement) => settlement.status === 'confirmed')
+    .map(buildSettlementHistoryEntry)
+}
+
+function confirmedSettlementsTotal(debt) {
+  return normalizeDebtSettlements(debt?.settlements)
+    .filter((settlement) => settlement.status === 'confirmed')
+    .reduce((sum, settlement) => sum + toAmount(settlement.amount), 0)
 }
 
 const DEBT_SETTLEMENT_NATURE_IDS = new Set([
@@ -126,7 +195,11 @@ export async function fetchDebts(workspaceId) {
   if (!workspaceId) return []
   const snap = await getDocs(debtsCol(workspaceId))
   return snap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
+    .map((d) => ({
+      id: d.id,
+      ...d.data(),
+      settlements: normalizeDebtSettlements(d.data()?.settlements),
+    }))
     .sort((a, b) => {
       const aDate = a.createdAt?.toDate?.()?.getTime?.() || 0
       const bDate = b.createdAt?.toDate?.()?.getTime?.() || 0
@@ -164,6 +237,7 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
     contactId: normalizeOptionalString(payload.contactId),
     contactName: normalizeOptionalString(payload.contactName),
     notes: normalizeOptionalString(payload.notes),
+    settlements: normalizeDebtSettlements(payload.settlements),
     interestRate: payload.interestRate || null,
     dueDate: payload.dueDate || null,
     installmentPlan: payload.installmentPlan || null,
@@ -176,17 +250,29 @@ export async function fetchDebtById(workspaceId, debtId) {
   if (!workspaceId || !debtId) return null
   const snap = await getDoc(debtDoc(workspaceId, debtId))
   if (!snap.exists()) return null
-  return { id: snap.id, ...snap.data() }
+  return {
+    id: snap.id,
+    ...snap.data(),
+    settlements: normalizeDebtSettlements(snap.data()?.settlements),
+  }
 }
 
 export async function fetchDebtPayments(workspaceId, debtId) {
   if (!workspaceId || !debtId) return []
-  const snap = await getDocs(query(txCol(workspaceId), where('debtId', '==', debtId)))
+  const [debt, snap] = await Promise.all([
+    fetchDebtById(workspaceId, debtId),
+    getDocs(query(txCol(workspaceId), where('debtId', '==', debtId))),
+  ])
 
-  return snap.docs
+  const transactionPayments = snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter(isConfirmedDebtPayment)
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+
+  const settlementPayments = buildConfirmedSettlementEntries(debt)
+
+  return [...settlementPayments, ...transactionPayments]
+    .sort((a, b) => String(b.date || b.createdAt || '').localeCompare(String(a.date || a.createdAt || '')))
 }
 
 export async function recalculateDebtBalance(workspaceId, debtId) {
@@ -196,8 +282,11 @@ export async function recalculateDebtBalance(workspaceId, debtId) {
   if (!debt) return
 
   const payments = await fetchDebtPayments(workspaceId, debtId)
-  const transactionPaidAmount = payments.reduce((sum, tx) => sum + toAmount(tx.amount), 0)
-  const paidAmount = toAmount(debt.initialPaidAmount || 0) + transactionPaidAmount
+  const transactionPaidAmount = payments
+    .filter((payment) => payment.origin !== 'debt_settlement')
+    .reduce((sum, tx) => sum + toAmount(tx.amount), 0)
+  const settlementPaidAmount = confirmedSettlementsTotal(debt)
+  const paidAmount = toAmount(debt.initialPaidAmount || 0) + transactionPaidAmount + settlementPaidAmount
   const totalAmount = toAmount(debt.totalAmount)
   const remainingAmount = Math.max(0, totalAmount - paidAmount)
 
@@ -217,4 +306,133 @@ export async function syncDebtBalancesForTransactionChange(workspaceId, beforeTx
   if (afterTx?.debtId) affected.add(afterTx.debtId)
 
   await Promise.all(Array.from(affected).map((debtId) => recalculateDebtBalance(workspaceId, debtId)))
+}
+
+export async function requestDebtSettlement(workspaceId, debtId, payload = {}, actorUid = null) {
+  if (!workspaceId || !debtId) throw new Error('Divida nao encontrada')
+  const amount = toAmount(payload.amount)
+  if (!amount) throw new Error('Informe o valor da restituição')
+
+  await runTransaction(db, async (transaction) => {
+    const ref = debtDoc(workspaceId, debtId)
+    const snap = await transaction.get(ref)
+    if (!snap.exists()) throw new Error('Divida nao encontrada')
+
+    const debt = {
+      id: snap.id,
+      ...snap.data(),
+      settlements: normalizeDebtSettlements(snap.data()?.settlements),
+    }
+
+    if (debt.debtorMemberId && actorUid && debt.debtorMemberId !== actorUid) {
+      throw new Error('Somente quem deve pode informar uma restituição')
+    }
+
+    const remainingAmount = toAmount(debt.remainingAmount)
+    if (amount > remainingAmount) {
+      throw new Error('O valor informado nao pode ser maior que o saldo em aberto')
+    }
+
+    const nextSettlement = {
+      id: createSettlementId(),
+      amount,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      createdByUid: actorUid || null,
+      createdByName: normalizeOptionalString(payload.createdByName),
+      paymentMethod: normalizeOptionalString(payload.paymentMethod) || 'pix',
+      note: normalizeOptionalString(payload.note),
+      confirmedAt: null,
+      confirmedByUid: null,
+      cancelledAt: null,
+      cancelledByUid: null,
+    }
+
+    transaction.update(ref, {
+      settlements: [...debt.settlements, nextSettlement],
+      updatedAt: serverTimestamp(),
+    })
+  })
+}
+
+export async function confirmDebtSettlement(workspaceId, debtId, settlementId, actorUid = null) {
+  if (!workspaceId || !debtId || !settlementId) throw new Error('Restituicao nao encontrada')
+
+  await runTransaction(db, async (transaction) => {
+    const ref = debtDoc(workspaceId, debtId)
+    const snap = await transaction.get(ref)
+    if (!snap.exists()) throw new Error('Divida nao encontrada')
+
+    const debt = {
+      id: snap.id,
+      ...snap.data(),
+      settlements: normalizeDebtSettlements(snap.data()?.settlements),
+    }
+
+    if (debt.creditorMemberId && actorUid && debt.creditorMemberId !== actorUid) {
+      throw new Error('Somente quem vai receber pode confirmar esta restituição')
+    }
+
+    const nextSettlements = debt.settlements.map((settlement) => {
+      if (settlement.id !== settlementId) return settlement
+      if (settlement.status !== 'pending') {
+        throw new Error('Esta restituição ja foi processada')
+      }
+      return {
+        ...settlement,
+        status: 'confirmed',
+        confirmedAt: new Date().toISOString(),
+        confirmedByUid: actorUid || null,
+      }
+    })
+
+    const exists = nextSettlements.some((settlement) => settlement.id === settlementId)
+    if (!exists) throw new Error('Restituicao nao encontrada')
+
+    transaction.update(ref, {
+      settlements: nextSettlements,
+      updatedAt: serverTimestamp(),
+    })
+  })
+
+  await recalculateDebtBalance(workspaceId, debtId)
+}
+
+export async function cancelDebtSettlement(workspaceId, debtId, settlementId, actorUid = null) {
+  if (!workspaceId || !debtId || !settlementId) throw new Error('Restituicao nao encontrada')
+
+  await runTransaction(db, async (transaction) => {
+    const ref = debtDoc(workspaceId, debtId)
+    const snap = await transaction.get(ref)
+    if (!snap.exists()) throw new Error('Divida nao encontrada')
+
+    const debt = {
+      id: snap.id,
+      ...snap.data(),
+      settlements: normalizeDebtSettlements(snap.data()?.settlements),
+    }
+
+    const target = debt.settlements.find((settlement) => settlement.id === settlementId)
+    if (!target) throw new Error('Restituicao nao encontrada')
+    if (target.status !== 'pending') throw new Error('Apenas restituições pendentes podem ser canceladas')
+    if (actorUid && target.createdByUid && target.createdByUid !== actorUid) {
+      throw new Error('Somente quem informou a restituição pode cancelar')
+    }
+
+    const nextSettlements = debt.settlements.map((settlement) => (
+      settlement.id === settlementId
+        ? {
+            ...settlement,
+            status: 'cancelled',
+            cancelledAt: new Date().toISOString(),
+            cancelledByUid: actorUid || null,
+          }
+        : settlement
+    ))
+
+    transaction.update(ref, {
+      settlements: nextSettlements,
+      updatedAt: serverTimestamp(),
+    })
+  })
 }
