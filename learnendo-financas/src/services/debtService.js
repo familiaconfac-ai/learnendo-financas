@@ -29,6 +29,19 @@ function toAmount(value) {
   return Math.max(0, numeric)
 }
 
+function normalizeOptionalString(value) {
+  const text = String(value || '').trim()
+  return text || null
+}
+
+function normalizeFamilyReasonType(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'troca_operacional') return 'troca_operacional'
+  if (normalized === 'cartao_familia') return 'cartao_familia'
+  if (normalized === 'ajuste') return 'ajuste'
+  return 'emprestimo'
+}
+
 const DEBT_SETTLEMENT_NATURE_IDS = new Set([
   'nature_debt_payment',
   'nature_loan_repayment',
@@ -39,6 +52,74 @@ function isConfirmedDebtPayment(tx) {
   return tx?.status === 'confirmed'
     && tx?.debtId
     && DEBT_SETTLEMENT_NATURE_IDS.has(tx?.transactionNatureId)
+}
+
+export function isFamilyInternalDebt(debt) {
+  if (!debt) return false
+  if (debt.relationshipKind === 'family_member') return true
+  if (debt.debtorMemberId || debt.creditorMemberId) return true
+  return String(debt.type || '').startsWith('familia_')
+}
+
+function entryName(entry) {
+  return String(entry?.memberName || 'Membro')
+}
+
+export function buildFamilyDebtLedger(debts = [], currentUserId = '', members = []) {
+  if (!currentUserId) return []
+
+  const memberNameById = new Map(
+    (Array.isArray(members) ? members : []).map((member) => [
+      member.uid || member.id,
+      member.displayName || member.name || member.email || 'Membro',
+    ]),
+  )
+
+  const summaryByMemberId = new Map()
+
+  ;(Array.isArray(debts) ? debts : [])
+    .filter((debt) => isFamilyInternalDebt(debt) && Number(debt.remainingAmount || 0) > 0)
+    .forEach((debt) => {
+      const creditorId = debt.creditorMemberId || null
+      const debtorId = debt.debtorMemberId || null
+      const remainingAmount = Number(debt.remainingAmount || 0)
+      if (!creditorId || !debtorId || !remainingAmount) return
+      if (creditorId !== currentUserId && debtorId !== currentUserId) return
+
+      const counterpartId = creditorId === currentUserId ? debtorId : creditorId
+      const counterpartName = debt.counterpartyMemberName
+        || memberNameById.get(counterpartId)
+        || debt.debtorMemberName
+        || debt.creditorMemberName
+        || debt.contactName
+        || 'Membro'
+
+      const current = summaryByMemberId.get(counterpartId) || {
+        memberId: counterpartId,
+        memberName: counterpartName,
+        owesToMe: 0,
+        iOwe: 0,
+        openDebtsCount: 0,
+        debts: [],
+      }
+
+      if (creditorId === currentUserId) current.owesToMe += remainingAmount
+      if (debtorId === currentUserId) current.iOwe += remainingAmount
+      current.openDebtsCount += 1
+      current.debts.push(debt)
+      summaryByMemberId.set(counterpartId, current)
+    })
+
+  return [...summaryByMemberId.values()]
+    .map((entry) => ({
+      ...entry,
+      netBalance: Number((entry.owesToMe - entry.iOwe).toFixed(2)),
+    }))
+    .sort((a, b) => {
+      const balanceDiff = Math.abs(b.netBalance) - Math.abs(a.netBalance)
+      if (balanceDiff !== 0) return balanceDiff
+      return entryName(a).localeCompare(entryName(b))
+    })
 }
 
 export async function fetchDebts(workspaceId) {
@@ -54,22 +135,35 @@ export async function fetchDebts(workspaceId) {
 }
 
 export async function createDebt(workspaceId, payload = {}, actorUid = null) {
-  if (!workspaceId) throw new Error('Workspace não selecionado')
+  if (!workspaceId) throw new Error('Workspace nao selecionado')
   const totalAmount = toAmount(payload.totalAmount)
-  const paidAmount = toAmount(payload.paidAmount || 0)
-  const remainingAmount = Math.max(0, totalAmount - paidAmount)
+  const initialPaidAmount = toAmount(payload.paidAmount || 0)
+  const remainingAmount = Math.max(0, totalAmount - initialPaidAmount)
 
   const ref = await addDoc(debtsCol(workspaceId), {
-    name: payload.name?.trim() || 'Dívida sem nome',
+    name: payload.name?.trim() || 'Divida sem nome',
     type: payload.type || 'pessoa',
     totalAmount,
-    paidAmount,
+    paidAmount: initialPaidAmount,
+    initialPaidAmount,
     remainingAmount,
+    status: remainingAmount > 0 ? 'open' : 'settled',
     workspaceId,
     createdBy: actorUid || null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    // Campos reservados para evolução futura
+    relationshipKind: normalizeOptionalString(payload.relationshipKind),
+    reasonType: normalizeFamilyReasonType(payload.reasonType),
+    reasonLabel: normalizeOptionalString(payload.reasonLabel),
+    creditorMemberId: normalizeOptionalString(payload.creditorMemberId),
+    creditorMemberName: normalizeOptionalString(payload.creditorMemberName),
+    debtorMemberId: normalizeOptionalString(payload.debtorMemberId),
+    debtorMemberName: normalizeOptionalString(payload.debtorMemberName),
+    counterpartyMemberId: normalizeOptionalString(payload.counterpartyMemberId),
+    counterpartyMemberName: normalizeOptionalString(payload.counterpartyMemberName),
+    contactId: normalizeOptionalString(payload.contactId),
+    contactName: normalizeOptionalString(payload.contactName),
+    notes: normalizeOptionalString(payload.notes),
     interestRate: payload.interestRate || null,
     dueDate: payload.dueDate || null,
     installmentPlan: payload.installmentPlan || null,
@@ -102,13 +196,15 @@ export async function recalculateDebtBalance(workspaceId, debtId) {
   if (!debt) return
 
   const payments = await fetchDebtPayments(workspaceId, debtId)
-  const paidAmount = payments.reduce((sum, tx) => sum + toAmount(tx.amount), 0)
+  const transactionPaidAmount = payments.reduce((sum, tx) => sum + toAmount(tx.amount), 0)
+  const paidAmount = toAmount(debt.initialPaidAmount || 0) + transactionPaidAmount
   const totalAmount = toAmount(debt.totalAmount)
   const remainingAmount = Math.max(0, totalAmount - paidAmount)
 
   await updateDoc(debtDoc(workspaceId, debtId), {
     paidAmount,
     remainingAmount,
+    status: remainingAmount > 0 ? 'open' : 'settled',
     updatedAt: serverTimestamp(),
   })
 }

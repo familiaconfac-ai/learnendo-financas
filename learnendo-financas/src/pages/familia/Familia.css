@@ -281,6 +281,28 @@
 }
 
 .member-perm { font-size: 0.7rem; color: var(--color-text-muted); }
+.member-ledger-row {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.45rem;
+}
+.member-ledger-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.member-ledger-chip--green {
+  background: #dcfce7;
+  color: #166534;
+}
+.member-ledger-chip--red {
+  background: #fee2e2;
+  color: #b91c1c;
+}
 
 .member-values {
   display: flex;
@@ -479,6 +501,79 @@
 .ledger-value {
   font-size: 0.82rem;
   font-weight: 700;
+}
+.ledger-value.green { color: #166534; }
+.ledger-value.red { color: #b91c1c; }
+.ledger-item--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+}
+.ledger-main,
+.ledger-subline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+.ledger-subline {
+  font-size: 0.74rem;
+  color: var(--color-text-muted);
+}
+.family-debt-block {
+  margin-top: 0.9rem;
+}
+.family-debt-block-title {
+  display: block;
+  margin-bottom: 0.55rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+.family-debt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.family-debt-item {
+  border: 1px solid var(--color-border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--color-surface);
+  padding: 0.8rem;
+}
+.family-debt-top,
+.family-debt-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.family-debt-top p,
+.family-debt-notes {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+.family-debt-remaining {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #b91c1c;
+}
+.family-debt-meta {
+  margin-top: 0.55rem;
+  font-size: 0.74rem;
+  color: var(--color-text-muted);
+}
+.internal-debt-preview {
+  border-radius: calc(var(--radius) - 4px);
+  background: #f8fafc;
+  color: var(--color-text);
+  font-size: 0.82rem;
+  padding: 0.7rem 0.8rem;
 }
 
 /* ── Modals ────────────────────────────────────────────────────────────── */

@@ -14,6 +14,7 @@ import { useWorkspace } from '../../context/WorkspaceContext'
 import { useDebts } from '../../hooks/useDebts'
 import { fetchTransactions } from '../../services/transactionService'
 import { createRecurrenceRule, prefillRecurringTransactions } from '../../services/recurrenceService'
+import { isFamilyInternalDebt } from '../../services/debtService'
 import {
   buildDuplicateSignature,
   findDuplicateMatches,
@@ -136,6 +137,26 @@ const PERSON_LINKED_NATURE_IDS = new Set([
   'nature_offer_sent',
   'nature_reimbursement',
 ])
+
+function memberIdFromContactId(contactId) {
+  const text = String(contactId || '')
+  return text.startsWith('member:') ? text.slice('member:'.length) : ''
+}
+
+function debtMatchesSelectedContact(debt, contactId, currentUserId) {
+  if (!contactId) return true
+  if (!debt) return false
+
+  const memberId = memberIdFromContactId(contactId)
+  if (memberId) {
+    const involvesMember = debt.creditorMemberId === memberId || debt.debtorMemberId === memberId
+    const involvesCurrentUser = !currentUserId || debt.creditorMemberId === currentUserId || debt.debtorMemberId === currentUserId
+    if (isFamilyInternalDebt(debt)) return involvesMember && involvesCurrentUser
+    return debt.contactId === contactId
+  }
+
+  return debt.contactId === contactId
+}
 
 function normalizeStatus(status) {
   if (status === 'pending' || status === 'needs_review') return 'pending'
@@ -391,6 +412,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
     ...members.map((m) => ({ id: `member:${m.uid || m.id}`, name: m.displayName || m.email || 'Membro', type: 'internal' })),
     ...contacts,
   ]
+  const eligibleDebts = debts.filter((debt) => debtMatchesSelectedContact(debt, form.contactId, user?.uid))
+  const selectedDebt = debts.find((debt) => debt.id === form.debtId) || null
 
   const scopedTransactions = allTx.filter((t) => {
     const txStatus = normalizeStatus(t.status)
@@ -517,18 +540,24 @@ export default function Lancamentos({ view = 'confirmed' }) {
     if (name === 'transactionNatureId') {
       const selected = transactionNatures.find((nature) => nature.id === value)
       const forcedType = TYPE_BY_NATURE_ID[value]
-      setForm((f) => ({
-        ...f,
-        transactionNatureId: value,
-        transactionNatureLabel: selected?.label || '',
-        type: forcedType || f.type,
-        categoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.categoryId,
-        subcategoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.subcategoryId,
-        debtId: DEBT_LINKABLE_NATURE_IDS.has(value) ? f.debtId : '',
-        salaryReferenceMonth: SALARY_LINKED_NATURE_IDS.has(value)
-          ? (f.salaryReferenceMonth || defaultSalaryReferenceMonth({ ...f, transactionNatureId: value }))
-          : '',
-      }))
+      setForm((f) => {
+        const nextEligibleDebts = debts.filter((debt) => debtMatchesSelectedContact(debt, f.contactId, user?.uid))
+        const preservedDebtId = DEBT_LINKABLE_NATURE_IDS.has(value) && nextEligibleDebts.some((debt) => debt.id === f.debtId)
+          ? f.debtId
+          : (DEBT_LINKABLE_NATURE_IDS.has(value) && nextEligibleDebts.length === 1 ? nextEligibleDebts[0].id : '')
+        return {
+          ...f,
+          transactionNatureId: value,
+          transactionNatureLabel: selected?.label || '',
+          type: forcedType || f.type,
+          categoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.categoryId,
+          subcategoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.subcategoryId,
+          debtId: preservedDebtId,
+          salaryReferenceMonth: SALARY_LINKED_NATURE_IDS.has(value)
+            ? (f.salaryReferenceMonth || defaultSalaryReferenceMonth({ ...f, transactionNatureId: value }))
+            : '',
+        }
+      })
       setEditingNatureLabel(selected?.label || '')
       return
     }
@@ -551,6 +580,21 @@ export default function Lancamentos({ view = 'confirmed' }) {
         categoryId: value,
         subcategoryId: firstSubcategory?.id || '',
       }))
+      return
+    }
+
+    if (name === 'contactId') {
+      setForm((f) => {
+        const nextEligibleDebts = debts.filter((debt) => debtMatchesSelectedContact(debt, value, user?.uid))
+        const preservedDebtId = nextEligibleDebts.some((debt) => debt.id === f.debtId)
+          ? f.debtId
+          : (nextEligibleDebts.length === 1 ? nextEligibleDebts[0].id : '')
+        return {
+          ...f,
+          contactId: value,
+          debtId: preservedDebtId,
+        }
+      })
       return
     }
 
@@ -1821,12 +1865,22 @@ transactions.length === 0 ? (
                 required={form.transactionNatureId === 'nature_debt_payment'}
               >
                 <option value="">Nenhuma</option>
-                {debts.map((debt) => (
+                {eligibleDebts.map((debt) => (
                   <option key={debt.id} value={debt.id}>
                     {debt.name} · restante {formatCurrency(debt.remainingAmount)}
                   </option>
                 ))}
               </select>
+              {form.contactId && eligibleDebts.length === 0 && (
+                <p className="form-help-text">
+                  Não encontramos pendência em aberto para esta pessoa. Você pode salvar sem vínculo ou registrar a pendência primeiro na área Família.
+                </p>
+              )}
+              {selectedDebt && isFamilyInternalDebt(selectedDebt) && (
+                <p className="form-help-text">
+                  Registro interno: {selectedDebt.reasonLabel || 'Pendência familiar'} · restante {formatCurrency(selectedDebt.remainingAmount)}.
+                </p>
+              )}
             </div>
           )}
           {PERSON_LINKED_NATURE_IDS.has(form.transactionNatureId) && (
