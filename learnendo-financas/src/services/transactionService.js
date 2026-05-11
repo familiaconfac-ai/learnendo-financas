@@ -19,6 +19,7 @@ import { db } from '../firebase/config'
 import { NATURE_DEFAULT_BY_TYPE } from '../constants/transactionNatures'
 import { normalizePaymentMethodId } from '../constants/transactionPaymentMethods'
 import { syncDebtBalancesForTransactionChange } from './debtService'
+import { normalizeWorkspaceRole } from './workspaceService'
 
 function normalizeStatus(status) {
   if (status === 'confirmed') return 'confirmed'
@@ -118,12 +119,32 @@ function shouldAffectBalance(type, data) {
 }
 
 function applyViewerScope(docs, options = {}) {
-  const viewerRole = options.viewerRole || 'gestor'
+  const viewerRole = normalizeWorkspaceRole(options.viewerRole || 'gestor')
   const viewerUid = options.viewerUid || null
   if (!viewerUid) return docs
 
+  if (viewerRole === 'planejador-blind') {
+    return docs.map((tx) => ({
+      ...tx,
+      amount: 0,
+      receiptDetailTotal: 0,
+      receiptBatchTotal: 0,
+      receiptItems: Array.isArray(tx.receiptItems)
+        ? tx.receiptItems.map((item) => ({
+            ...item,
+            amount: 0,
+            total: 0,
+            totalAmount: 0,
+            unitPrice: 0,
+            price: 0,
+          }))
+        : [],
+    }))
+  }
+
   if (viewerRole === 'planejador') return docs
-  if (viewerRole === 'gestor' || viewerRole === 'co-gestor') return docs
+  if (viewerRole === 'gestor' || viewerRole === 'planejador-master') return docs
+  if (viewerRole === 'co-gestor' || viewerRole === 'planejador-plus') return docs
   if (viewerRole === 'membro') return docs
 
   return docs

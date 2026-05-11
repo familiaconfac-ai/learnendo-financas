@@ -10,11 +10,15 @@ import { db } from '../../firebase/config'
 import { addMember } from '../../services/familyService'
 import { fetchAllTransactionsForWorkspace } from '../../services/transactionService'
 import { calculateMonthlySummary } from '../../utils/financeCalculations'
+import { getPermissionsByRole } from '../../services/workspaceService'
 import './Familia.css'
 
 // ── Role metadata (new canonical names) ────────────────────────────────────
 
 const ROLE_META = {
+  'planejador-master': { label: 'Planejador master', cls: 'role-planejador-master', icon: 'PM' },
+  'planejador-plus': { label: 'Planejador plus', cls: 'role-planejador-plus', icon: 'P+' },
+  'planejador-blind': { label: 'Planejador blind', cls: 'role-planejador-blind', icon: 'PB' },
   'gestor':     { label: 'Gestor',     cls: 'role-gestor',     icon: '👑' },
   'co-gestor':  { label: 'Co-gestor',  cls: 'role-cogestor',   icon: '🛡️' },
   'membro':     { label: 'Membro',     cls: 'role-membro',     icon: '👤' },
@@ -22,6 +26,9 @@ const ROLE_META = {
 }
 
 const ROLE_DESC = {
+  'planejador-master': 'Apoio completo de configuracao. Atua como gestor no app, sem ser o dono principal da familia.',
+  'planejador-plus': 'Apoio operacional amplo. Atua como co-gestor para ajudar no dia a dia financeiro.',
+  'planejador-blind': 'Pode ajudar na configuracao e no acompanhamento, mas sem enxergar valores financeiros.',
   'gestor':     'Controle total. Pode editar a família, adicionar/remover membros e transferir liderança.',
   'co-gestor':  'Quase controle total. Pode gerenciar membros e editar dados de todos.',
   'membro':     'Pode criar e editar as próprias transações. Não gerencia membros.',
@@ -37,8 +44,12 @@ const INV_STATUS_META = {
 }
 
 const MANAGEABLE_ROLES = [
+  { value: 'gestor', label: 'Gestor' },
   { value: 'co-gestor',  label: 'Co-gestor'  },
   { value: 'membro',     label: 'Membro'     },
+  { value: 'planejador-master', label: 'Planejador master' },
+  { value: 'planejador-plus', label: 'Planejador plus' },
+  { value: 'planejador-blind', label: 'Planejador blind' },
   { value: 'planejador', label: 'Planejador' },
 ]
 
@@ -156,6 +167,10 @@ export default function Familia() {
   const familyName = activeWorkspace?.name || family?.name || 'Familia'
   const familyMembers = workspaceMembers?.length > 0 ? workspaceMembers : members
   const effectiveRole = workspaceRole || myRole
+  const canInviteMembers = Boolean(permissions?.canInvite || (!activeWorkspace && canManage))
+  const canChangeMemberRoles = Boolean(permissions?.canChangeRoles || (!activeWorkspace && canManage))
+  const canRemoveMembers = Boolean(permissions?.canRemoveMember || (!activeWorkspace && canManage))
+  const canManageProjects = Boolean(permissions?.canEditBudget || (!activeWorkspace && canManage))
   const visibleInvitations = useMemo(() => {
     const modern = (workspaceInvitations || []).map((item) => ({ ...item, _source: 'workspace' }))
     const legacy = (invitations || []).map((item) => ({ ...item, _source: 'legacy-family' }))
@@ -423,8 +438,8 @@ export default function Familia() {
   }
 
   async function handleShareApp() {
-    if (!permissions.canInvite) {
-      showToast('Apenas gestor pode convidar novos membros.', 'err')
+    if (!canInviteMembers) {
+      showToast('Seu papel nao pode convidar novos membros.', 'err')
       return
     }
 
@@ -551,7 +566,7 @@ export default function Familia() {
           <h1 className="familia-name">{familyName}</h1>
           <span className="familia-plan">Plano Familiar · {membersLabel(familyMembers.length)}</span>
         </div>
-        {canManage && (
+        {canChangeMemberRoles && (
           <div className="familia-header-actions">
             <button
               className="fh-btn"
@@ -625,7 +640,7 @@ export default function Familia() {
             title="Projetos familiares"
             subtitle={leadProject ? 'Caixinhas e objetivos compartilhados da familia' : 'Crie a primeira caixinha da familia'}
           />
-          {canManage && (
+          {canManageProjects && (
             <div className="members-header-btns">
               <button className="btn-add-member" onClick={handleProjectCreateOpen}>
                 + Projeto
@@ -638,7 +653,7 @@ export default function Familia() {
           <div className="familia-empty" style={{ marginTop: '0.5rem' }}>
             <p className="familia-empty-title">Nenhum projeto criado ainda</p>
             <p className="familia-empty-sub">Use projetos para acompanhar viagem, reserva, reforma ou outra caixinha da familia.</p>
-            {canManage && (
+            {canManageProjects && (
               <button className="btn-add-member" onClick={handleProjectCreateOpen}>
                 + Criar primeiro projeto
               </button>
@@ -660,7 +675,7 @@ export default function Familia() {
                       <strong>{project.name}</strong>
                       <div className="project-head-actions">
                         <span className="project-kind">{project.kind === 'caixinha' ? 'Caixinha' : project.kind}</span>
-                        {canManage && (
+                        {canManageProjects && (
                           <button className="project-edit-btn" onClick={() => handleProjectEditOpen(project)}>
                             Editar
                           </button>
@@ -700,7 +715,7 @@ export default function Familia() {
       <Card>
         <div className="familia-members-header">
           <CardHeader title="Membros" subtitle={membersLabel(familyMembers.length)} />
-          {canManage && (
+          {canInviteMembers && (
             <div className="members-header-btns">
               <button className="btn-add-member" onClick={() => setAddMemberOpen(true)}>
                 + Adicionar
@@ -716,7 +731,7 @@ export default function Familia() {
           <div className="familia-empty" style={{ marginTop: '0.5rem' }}>
             <p className="familia-empty-title">Nenhum membro cadastrado</p>
             <p className="familia-empty-sub">Adicione pessoas da casa para começar o acompanhamento familiar.</p>
-            {canManage && (
+            {canInviteMembers && (
               <button className="btn-add-member" onClick={() => setAddMemberOpen(true)}>
                 + Adicionar primeiro membro
               </button>
@@ -728,7 +743,9 @@ export default function Familia() {
             const roleMeta  = ROLE_META[m.role] ?? { label: m.role, cls: '', icon: '👤' }
             const isMe      = m.uid === user?.uid || m.id === user?.uid
             const isGestor  = m.role === 'gestor'
-            const canEdit   = m.role === 'gestor' || m.role === 'co-gestor' || m.role === 'membro'
+            const memberPermissions = getPermissionsByRole(m.role)
+            const canEdit = !memberPermissions.readOnly
+            const canEditRoleTarget = canChangeMemberRoles && !isMe
             return (
               <li key={m.id ?? m.uid} className="member-item">
                 <div className="member-avatar" data-role={m.role}>
@@ -743,7 +760,7 @@ export default function Familia() {
                   <span className="member-email">{m.email}</span>
                   {m.note && <span className="member-email">Obs: {m.note}</span>}
                   <div className="member-meta">
-                    {canManage && !isGestor ? (
+                    {canEditRoleTarget ? (
                       <select
                         className="role-select"
                         value={m.role}
@@ -763,6 +780,7 @@ export default function Familia() {
                     </span>
                   </div>
                 </div>
+                {memberPermissions.canViewAmounts && (
                 <div className="member-values">
                   {m.monthlyReceitas != null && (
                     <span className="mv-income">{formatCurrency(m.monthlyReceitas)}</span>
@@ -771,7 +789,8 @@ export default function Familia() {
                     <span className="mv-expense">{formatCurrency(m.monthlyDespesas)}</span>
                   )}
                 </div>
-                {canManage && !isGestor && !isMe && (
+                )}
+                {canRemoveMembers && !isGestor && !isMe && (
                   <button
                     className="btn-remove"
                     title="Remover membro"

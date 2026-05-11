@@ -185,6 +185,9 @@
 .member-avatar[data-role="gestor"]     { background: #d97706; }
 .member-avatar[data-role="co-gestor"]  { background: var(--color-primary); }
 .member-avatar[data-role="membro"]     { background: #16a34a; }
+.member-avatar[data-role="planejador-master"] { background: #7c3aed; }
+.member-avatar[data-role="planejador-plus"] { background: #0f766e; }
+.member-avatar[data-role="planejador-blind"] { background: #4b5563; }
 .member-avatar[data-role="planejador"] { background: #6b7280; }
 
 .member-info  { flex: 1; min-width: 0; }
@@ -219,6 +222,9 @@
 .role-gestor     { background: #fef3c7; color: #92400e; }
 .role-cogestor   { background: #dbeafe; color: #1e40af; }
 .role-membro     { background: #dcfce7; color: #15803d; }
+.role-planejador-master { background: #ede9fe; color: #6d28d9; }
+.role-planejador-plus { background: #ccfbf1; color: #0f766e; }
+.role-planejador-blind { background: #e5e7eb; color: #374151; }
 .role-planejador { background: #f3f4f6; color: #6b7280; }
 
 /* Pending member status badge */

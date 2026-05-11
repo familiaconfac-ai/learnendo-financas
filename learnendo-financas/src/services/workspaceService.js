@@ -162,24 +162,44 @@ export function normalizeWorkspaceRole(role) {
   if (normalized === 'co-gestor' || normalized === 'cogestor') return 'co-gestor'
   if (normalized === 'editor' || normalized === 'member' || normalized === 'membro') return 'membro'
   if (normalized === 'viewer' || normalized === 'read-only' || normalized === 'readonly') return 'planejador'
-  if (normalized === 'gestor' || normalized === 'planejador') return normalized
+  if (normalized === 'planner-master' || normalized === 'planejador-master') return 'planejador-master'
+  if (normalized === 'planner-plus' || normalized === 'planejador-plus') return 'planejador-plus'
+  if (
+    normalized === 'planner-blind'
+    || normalized === 'planejador-blind'
+    || normalized === 'planejador-cego'
+    || normalized === 'blind'
+  ) return 'planejador-blind'
+  if (
+    normalized === 'gestor'
+    || normalized === 'planejador'
+    || normalized === 'planejador-master'
+    || normalized === 'planejador-plus'
+    || normalized === 'planejador-blind'
+  ) return normalized
 
   return 'membro'
 }
 
 export function getPermissionsByRole(role) {
   const normalizedRole = normalizeWorkspaceRole(role)
+  const isFullManager = normalizedRole === 'gestor' || normalizedRole === 'planejador-master'
+  const isCoManager = normalizedRole === 'co-gestor' || normalizedRole === 'planejador-plus' || normalizedRole === 'planejador-blind'
+  const isContributor = normalizedRole === 'membro'
+  const isReadonlyPlanner = normalizedRole === 'planejador'
+  const canViewAmounts = normalizedRole !== 'planejador-blind'
   return {
-    canInvite: normalizedRole === 'gestor',
-    canRemoveMember: normalizedRole === 'gestor',
-    canChangeRoles: normalizedRole === 'gestor',
-    canEditBudget: normalizedRole === 'gestor' || normalizedRole === 'co-gestor',
-    canCreateGlobalCategories: normalizedRole === 'gestor' || normalizedRole === 'co-gestor',
-    canImport: normalizedRole === 'gestor' || normalizedRole === 'co-gestor' || normalizedRole === 'membro',
-    canConfirm: normalizedRole === 'gestor' || normalizedRole === 'co-gestor' || normalizedRole === 'membro',
-    canLaunch: normalizedRole === 'gestor' || normalizedRole === 'co-gestor' || normalizedRole === 'membro',
-    readOnly: normalizedRole === 'planejador',
-    viewPrivateOthers: normalizedRole === 'gestor' || normalizedRole === 'co-gestor',
+    canInvite: isFullManager,
+    canRemoveMember: isFullManager,
+    canChangeRoles: isFullManager,
+    canEditBudget: isFullManager || isCoManager,
+    canCreateGlobalCategories: isFullManager || isCoManager,
+    canImport: isFullManager || isCoManager || isContributor,
+    canConfirm: isFullManager || isCoManager || isContributor,
+    canLaunch: isFullManager || isCoManager || isContributor,
+    readOnly: isReadonlyPlanner,
+    canViewAmounts,
+    viewPrivateOthers: isFullManager || isCoManager,
   }
 }
 
@@ -670,8 +690,9 @@ export async function acceptWorkspaceInvite(uid, token) {
 }
 
 export async function removeWorkspaceMember(workspaceId, actor, memberUid) {
-  if (!actor?.role || actor.role !== 'gestor') {
-    throw new Error('Somente gestor pode remover membros')
+  const actorPermissions = getPermissionsByRole(actor?.role)
+  if (!actorPermissions.canRemoveMember) {
+    throw new Error('Seu papel nao permite remover membros')
   }
 
   await deleteDoc(workspaceMemberDoc(workspaceId, memberUid))
@@ -688,23 +709,26 @@ export async function removeWorkspaceMember(workspaceId, actor, memberUid) {
 }
 
 export async function updateWorkspaceMemberRole(workspaceId, actor, memberUid, role) {
-  if (!actor?.role || actor.role !== 'gestor') {
+  const actorPermissions = getPermissionsByRole(actor?.role)
+  if (!actorPermissions.canChangeRoles) {
     throw new Error('Somente gestor pode alterar papéis')
   }
 
+  const normalizedRole = normalizeWorkspaceRole(role)
+
   await updateDoc(workspaceMemberDoc(workspaceId, memberUid), {
-    role,
+    role: normalizedRole,
     updatedAt: serverTimestamp(),
   })
 
   await setDoc(userMembershipDoc(memberUid, workspaceId), {
-    role,
+    role: normalizedRole,
     updatedAt: serverTimestamp(),
   }, { merge: true })
 
   try {
     await setDoc(familyMemberDoc(workspaceId, memberUid), {
-      role,
+      role: normalizedRole,
       updatedAt: serverTimestamp(),
     }, { merge: true })
   } catch (_) {
