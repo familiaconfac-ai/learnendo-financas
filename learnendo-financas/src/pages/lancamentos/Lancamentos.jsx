@@ -158,6 +158,17 @@ function debtMatchesSelectedContact(debt, contactId, currentUserId) {
   return debt.contactId === contactId
 }
 
+function isFamilyDebtSettlementCandidate(debt, currentUserId) {
+  if (!debt || !currentUserId) return false
+  if (!isFamilyInternalDebt(debt)) return false
+  if (debt.debtorMemberId && debt.debtorMemberId !== currentUserId) return false
+  return Number(debt.remainingAmount || 0) > 0
+}
+
+function isDebtTrackedByTransaction(tx) {
+  return DEBT_LINKABLE_NATURE_IDS.has(tx?.transactionNatureId) || !!tx?.countsAsDebtSettlement
+}
+
 function normalizeStatus(status) {
   if (status === 'pending' || status === 'needs_review') return 'pending'
   return 'confirmed'
@@ -413,7 +424,12 @@ export default function Lancamentos({ view = 'confirmed' }) {
     ...contacts,
   ]
   const eligibleDebts = debts.filter((debt) => debtMatchesSelectedContact(debt, form.contactId, user?.uid))
+  const familySettlementEligibleDebts = eligibleDebts.filter((debt) => isFamilyDebtSettlementCandidate(debt, user?.uid))
   const selectedDebt = debts.find((debt) => debt.id === form.debtId) || null
+  const shouldShowFamilyDebtSettlement = form.type === 'expense'
+    && !isInvoicePaymentNature(form)
+    && !DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId)
+    && (form.settlesDebt || familySettlementEligibleDebts.length > 0)
 
   const scopedTransactions = allTx.filter((t) => {
     const txStatus = normalizeStatus(t.status)
@@ -533,6 +549,8 @@ export default function Lancamentos({ view = 'confirmed' }) {
         type: value,
         paymentMethod: value === 'income' ? '' : f.paymentMethod,
         cardId: value === 'income' ? '' : f.cardId,
+        settlesDebt: value === 'expense' ? f.settlesDebt : false,
+        debtId: value === 'expense' || DEBT_LINKABLE_NATURE_IDS.has(f.transactionNatureId) ? f.debtId : '',
       }))
       return
     }
@@ -542,9 +560,24 @@ export default function Lancamentos({ view = 'confirmed' }) {
       const forcedType = TYPE_BY_NATURE_ID[value]
       setForm((f) => {
         const nextEligibleDebts = debts.filter((debt) => debtMatchesSelectedContact(debt, f.contactId, user?.uid))
-        const preservedDebtId = DEBT_LINKABLE_NATURE_IDS.has(value) && nextEligibleDebts.some((debt) => debt.id === f.debtId)
-          ? f.debtId
-          : (DEBT_LINKABLE_NATURE_IDS.has(value) && nextEligibleDebts.length === 1 ? nextEligibleDebts[0].id : '')
+        const nextFamilySettlementDebts = nextEligibleDebts.filter((debt) => isFamilyDebtSettlementCandidate(debt, user?.uid))
+        const keepsDebtAsNature = DEBT_LINKABLE_NATURE_IDS.has(value)
+        const canKeepSettlementToggle = !keepsDebtAsNature
+          && (forcedType || f.type) === 'expense'
+          && value !== 'nature_invoice_payment'
+        const preservedDebtId = keepsDebtAsNature
+          ? (
+              nextEligibleDebts.some((debt) => debt.id === f.debtId)
+                ? f.debtId
+                : (nextEligibleDebts.length === 1 ? nextEligibleDebts[0].id : '')
+            )
+          : (
+              canKeepSettlementToggle && f.settlesDebt && nextFamilySettlementDebts.some((debt) => debt.id === f.debtId)
+                ? f.debtId
+                : (canKeepSettlementToggle && f.settlesDebt && nextFamilySettlementDebts.length === 1
+                    ? nextFamilySettlementDebts[0].id
+                    : '')
+            )
         return {
           ...f,
           transactionNatureId: value,
@@ -553,6 +586,7 @@ export default function Lancamentos({ view = 'confirmed' }) {
           categoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.categoryId,
           subcategoryId: value === 'nature_invoice_payment' || forcedType === 'transfer_internal' ? '' : f.subcategoryId,
           debtId: preservedDebtId,
+          settlesDebt: keepsDebtAsNature ? false : (canKeepSettlementToggle ? f.settlesDebt : false),
           salaryReferenceMonth: SALARY_LINKED_NATURE_IDS.has(value)
             ? (f.salaryReferenceMonth || defaultSalaryReferenceMonth({ ...f, transactionNatureId: value }))
             : '',
@@ -586,9 +620,13 @@ export default function Lancamentos({ view = 'confirmed' }) {
     if (name === 'contactId') {
       setForm((f) => {
         const nextEligibleDebts = debts.filter((debt) => debtMatchesSelectedContact(debt, value, user?.uid))
-        const preservedDebtId = nextEligibleDebts.some((debt) => debt.id === f.debtId)
+        const nextFamilySettlementDebts = nextEligibleDebts.filter((debt) => isFamilyDebtSettlementCandidate(debt, user?.uid))
+        const debtPool = DEBT_LINKABLE_NATURE_IDS.has(f.transactionNatureId)
+          ? nextEligibleDebts
+          : (f.settlesDebt ? nextFamilySettlementDebts : [])
+        const preservedDebtId = debtPool.some((debt) => debt.id === f.debtId)
           ? f.debtId
-          : (nextEligibleDebts.length === 1 ? nextEligibleDebts[0].id : '')
+          : (debtPool.length === 1 ? debtPool[0].id : '')
         return {
           ...f,
           contactId: value,
@@ -765,10 +803,28 @@ export default function Lancamentos({ view = 'confirmed' }) {
       categoryId: suggestedType === 'transfer_internal' ? '' : f.categoryId,
       subcategoryId: suggestedType === 'transfer_internal' ? '' : f.subcategoryId,
       debtId: DEBT_LINKABLE_NATURE_IDS.has(natureId) ? f.debtId : '',
+      settlesDebt: DEBT_LINKABLE_NATURE_IDS.has(natureId) ? false : f.settlesDebt,
     }))
     setEditingNatureLabel(selected.label)
   }
   function handleCheck(e) {
+    if (e.target.name === 'settlesDebt') {
+      const checked = e.target.checked
+      setForm((f) => {
+        const nextEligibleDebts = debts.filter((debt) => debtMatchesSelectedContact(debt, f.contactId, user?.uid))
+        const nextFamilySettlementDebts = nextEligibleDebts.filter((debt) => isFamilyDebtSettlementCandidate(debt, user?.uid))
+        return {
+          ...f,
+          settlesDebt: checked,
+          debtId: checked
+            ? (nextFamilySettlementDebts.some((debt) => debt.id === f.debtId)
+                ? f.debtId
+                : (nextFamilySettlementDebts.length === 1 ? nextFamilySettlementDebts[0].id : ''))
+            : (DEBT_LINKABLE_NATURE_IDS.has(f.transactionNatureId) ? f.debtId : ''),
+        }
+      })
+      return
+    }
     setForm((f) => ({ ...f, [e.target.name]: e.target.checked }))
   }
 
@@ -837,15 +893,16 @@ export default function Lancamentos({ view = 'confirmed' }) {
       newContactName: '',
       newCategoryName: '',
       newSubcategoryName: '',
-        debtId: tx.debtId || '',
-        salaryReferenceMonth: tx.salaryReferenceMonth || '',
-        paymentMethod: normalizePaymentMethodId(tx.paymentMethod) || '',
-        receiptDocumentType: tx.receiptDocumentType || '',
-        receiptPaymentMethod: tx.receiptPaymentMethod || '',
-        cashOriginType: tx.cashOriginType || '',
-        cardId: tx.cardId || '',
-        receiptDetailEnabled: !!tx.receiptDetailEnabled,
-        receiptPlaceholderEnabled: !!tx.receiptPlaceholderEnabled,
+      debtId: tx.debtId || '',
+      settlesDebt: !!tx.countsAsDebtSettlement,
+      salaryReferenceMonth: tx.salaryReferenceMonth || '',
+      paymentMethod: normalizePaymentMethodId(tx.paymentMethod) || '',
+      receiptDocumentType: tx.receiptDocumentType || '',
+      receiptPaymentMethod: tx.receiptPaymentMethod || '',
+      cashOriginType: tx.cashOriginType || '',
+      cardId: tx.cardId || '',
+      receiptDetailEnabled: !!tx.receiptDetailEnabled,
+      receiptPlaceholderEnabled: !!tx.receiptPlaceholderEnabled,
       receiptItems: Array.isArray(tx.receiptItems) ? tx.receiptItems : [],
     })
     setEditingNatureLabel(tx.transactionNatureLabel || '')
@@ -950,6 +1007,11 @@ export default function Lancamentos({ view = 'confirmed' }) {
     e?.preventDefault?.()
     if (!form.description || !form.amount || !form.date) return
 
+    if (form.settlesDebt && !form.debtId) {
+      alert('Selecione a dÃ­vida familiar que serÃ¡ abatida por este lanÃ§amento.')
+      return
+    }
+
     if (form.transactionNatureId === 'nature_debt_payment' && !form.debtId) {
       alert('Selecione a dívida para vincular o pagamento.')
       return
@@ -997,6 +1059,27 @@ export default function Lancamentos({ view = 'confirmed' }) {
     }
 
     const normalizedAmount = Number(form.amount || 0)
+    const linksDebtBalance = DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId) || form.settlesDebt
+    if (linksDebtBalance) {
+      if (!selectedDebt) {
+        alert('A dÃ­vida selecionada nÃ£o foi encontrada. Atualize a tela e tente novamente.')
+        return
+      }
+
+      if (form.settlesDebt && !isFamilyDebtSettlementCandidate(selectedDebt, user.uid)) {
+        alert('Escolha uma dÃ­vida familiar em aberto para usar este lanÃ§amento como abatimento.')
+        return
+      }
+
+      const previousLinkedAmount = editingTx?.debtId === selectedDebt.id && isDebtTrackedByTransaction(editingTx)
+        ? Number(editingTx.amount || 0)
+        : 0
+      const maxAllowedAmount = Number(selectedDebt.remainingAmount || 0) + previousLinkedAmount
+      if (normalizedAmount > maxAllowedAmount + 0.0001) {
+        alert(`O valor deste lanÃ§amento nÃ£o pode ultrapassar o saldo disponÃ­vel da dÃ­vida (${formatCurrency(maxAllowedAmount)}).`)
+        return
+      }
+    }
     const receiptSummary = summarizeReceiptDetail(form.receiptItems, normalizedAmount)
     const expenseCategories = categories.filter((category) => category.type === 'expense')
     if (form.receiptDetailEnabled) {
@@ -1049,6 +1132,9 @@ export default function Lancamentos({ view = 'confirmed' }) {
     const resolvedSalaryReferenceMonth = SALARY_LINKED_NATURE_IDS.has(form.transactionNatureId)
       ? (form.salaryReferenceMonth || defaultSalaryReferenceMonth(form) || resolvedCompetencyMonth)
       : null
+    const countsAsDebtSettlement = !DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId)
+      && !!form.settlesDebt
+      && !!form.debtId
 
     const payload = {
       type:        resolvedType,
@@ -1073,10 +1159,11 @@ export default function Lancamentos({ view = 'confirmed' }) {
       transactionNatureLabel: (editingNatureLabel || form.transactionNatureLabel || '').trim() || null,
       contactId: form.contactId || null,
       contactName: availableContacts.find((c) => c.id === form.contactId)?.name || null,
-      debtId: DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId) ? (form.debtId || null) : null,
-      debtName: DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId)
+      debtId: DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId) || countsAsDebtSettlement ? (form.debtId || null) : null,
+      debtName: DEBT_LINKABLE_NATURE_IDS.has(form.transactionNatureId) || countsAsDebtSettlement
         ? (debts.find((debt) => debt.id === form.debtId)?.name || null)
         : null,
+      countsAsDebtSettlement,
       salaryReferenceMonth: resolvedSalaryReferenceMonth,
       paymentMethod: form.paymentMethod || null,
       cardId: requiresCardSelection(form) ? (form.cardId || null) : null,
@@ -1910,6 +1997,41 @@ transactions.length === 0 ? (
             <label>Observação</label>
             <textarea name="notes" value={form.notes} onChange={handleChange} rows={2} placeholder="Opcional" />
           </div>
+          {shouldShowFamilyDebtSettlement && (
+            <div className="form-help-block">
+              <div className="form-check">
+                <input
+                  id="settlesDebt"
+                  name="settlesDebt"
+                  type="checkbox"
+                  checked={!!form.settlesDebt}
+                  onChange={handleCheck}
+                />
+                <label htmlFor="settlesDebt">Usar este lancamento para abater uma divida familiar</label>
+              </div>
+              <p className="form-help-text">
+                Marque quando esta despesa representa um pagamento real para um membro do workspace. Se voce editar ou excluir o lancamento depois, o saldo da divida acompanha automaticamente.
+              </p>
+              {form.settlesDebt && (
+                <div className="form-group">
+                  <label>Divida familiar para abater</label>
+                  <select name="debtId" value={form.debtId} onChange={handleChange}>
+                    <option value="">Selecione</option>
+                    {familySettlementEligibleDebts.map((debt) => (
+                      <option key={debt.id} value={debt.id}>
+                        {debt.name} · restante {formatCurrency(debt.remainingAmount)}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedDebt && isFamilyInternalDebt(selectedDebt) && (
+                    <p className="form-help-text">
+                      Este lancamento vai abater {formatCurrency(form.amount || 0)} da conta "{selectedDebt.name}".
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {form.type === 'expense' && !isInvoicePaymentNature(form) && (
             <div className="form-help-block">
               <div className="form-check">
@@ -2041,7 +2163,7 @@ function defaultForm() {
     cashOriginType: '',
     contactId: '', newContactName: '',
     newCategoryName: '', newSubcategoryName: '',
-    debtId: '', subcategoryId: '',
+    debtId: '', settlesDebt: false, subcategoryId: '',
     receiptDetailEnabled: false,
     receiptPlaceholderEnabled: false,
     receiptItems: [],

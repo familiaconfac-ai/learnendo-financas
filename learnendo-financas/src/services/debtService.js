@@ -118,10 +118,17 @@ const DEBT_SETTLEMENT_NATURE_IDS = new Set([
   'nature_restitution',
 ])
 
+function isDebtLinkedTransaction(tx) {
+  return !!tx?.debtId
+    && (
+      DEBT_SETTLEMENT_NATURE_IDS.has(tx?.transactionNatureId)
+      || tx?.countsAsDebtSettlement === true
+    )
+}
+
 function isConfirmedDebtPayment(tx) {
   return tx?.status === 'confirmed'
-    && tx?.debtId
-    && DEBT_SETTLEMENT_NATURE_IDS.has(tx?.transactionNatureId)
+    && isDebtLinkedTransaction(tx)
 }
 
 export function isFamilyInternalDebt(debt) {
@@ -442,10 +449,9 @@ export async function deleteDebt(workspaceId, debtId) {
   if (!workspaceId || !debtId) throw new Error('Divida nao encontrada')
 
   const linkedPaymentsSnap = await getDocs(query(txCol(workspaceId), where('debtId', '==', debtId)))
-  const hasLinkedTransactions = linkedPaymentsSnap.docs.some((docSnapshot) => {
-    const tx = docSnapshot.data()
-    return DEBT_SETTLEMENT_NATURE_IDS.has(tx?.transactionNatureId)
-  })
+  const hasLinkedTransactions = linkedPaymentsSnap.docs.some((docSnapshot) => (
+    isDebtLinkedTransaction(docSnapshot.data())
+  ))
 
   if (hasLinkedTransactions) {
     throw new Error('Esta divida possui pagamentos lancados em movimentacoes. Remova os lancamentos vinculados antes de excluir a divida.')

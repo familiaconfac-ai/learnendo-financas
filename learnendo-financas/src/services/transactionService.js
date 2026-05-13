@@ -185,6 +185,7 @@ function mapTransactionSnapshot(docSnapshot, meta = {}) {
     cardName: raw.cardName || null,
     debtId: raw.debtId || null,
     debtName: raw.debtName || null,
+    countsAsDebtSettlement: !!raw.countsAsDebtSettlement,
     salaryReferenceMonth: normalizeMonthKey(raw.salaryReferenceMonth) || null,
     receiptDetailEnabled: !!raw.receiptDetailEnabled,
     receiptPlaceholderEnabled: !!raw.receiptPlaceholderEnabled,
@@ -414,6 +415,7 @@ export async function addTransaction(uid, data, options = {}) {
       contactName: data.contactName || null,
       debtId: data.debtId || null,
       debtName: data.debtName || null,
+      countsAsDebtSettlement: !!data.countsAsDebtSettlement,
       salaryReferenceMonth: normalizeMonthKey(data.salaryReferenceMonth) || null,
       receiptDetailEnabled: !!data.receiptDetailEnabled,
       receiptPlaceholderEnabled: !!data.receiptPlaceholderEnabled,
@@ -456,6 +458,7 @@ export async function addTransaction(uid, data, options = {}) {
       ...data,
       id: ref.id,
       debtId: data.debtId || null,
+      countsAsDebtSettlement: !!data.countsAsDebtSettlement,
       transactionNatureId: natureId,
       status: normalizedStatus,
     }
@@ -499,6 +502,9 @@ export async function updateTransaction(uid, txId, data, options = {}) {
     if (payload.debtId !== undefined && !payload.debtId) {
       payload.debtId = null
       payload.debtName = null
+    }
+    if (payload.countsAsDebtSettlement !== undefined) {
+      payload.countsAsDebtSettlement = !!payload.countsAsDebtSettlement
     }
     if (payload.salaryReferenceMonth !== undefined) {
       payload.salaryReferenceMonth = normalizeMonthKey(payload.salaryReferenceMonth)
@@ -555,6 +561,8 @@ export async function updateTransaction(uid, txId, data, options = {}) {
       ...previousData,
       ...data,
       id: txId,
+      countsAsDebtSettlement:
+        payload.countsAsDebtSettlement ?? data.countsAsDebtSettlement ?? previousData?.countsAsDebtSettlement ?? false,
       transactionNatureId: payload.transactionNatureId || data.transactionNatureId || previousData?.transactionNatureId,
       status: payload.status || data.status || previousData?.status,
     }
