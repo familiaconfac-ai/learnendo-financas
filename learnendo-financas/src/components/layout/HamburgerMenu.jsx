@@ -6,14 +6,15 @@ import './HamburgerMenu.css'
 const MENU_LINKS = [
   { to: '/dashboard', label: 'Dashboard', icon: '🏠' },
   { to: '/importacao', label: 'Cupom', icon: '🧾' },
-  { to: '/lancar', label: 'Lançar', icon: '➕' },
-  { to: '/lancamentos', label: 'Lançamentos', icon: '📝' },
-  { to: '/dividas', label: 'Dívidas', icon: '📉' },
-  { to: '/reconciliacao', label: 'Reconciliação', icon: '🔍' },
-  { to: '/orcamento', label: 'Orçamento', icon: '💰' },
-  { to: '/mensal', label: 'Visão Mensal', icon: '📆' },
-  { to: '/relatorios', label: 'Relatórios', icon: '📊' },
-  { to: '/familia', label: 'Família', icon: '🏡' },
+  { to: '/lancar', label: 'Lancar', icon: '➕' },
+  { to: '/lancamentos', label: 'Lancamentos', icon: '📝' },
+  { to: '/dividas', label: 'Dividas', icon: '📉' },
+  { to: '/reunioes', label: 'Reunioes', icon: '🎥' },
+  { to: '/reconciliacao', label: 'Reconciliacao', icon: '🔍' },
+  { to: '/orcamento', label: 'Orcamento', icon: '💰' },
+  { to: '/mensal', label: 'Visao Mensal', icon: '📆' },
+  { to: '/relatorios', label: 'Relatorios', icon: '📊' },
+  { to: '/familia', label: 'Familia', icon: '🏡' },
   { to: '/perfil', label: 'Perfil', icon: '👤' },
 ]
 
@@ -42,7 +43,7 @@ export default function HamburgerMenu({ isOpen, onClose }) {
         <div className="menu-header">
           <div className="menu-logo">
             <img src="/logo.jpg" alt="Learnendo" className="menu-logo-img" />
-            Learnendo Finanças
+            Learnendo Financas
           </div>
           <button className="menu-close-btn" onClick={onClose} aria-label="Fechar menu">
             ✕

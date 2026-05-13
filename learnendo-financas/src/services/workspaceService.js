@@ -47,6 +47,14 @@ function workspaceProjectsCol(workspaceId) {
   return collection(db, 'workspaces', workspaceId, 'projects')
 }
 
+function workspaceMeetingRoomsCol(workspaceId) {
+  return collection(db, 'workspaces', workspaceId, 'meetingRooms')
+}
+
+function workspaceMeetingRoomDoc(workspaceId, roomId) {
+  return doc(db, 'workspaces', workspaceId, 'meetingRooms', roomId)
+}
+
 function workspaceInviteDoc(workspaceId, inviteId) {
   return doc(db, 'workspaces', workspaceId, 'invitations', inviteId)
 }
@@ -504,6 +512,58 @@ function normalizeSearchText(value) {
     .trim()
 }
 
+function normalizeMeetingParticipantIds(value = []) {
+  return Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean),
+  ))
+}
+
+function normalizeMeetingParticipantNames(value = []) {
+  return Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean),
+  ))
+}
+
+function slugifyMeetingText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function buildMeetingRoomSlug(workspaceId, name) {
+  const base = slugifyMeetingText(name) || 'sala'
+  const workspaceKey = String(workspaceId || '').slice(0, 8) || 'workspace'
+  const randomKey = Math.random().toString(36).slice(2, 6)
+  return `learnendo-${workspaceKey}-${base}-${randomKey}`
+}
+
+function timeValue(entry) {
+  const source = entry?.toDate?.() instanceof Date ? entry.toDate() : entry
+  const timestamp = Date.parse(source || '')
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+function sortMeetingRooms(rooms = []) {
+  return [...rooms].sort((a, b) => {
+    const aActive = a.status === 'active' ? 1 : 0
+    const bActive = b.status === 'active' ? 1 : 0
+    if (aActive !== bActive) return bActive - aActive
+
+    const aTime = timeValue(a.updatedAt || a.lastOpenedAt || a.createdAt || '')
+    const bTime = timeValue(b.updatedAt || b.lastOpenedAt || b.createdAt || '')
+    if (aTime !== bTime) return bTime - aTime
+
+    return String(a.name || '').localeCompare(String(b.name || ''))
+  })
+}
+
 function transactionSignedAmountForProject(tx, accountId) {
   const amount = Math.abs(Number(tx?.amount || 0))
   if (!amount || !accountId) return 0
@@ -572,6 +632,82 @@ export function buildWorkspaceProjectSnapshots(projects = [], transactions = [])
       progress,
       isAutoTracked: !!(project.linkedAccountId || project.matchText),
     }
+  })
+}
+
+export async function fetchWorkspaceMeetingRooms(workspaceId) {
+  if (!workspaceId) return []
+  const snap = await getDocs(workspaceMeetingRoomsCol(workspaceId))
+  return sortMeetingRooms(
+    snap.docs.map((d) => ({
+      id: d.id,
+      workspaceId,
+      ...d.data(),
+      participantMemberIds: normalizeMeetingParticipantIds(d.data()?.participantMemberIds),
+      participantMemberNames: normalizeMeetingParticipantNames(d.data()?.participantMemberNames),
+    })),
+  )
+}
+
+export async function createWorkspaceMeetingRoom(workspaceId, payload = {}, actorUid = null) {
+  if (!workspaceId) throw new Error('Workspace nao selecionado')
+
+  const name = String(payload.name || '').trim() || 'Sala da familia'
+  const participantMemberIds = normalizeMeetingParticipantIds(payload.participantMemberIds)
+  const participantMemberNames = normalizeMeetingParticipantNames(payload.participantMemberNames)
+  const roomSlug = String(payload.roomSlug || '').trim() || buildMeetingRoomSlug(workspaceId, name)
+
+  const ref = await addDoc(workspaceMeetingRoomsCol(workspaceId), {
+    name,
+    description: String(payload.description || '').trim(),
+    status: payload.status || 'active',
+    provider: payload.provider || 'jitsi',
+    roomSlug,
+    participantMemberIds,
+    participantMemberNames,
+    createdBy: actorUid || null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    lastOpenedAt: null,
+    lastOpenedBy: null,
+  })
+
+  return ref.id
+}
+
+export async function updateWorkspaceMeetingRoom(workspaceId, roomId, payload = {}) {
+  if (!workspaceId || !roomId) throw new Error('Sala nao selecionada')
+
+  const name = String(payload.name || '').trim() || 'Sala da familia'
+  const participantMemberIds = normalizeMeetingParticipantIds(payload.participantMemberIds)
+  const participantMemberNames = normalizeMeetingParticipantNames(payload.participantMemberNames)
+
+  await updateDoc(workspaceMeetingRoomDoc(workspaceId, roomId), {
+    name,
+    description: String(payload.description || '').trim(),
+    status: payload.status || 'active',
+    provider: payload.provider || 'jitsi',
+    roomSlug: String(payload.roomSlug || '').trim() || buildMeetingRoomSlug(workspaceId, name),
+    participantMemberIds,
+    participantMemberNames,
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function archiveWorkspaceMeetingRoom(workspaceId, roomId) {
+  if (!workspaceId || !roomId) throw new Error('Sala nao selecionada')
+  await updateDoc(workspaceMeetingRoomDoc(workspaceId, roomId), {
+    status: 'archived',
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function touchWorkspaceMeetingRoom(workspaceId, roomId, actorUid = null) {
+  if (!workspaceId || !roomId) return
+  await updateDoc(workspaceMeetingRoomDoc(workspaceId, roomId), {
+    lastOpenedAt: serverTimestamp(),
+    lastOpenedBy: actorUid || null,
+    updatedAt: serverTimestamp(),
   })
 }
 

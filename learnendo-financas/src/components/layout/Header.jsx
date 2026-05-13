@@ -18,6 +18,7 @@ const PAGE_TITLES = {
   '/mensal': 'Visao Mensal',
   '/relatorios': 'Relatorios',
   '/dividas': 'Dividas',
+  '/reunioes': 'Reunioes',
   '/reconciliacao': 'Reconciliacao',
   '/familia': 'Familia',
   '/perfil': 'Perfil',
