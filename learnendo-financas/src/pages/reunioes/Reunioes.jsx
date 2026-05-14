@@ -1,129 +1,278 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Card, { CardHeader } from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import Modal from '../../components/ui/Modal'
-import { useWorkspace } from '../../context/WorkspaceContext'
 import { useAuth } from '../../context/AuthContext'
+import { useWorkspace } from '../../context/WorkspaceContext'
+import {
+  acceptFinancialSessionInvite,
+  cancelFinancialSessionInvite,
+  createFinancialSessionInvite,
+  subscribeFinancialSessionInvites,
+  subscribePendingFinancialSessionInvites,
+} from '../../services/financialSessionInvitesService'
+import {
+  archiveFinancialSession,
+  createFinancialSession,
+  subscribeFinancialSessions,
+  updateFinancialSessionMetadata,
+} from '../../services/financialSessionsService'
+import { normalizeWorkspaceRole } from '../../services/workspaceService'
 import './Reunioes.css'
 
-const ROOM_FORM_DEFAULT = {
+const STATUS_LABELS = {
+  draft: 'Rascunho',
+  active: 'Ativa',
+  paused: 'Pausada',
+  ended: 'Encerrada',
+  archived: 'Arquivada',
+}
+
+const INVITE_ROLE_LABELS = {
+  planner: 'Planejador',
+  client: 'Cliente',
+  viewer: 'Observador',
+}
+
+const PLANNER_ROLES = ['gestor', 'co-gestor', 'planejador-master', 'planejador-plus']
+
+const SESSION_FORM_DEFAULT = {
   name: '',
   description: '',
-  participantMemberIds: [],
+  plannerMemberIds: [],
+  clientMemberIds: [],
+  externalInvites: [],
 }
 
-function defaultRoomForm() {
-  return { ...ROOM_FORM_DEFAULT }
+function normalizeEmail(value = '') {
+  return String(value || '').trim().toLowerCase()
 }
 
-function buildMeetingUrl(room) {
-  if (!room?.roomSlug) return ''
-  return `https://meet.jit.si/${encodeURIComponent(room.roomSlug)}`
+function defaultSessionForm(currentUserId = '') {
+  return {
+    ...SESSION_FORM_DEFAULT,
+    plannerMemberIds: currentUserId ? [currentUserId] : [],
+  }
+}
+
+function buildSessionRoute(workspaceId, sessionId) {
+  if (!workspaceId || !sessionId) return '/reunioes'
+  return `/reunioes/sessao/${workspaceId}/${sessionId}`
+}
+
+function memberIdOf(member) {
+  return member?.uid || member?.id || ''
+}
+
+function memberNameOf(member) {
+  return member?.displayName || member?.name || member?.email || 'Membro'
 }
 
 function formatDateTime(value) {
-  if (!value) return 'Nunca aberta'
-  const date = value?.toDate?.() instanceof Date ? value.toDate() : new Date(value)
-  if (Number.isNaN(date.getTime())) return 'Nunca aberta'
+  if (!value) return 'Ainda nao aberta'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Ainda nao aberta'
   return date.toLocaleString('pt-BR')
 }
 
-function participantNames(room, members) {
-  const fallbackNames = Array.isArray(room?.participantMemberNames) ? room.participantMemberNames : []
+function peopleNamesForIds(memberIds = [], members = []) {
   const memberNameById = new Map(
-    (Array.isArray(members) ? members : []).map((member) => [
-      member.uid || member.id,
-      member.displayName || member.name || member.email || 'Membro',
-    ]),
+    members.map((member) => [memberIdOf(member), memberNameOf(member)]),
   )
 
-  const byIds = (Array.isArray(room?.participantMemberIds) ? room.participantMemberIds : [])
+  return memberIds
     .map((memberId) => memberNameById.get(memberId))
     .filter(Boolean)
-
-  const names = byIds.length > 0 ? byIds : fallbackNames
-  return names.length > 0 ? names : ['Sala aberta para o workspace']
 }
 
 export default function Reunioes() {
+  const navigate = useNavigate()
   const { user } = useAuth()
-  const {
-    activeWorkspace,
-    activeWorkspaceId,
-    members,
-    meetingRooms,
-    addMeetingRoom,
-    editMeetingRoom,
-    archiveMeetingRoom,
-    markMeetingRoomOpened,
-  } = useWorkspace()
-
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editingRoom, setEditingRoom] = useState(null)
-  const [form, setForm] = useState(defaultRoomForm())
-  const [saving, setSaving] = useState(false)
-  const [selectedRoomId, setSelectedRoomId] = useState('')
-  const [embeddedRoomId, setEmbeddedRoomId] = useState('')
+  const { activeWorkspace, activeWorkspaceId, members, myRole } = useWorkspace()
+  const [sessions, setSessions] = useState([])
+  const [sessionInvites, setSessionInvites] = useState([])
+  const [incomingInvites, setIncomingInvites] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [feedback, setFeedback] = useState('')
+  const [selectedSessionId, setSelectedSessionId] = useState('')
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingSession, setEditingSession] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState(defaultSessionForm(user?.uid || ''))
+  const [draftInviteEmail, setDraftInviteEmail] = useState('')
+  const [draftInviteRole, setDraftInviteRole] = useState('planner')
 
-  const activeRooms = useMemo(
-    () => (Array.isArray(meetingRooms) ? meetingRooms : []).filter((room) => room.status !== 'archived'),
-    [meetingRooms],
+  const normalizedRole = normalizeWorkspaceRole(myRole)
+  const canManageSessions = PLANNER_ROLES.includes(normalizedRole)
+  const currentEmail = normalizeEmail(user?.email)
+
+  const activeSessions = useMemo(
+    () => sessions.filter((session) => session.status !== 'archived'),
+    [sessions],
   )
-  const archivedRooms = useMemo(
-    () => (Array.isArray(meetingRooms) ? meetingRooms : []).filter((room) => room.status === 'archived'),
-    [meetingRooms],
+  const archivedSessions = useMemo(
+    () => sessions.filter((session) => session.status === 'archived'),
+    [sessions],
   )
-  const selectedRoom = activeRooms.find((room) => room.id === selectedRoomId)
-    || archivedRooms.find((room) => room.id === selectedRoomId)
-    || activeRooms[0]
-    || archivedRooms[0]
-    || null
-  const embeddedRoom = activeRooms.find((room) => room.id === embeddedRoomId) || null
+  const selectedSession = useMemo(
+    () => sessions.find((session) => session.id === selectedSessionId)
+      || activeSessions[0]
+      || archivedSessions[0]
+      || null,
+    [activeSessions, archivedSessions, selectedSessionId, sessions],
+  )
 
   useEffect(() => {
-    if (!selectedRoomId && activeRooms[0]?.id) {
-      setSelectedRoomId(activeRooms[0].id)
+    if (!activeWorkspaceId) {
+      setSessions([])
+      setLoading(false)
+      return undefined
+    }
+
+    setLoading(true)
+    setError('')
+
+    return subscribeFinancialSessions(
+      activeWorkspaceId,
+      (nextSessions) => {
+        setSessions(nextSessions)
+        setLoading(false)
+      },
+      (err) => {
+        setError(err?.message || 'Nao foi possivel carregar as sessoes financeiras.')
+        setLoading(false)
+      },
+    )
+  }, [activeWorkspaceId])
+
+  useEffect(() => {
+    if (!selectedSessionId && activeSessions[0]?.id) {
+      setSelectedSessionId(activeSessions[0].id)
       return
     }
 
-    if (selectedRoomId && !meetingRooms.some((room) => room.id === selectedRoomId)) {
-      setSelectedRoomId(activeRooms[0]?.id || archivedRooms[0]?.id || '')
+    if (selectedSessionId && !sessions.some((session) => session.id === selectedSessionId)) {
+      setSelectedSessionId(activeSessions[0]?.id || archivedSessions[0]?.id || '')
     }
-  }, [activeRooms, archivedRooms, meetingRooms, selectedRoomId])
+  }, [activeSessions, archivedSessions, selectedSessionId, sessions])
 
   useEffect(() => {
     if (!feedback) return undefined
-    const timeoutId = window.setTimeout(() => setFeedback(''), 2200)
+    const timeoutId = window.setTimeout(() => setFeedback(''), 2600)
     return () => window.clearTimeout(timeoutId)
   }, [feedback])
 
+  useEffect(() => {
+    if (!selectedSession?.workspaceId || !selectedSession?.id) {
+      setSessionInvites([])
+      return undefined
+    }
+
+    return subscribeFinancialSessionInvites(
+      selectedSession.workspaceId,
+      selectedSession.id,
+      (nextInvites) => setSessionInvites(nextInvites),
+      () => setSessionInvites([]),
+    )
+  }, [selectedSession?.id, selectedSession?.workspaceId])
+
+  useEffect(() => {
+    return subscribePendingFinancialSessionInvites(
+      currentEmail,
+      (nextInvites) => setIncomingInvites(nextInvites),
+      () => setIncomingInvites([]),
+    )
+  }, [currentEmail])
+
+  function resetModalState() {
+    setEditingSession(null)
+    setForm(defaultSessionForm(user?.uid || ''))
+    setDraftInviteEmail('')
+    setDraftInviteRole('planner')
+  }
+
   function openCreateModal() {
-    setEditingRoom(null)
-    setForm(defaultRoomForm())
+    resetModalState()
     setModalOpen(true)
   }
 
-  function openEditModal(room) {
-    setEditingRoom(room)
+  function openEditModal(session) {
+    setEditingSession(session)
     setForm({
-      name: room?.name || '',
-      description: room?.description || '',
-      participantMemberIds: Array.isArray(room?.participantMemberIds) ? room.participantMemberIds : [],
+      name: session?.name || '',
+      description: session?.description || '',
+      plannerMemberIds: Array.isArray(session?.plannerMemberIds) ? session.plannerMemberIds : [],
+      clientMemberIds: Array.isArray(session?.clientMemberIds) ? session.clientMemberIds : [],
+      externalInvites: [],
     })
+    setDraftInviteEmail('')
+    setDraftInviteRole('planner')
     setModalOpen(true)
   }
 
-  function toggleParticipant(memberId) {
+  function togglePlanner(memberId) {
     setForm((current) => {
-      const alreadyIncluded = current.participantMemberIds.includes(memberId)
+      const included = current.plannerMemberIds.includes(memberId)
+      const plannerMemberIds = included
+        ? current.plannerMemberIds.filter((entry) => entry !== memberId)
+        : [...current.plannerMemberIds, memberId]
+
       return {
         ...current,
-        participantMemberIds: alreadyIncluded
-          ? current.participantMemberIds.filter((entry) => entry !== memberId)
-          : [...current.participantMemberIds, memberId],
+        plannerMemberIds,
+        clientMemberIds: current.clientMemberIds.filter((entry) => entry !== memberId),
       }
     })
+  }
+
+  function toggleClient(memberId) {
+    setForm((current) => {
+      const included = current.clientMemberIds.includes(memberId)
+      const clientMemberIds = included
+        ? current.clientMemberIds.filter((entry) => entry !== memberId)
+        : [...current.clientMemberIds, memberId]
+
+      return {
+        ...current,
+        clientMemberIds,
+        plannerMemberIds: current.plannerMemberIds.filter((entry) => entry !== memberId),
+      }
+    })
+  }
+
+  function addExternalInviteDraft() {
+    const inviteeEmail = normalizeEmail(draftInviteEmail)
+    if (!inviteeEmail) {
+      window.alert('Informe o e-mail da pessoa convidada.')
+      return
+    }
+
+    if (inviteeEmail === currentEmail) {
+      window.alert('Voce ja participa da sessao com sua propria conta.')
+      return
+    }
+
+    setForm((current) => {
+      if (current.externalInvites.some((invite) => invite.email === inviteeEmail)) {
+        return current
+      }
+
+      return {
+        ...current,
+        externalInvites: [...current.externalInvites, { email: inviteeEmail, role: draftInviteRole }],
+      }
+    })
+    setDraftInviteEmail('')
+    setDraftInviteRole('planner')
+  }
+
+  function removeExternalInviteDraft(email) {
+    setForm((current) => ({
+      ...current,
+      externalInvites: current.externalInvites.filter((invite) => invite.email !== email),
+    }))
   }
 
   async function handleSave() {
@@ -134,171 +283,227 @@ export default function Reunioes() {
 
     const trimmedName = String(form.name || '').trim()
     if (!trimmedName) {
-      window.alert('Informe o nome da sala.')
+      window.alert('Informe o nome da sessao.')
       return
     }
 
-    const participantMemberNames = form.participantMemberIds
-      .map((memberId) => members.find((member) => (member.uid || member.id) === memberId))
-      .filter(Boolean)
-      .map((member) => member.displayName || member.name || member.email || 'Membro')
+    if (form.plannerMemberIds.length === 0) {
+      window.alert('Selecione pelo menos um planejador.')
+      return
+    }
+
+    if (form.clientMemberIds.length === 0) {
+      window.alert('Selecione pelo menos um cliente para esta sessao.')
+      return
+    }
+
+    const plannerMemberNames = peopleNamesForIds(form.plannerMemberIds, members)
+    const clientMemberNames = peopleNamesForIds(form.clientMemberIds, members)
+    const pendingInviteEmails = form.externalInvites.map((invite) => invite.email)
 
     setSaving(true)
     try {
       const payload = {
         name: trimmedName,
         description: String(form.description || '').trim(),
-        participantMemberIds: form.participantMemberIds,
-        participantMemberNames,
-        provider: 'jitsi',
-        status: 'active',
+        plannerMemberIds: form.plannerMemberIds,
+        plannerMemberNames,
+        clientMemberIds: form.clientMemberIds,
+        clientMemberNames,
+        participantMemberIds: [...form.plannerMemberIds, ...form.clientMemberIds],
+        pendingInviteEmails,
+        createdByName: user?.displayName || user?.email || 'Planejador',
       }
 
-      if (editingRoom?.id) {
-        await editMeetingRoom(editingRoom.id, {
-          ...editingRoom,
+      let targetSessionId = editingSession?.id || ''
+      if (editingSession?.id) {
+        await updateFinancialSessionMetadata(activeWorkspaceId, editingSession.id, {
           ...payload,
-          roomSlug: editingRoom.roomSlug,
+          status: editingSession.status,
         })
-        setSelectedRoomId(editingRoom.id)
+        targetSessionId = editingSession.id
+        setSelectedSessionId(editingSession.id)
+        setFeedback('Sessao atualizada')
       } else {
-        const createdId = await addMeetingRoom(payload)
-        setSelectedRoomId(createdId)
+        const createdId = await createFinancialSession(activeWorkspaceId, payload, user?.uid || '')
+        targetSessionId = createdId
+        setSelectedSessionId(createdId)
+        setFeedback('Sessao criada')
+      }
+
+      if (targetSessionId && form.externalInvites.length > 0) {
+        await Promise.all(
+          form.externalInvites.map((invite) => createFinancialSessionInvite(activeWorkspaceId, targetSessionId, {
+            inviteeEmail: invite.email,
+            inviteRole: invite.role,
+            inviterUid: user?.uid || '',
+            inviterName: user?.displayName || user?.email || 'Planejador',
+            sessionName: trimmedName,
+            workspaceName: activeWorkspace?.name || '',
+          })),
+        )
       }
 
       setModalOpen(false)
-      setEditingRoom(null)
-      setForm(defaultRoomForm())
+      resetModalState()
     } catch (err) {
-      window.alert(`Erro ao salvar sala: ${err.message}`)
+      window.alert(`Erro ao salvar sessao: ${err.message}`)
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleArchive(room) {
-    const confirmed = window.confirm(`Arquivar a sala "${room.name}"?`)
+  async function handleArchive(session) {
+    const confirmed = window.confirm(`Arquivar a sessao "${session.name}"?`)
     if (!confirmed) return
 
     try {
-      await archiveMeetingRoom(room.id)
-      if (embeddedRoomId === room.id) setEmbeddedRoomId('')
-      if (selectedRoomId === room.id) setSelectedRoomId('')
+      await archiveFinancialSession(activeWorkspaceId, session.id)
+      setFeedback('Sessao arquivada')
     } catch (err) {
-      window.alert(`Erro ao arquivar sala: ${err.message}`)
+      window.alert(`Erro ao arquivar sessao: ${err.message}`)
     }
   }
 
-  async function handleCopyLink(room) {
-    const url = buildMeetingUrl(room)
-    if (!url) return
-
+  async function handleAcceptInvite(invite) {
     try {
-      await navigator.clipboard.writeText(url)
-      setFeedback('Link copiado')
-    } catch (_) {
-      window.prompt('Copie o link da sala:', url)
+      await acceptFinancialSessionInvite(invite, {
+        uid: user?.uid,
+        email: user?.email,
+        displayName: user?.displayName,
+      })
+      setFeedback('Convite aceito')
+      navigate(buildSessionRoute(invite.workspaceId, invite.sessionId))
+    } catch (err) {
+      window.alert(`Erro ao aceitar convite: ${err.message}`)
     }
   }
 
-  async function handleJoinEmbedded(room) {
-    if (!room?.id) return
-    setSelectedRoomId(room.id)
-    setEmbeddedRoomId(room.id)
-    await markMeetingRoomOpened(room.id)
-  }
-
-  async function handleOpenExternal(room) {
-    const url = buildMeetingUrl(room)
-    if (!url) return
-    setSelectedRoomId(room.id)
-    const popup = window.open(url, '_blank', 'noopener,noreferrer')
-    await markMeetingRoomOpened(room.id)
-    if (!popup) {
-      window.prompt('Seu navegador bloqueou a nova guia. Copie o link da sala:', url)
+  async function handleCancelSessionInvite(invite) {
+    try {
+      await cancelFinancialSessionInvite(invite.workspaceId, invite.sessionId, invite.id)
+      setFeedback('Convite cancelado')
+    } catch (err) {
+      window.alert(`Erro ao cancelar convite: ${err.message}`)
     }
   }
 
-  const workspaceName = activeWorkspace?.name || 'Workspace atual'
-  const selectedRoomParticipantNames = selectedRoom ? participantNames(selectedRoom, members) : []
-  const embeddedUrl = embeddedRoom ? buildMeetingUrl(embeddedRoom) : ''
+  const plannerNames = peopleNamesForIds(selectedSession?.plannerMemberIds || [], members)
+  const clientNames = peopleNamesForIds(selectedSession?.clientMemberIds || [], members)
 
   return (
     <div className="reunioes-page">
       <div className="reunioes-hero">
         <div>
-          <p className="reunioes-eyebrow">Colaboracao ao vivo</p>
-          <h2>Salas persistentes do workspace</h2>
+          <p className="reunioes-eyebrow">Sessao financeira persistente</p>
+          <h2>Colaboracao dentro do app, com convite interno</h2>
           <p>
-            Crie uma sala para o planejador, outra para a familia ou quantas conversas recorrentes
-            voce precisar. Cada sala fica guardada aqui com link fixo para voltar depois.
+            A sala continua funcionando para a familia, mas agora tambem pode convidar outro usuario do app por e-mail,
+            sem colocar a pessoa dentro de todo o workspace financeiro.
           </p>
         </div>
         <div className="reunioes-hero-actions">
-          <Button onClick={openCreateModal}>Nova sala</Button>
-          <Button variant="secondary" onClick={() => selectedRoom && handleJoinEmbedded(selectedRoom)} disabled={!selectedRoom}>
-            Entrar no app
-          </Button>
+          {canManageSessions && <Button onClick={openCreateModal}>Nova sessao</Button>}
+          {selectedSession && (
+            <Button variant="secondary" onClick={() => navigate(buildSessionRoute(selectedSession.workspaceId, selectedSession.id))}>
+              Entrar na sessao
+            </Button>
+          )}
         </div>
       </div>
 
       {feedback && <div className="reunioes-feedback">{feedback}</div>}
+      {error && <div className="reunioes-alert">{error}</div>}
+
+      {incomingInvites.length > 0 && (
+        <Card>
+          <CardHeader
+            title="Convites para voce"
+            subtitle="Estas sessoes apareceram para sua conta. Depois de aceitar uma vez, a sala fica fixa para os proximos encontros."
+          />
+          <div className="reunioes-incoming-list">
+            {incomingInvites.map((invite) => (
+              <div key={`${invite.workspaceId}-${invite.sessionId}-${invite.id}`} className="reunioes-incoming-card">
+                <div>
+                  <strong>{invite.sessionName}</strong>
+                  <span>{invite.workspaceName || 'Workspace'} · {INVITE_ROLE_LABELS[invite.inviteRole] || invite.inviteRole}</span>
+                  <span>Convite enviado por {invite.inviterName || 'Participante'}</span>
+                </div>
+                <div className="reunioes-card-actions">
+                  <Button size="sm" onClick={() => handleAcceptInvite(invite)}>
+                    Aceitar e entrar
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <div className="reunioes-grid">
         <Card className="reunioes-sidebar">
           <CardHeader
-            title="Salas"
-            subtitle={`${activeRooms.length} ativa(s) em ${workspaceName}`}
-            action={<Button size="sm" onClick={openCreateModal}>Criar</Button>}
+            title="Sessoes"
+            subtitle={`${activeSessions.length} ativa(s) em ${activeWorkspace?.name || 'Workspace atual'}`}
+            action={canManageSessions ? <Button size="sm" onClick={openCreateModal}>Criar</Button> : null}
           />
+
           <div className="reunioes-room-list">
-            {activeRooms.length === 0 && (
+            {loading && (
               <div className="reunioes-empty">
-                <strong>Nenhuma sala criada ainda.</strong>
-                <p>Comece com uma sala do planejador ou uma sala da familia.</p>
+                <strong>Carregando sessoes...</strong>
+                <p>Sincronizando o hub financeiro do workspace.</p>
               </div>
             )}
 
-            {activeRooms.map((room) => {
-              const roomParticipants = participantNames(room, members)
-              const isSelected = selectedRoom?.id === room.id
+            {!loading && activeSessions.length === 0 && (
+              <div className="reunioes-empty">
+                <strong>Nenhuma sessao criada ainda.</strong>
+                <p>Crie uma sala persistente para acompanhar o painel financeiro junto com cliente, familia ou planejador convidado.</p>
+              </div>
+            )}
+
+            {activeSessions.map((session) => {
+              const isSelected = selectedSession?.id === session.id
               return (
                 <button
-                  key={room.id}
+                  key={session.id}
                   type="button"
                   className={`reunioes-room-card${isSelected ? ' active' : ''}`}
-                  onClick={() => setSelectedRoomId(room.id)}
+                  onClick={() => setSelectedSessionId(session.id)}
                 >
                   <div className="reunioes-room-card-top">
-                    <strong>{room.name}</strong>
-                    <span className="reunioes-room-status">Ativa</span>
+                    <strong>{session.name}</strong>
+                    <span className={`reunioes-room-status status-${session.status}`}>
+                      {STATUS_LABELS[session.status] || session.status}
+                    </span>
                   </div>
-                  <span>{room.description || 'Sala pronta para conversa, camera e compartilhamento de tela.'}</span>
+                  <span>{session.description || 'Sessao pronta para acompanhamento financeiro colaborativo.'}</span>
                   <span className="reunioes-room-meta">
-                    {roomParticipants.join(' · ')}
+                    {session.clientMemberNames?.join(' · ') || 'Sem cliente definido'}
                   </span>
                   <span className="reunioes-room-meta">
-                    Ultimo acesso: {formatDateTime(room.lastOpenedAt)}
+                    Ultima abertura: {formatDateTime(session.lastOpenedAt)}
                   </span>
                 </button>
               )
             })}
 
-            {archivedRooms.length > 0 && (
+            {archivedSessions.length > 0 && (
               <div className="reunioes-archived-block">
                 <p className="reunioes-archived-title">Arquivadas</p>
-                {archivedRooms.map((room) => (
+                {archivedSessions.map((session) => (
                   <button
-                    key={room.id}
+                    key={session.id}
                     type="button"
-                    className={`reunioes-room-card archived${selectedRoom?.id === room.id ? ' active' : ''}`}
-                    onClick={() => setSelectedRoomId(room.id)}
+                    className={`reunioes-room-card archived${selectedSession?.id === session.id ? ' active' : ''}`}
+                    onClick={() => setSelectedSessionId(session.id)}
                   >
                     <div className="reunioes-room-card-top">
-                      <strong>{room.name}</strong>
-                      <span className="reunioes-room-status archived">Arquivada</span>
+                      <strong>{session.name}</strong>
+                      <span className="reunioes-room-status status-archived">Arquivada</span>
                     </div>
-                    <span>{room.description || 'Sala arquivada.'}</span>
+                    <span>{session.description || 'Sessao arquivada.'}</span>
                   </button>
                 ))}
               </div>
@@ -309,77 +514,108 @@ export default function Reunioes() {
         <div className="reunioes-main">
           <Card>
             <CardHeader
-              title={selectedRoom?.name || 'Selecione uma sala'}
-              subtitle={selectedRoom?.description || 'Abra uma sala para conversar no proprio app ou em nova guia.'}
-              action={selectedRoom && selectedRoom.status !== 'archived' ? (
+              title={selectedSession?.name || 'Selecione uma sessao'}
+              subtitle={selectedSession?.description || 'Abra uma sessao financeira para conversar, compartilhar tela e acompanhar o mesmo painel no app.'}
+              action={selectedSession && canManageSessions ? (
                 <div className="reunioes-card-actions">
-                  <Button size="sm" variant="secondary" onClick={() => handleCopyLink(selectedRoom)}>Copiar link</Button>
-                  <Button size="sm" variant="secondary" onClick={() => openEditModal(selectedRoom)}>Editar</Button>
-                  <Button size="sm" variant="ghost" onClick={() => handleArchive(selectedRoom)}>Arquivar</Button>
+                  <Button size="sm" variant="secondary" onClick={() => navigate(buildSessionRoute(selectedSession.workspaceId, selectedSession.id))}>
+                    Abrir
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => openEditModal(selectedSession)}>
+                    Editar
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => handleArchive(selectedSession)}>
+                    Arquivar
+                  </Button>
                 </div>
               ) : null}
             />
 
-            {selectedRoom ? (
+            {selectedSession ? (
               <div className="reunioes-room-detail">
                 <div className="reunioes-detail-grid">
                   <div>
-                    <span className="reunioes-detail-label">Participantes sugeridos</span>
+                    <span className="reunioes-detail-label">Planejadores</span>
                     <div className="reunioes-chip-row">
-                      {selectedRoomParticipantNames.map((name) => (
-                        <span key={name} className="reunioes-chip">{name}</span>
+                      {plannerNames.length > 0
+                        ? plannerNames.map((name) => <span key={name} className="reunioes-chip">{name}</span>)
+                        : <span className="reunioes-chip empty">Sem planejador</span>}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="reunioes-detail-label">Clientes</span>
+                    <div className="reunioes-chip-row">
+                      {clientNames.length > 0
+                        ? clientNames.map((name) => <span key={name} className="reunioes-chip client">{name}</span>)
+                        : <span className="reunioes-chip empty">Sem cliente</span>}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="reunioes-detail-label">Estado atual</span>
+                    <strong>{STATUS_LABELS[selectedSession.status] || selectedSession.status}</strong>
+                  </div>
+                  <div>
+                    <span className="reunioes-detail-label">Ultima abertura</span>
+                    <strong>{formatDateTime(selectedSession.lastOpenedAt)}</strong>
+                  </div>
+                </div>
+
+                <div className="reunioes-stage-preview">
+                  <div>
+                    <span className="reunioes-detail-label">Sala persistente</span>
+                    <ul>
+                      <li>Fica salva no app ate alguem arquivar</li>
+                      <li>Quem entrar primeiro pode esperar o outro na mesma sala</li>
+                      <li>Funciona tanto para familia quanto para convidado externo do app</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <span className="reunioes-detail-label">Convite externo</span>
+                    <ul>
+                      <li>Envie para o e-mail da conta da pessoa no app</li>
+                      <li>Ela ve o convite ao entrar em Reunioes</li>
+                      <li>Depois de aceitar uma vez, nao precisa novo convite para cada encontro</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="reunioes-stage-preview">
+                  <div>
+                    <span className="reunioes-detail-label">Convites externos desta sala</span>
+                    <div className="reunioes-invite-list">
+                      {sessionInvites.length === 0 && <p>Nenhum convite externo criado ainda.</p>}
+                      {sessionInvites.map((invite) => (
+                        <div key={invite.id} className="reunioes-invite-item">
+                          <div>
+                            <strong>{invite.inviteeEmail}</strong>
+                            <span>{INVITE_ROLE_LABELS[invite.inviteRole] || invite.inviteRole}</span>
+                            <span>Status: {invite.status}</span>
+                          </div>
+                          {canManageSessions && invite.status === 'pending' && (
+                            <Button size="sm" variant="ghost" onClick={() => handleCancelSessionInvite(invite)}>
+                              Cancelar
+                            </Button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </div>
                   <div>
-                    <span className="reunioes-detail-label">Link fixo da sala</span>
-                    <code className="reunioes-code">{buildMeetingUrl(selectedRoom)}</code>
-                  </div>
-                  <div>
-                    <span className="reunioes-detail-label">Ultima abertura</span>
-                    <strong>{formatDateTime(selectedRoom.lastOpenedAt)}</strong>
-                  </div>
-                  <div>
-                    <span className="reunioes-detail-label">Recursos</span>
-                    <strong>Camera, microfone e compartilhamento de tela</strong>
+                    <span className="reunioes-detail-label">Rota da sala</span>
+                    <p>{buildSessionRoute(selectedSession.workspaceId, selectedSession.id)}</p>
                   </div>
                 </div>
 
-                {selectedRoom.status !== 'archived' && (
-                  <div className="reunioes-join-actions">
-                    <Button onClick={() => handleJoinEmbedded(selectedRoom)}>Entrar dentro do app</Button>
-                    <Button variant="secondary" onClick={() => handleOpenExternal(selectedRoom)}>Abrir em nova guia</Button>
-                  </div>
-                )}
+                <div className="reunioes-join-actions">
+                  <Button onClick={() => navigate(buildSessionRoute(selectedSession.workspaceId, selectedSession.id))}>
+                    Entrar na sessao
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="reunioes-empty">
-                <strong>Escolha uma sala para continuar.</strong>
-                <p>Quando voce abrir uma sala, ela aparece aqui pronta para uso.</p>
-              </div>
-            )}
-          </Card>
-
-          <Card className="reunioes-player-card">
-            <CardHeader
-              title={embeddedRoom ? `Sala ao vivo: ${embeddedRoom.name}` : 'Reuniao no app'}
-              subtitle={embeddedRoom
-                ? 'Se o navegador pedir permissao, libere camera, microfone e compartilhamento de tela.'
-                : 'Abra uma sala para iniciar a chamada aqui dentro.'}
-            />
-            {embeddedUrl ? (
-              <div className="reunioes-player-shell">
-                <iframe
-                  title={embeddedRoom?.name || 'Sala de reuniao'}
-                  src={embeddedUrl}
-                  className="reunioes-player-frame"
-                  allow="camera; microphone; fullscreen; display-capture; clipboard-read; clipboard-write; autoplay"
-                />
-              </div>
-            ) : (
-              <div className="reunioes-empty reunioes-empty-player">
-                <strong>Nenhuma sala aberta no app.</strong>
-                <p>Use "Entrar dentro do app" para carregar a reuniao nesta tela.</p>
+                <strong>Escolha uma sessao para continuar.</strong>
+                <p>Quando voce abrir uma sessao, ela sincroniza presenca, chat, midia e o espelho financeiro compartilhado.</p>
               </div>
             )}
           </Card>
@@ -389,52 +625,110 @@ export default function Reunioes() {
       <Modal
         isOpen={modalOpen}
         onClose={() => !saving && setModalOpen(false)}
-        title={editingRoom ? 'Editar sala' : 'Nova sala'}
+        title={editingSession ? 'Editar sessao financeira' : 'Nova sessao financeira'}
         footer={(
           <Button onClick={handleSave} loading={saving}>
-            {editingRoom ? 'Salvar sala' : 'Criar sala'}
+            {editingSession ? 'Salvar sessao' : 'Criar sessao'}
           </Button>
         )}
       >
         <div className="reunioes-form">
-          <label htmlFor="room-name">Nome da sala</label>
+          <label htmlFor="session-name">Nome da sessao</label>
           <input
-            id="room-name"
+            id="session-name"
             value={form.name}
             onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-            placeholder="Ex.: Sala com planejador"
+            placeholder="Ex.: Planejamento com cliente"
           />
 
-          <label htmlFor="room-description">Descricao</label>
+          <label htmlFor="session-description">Descricao</label>
           <textarea
-            id="room-description"
+            id="session-description"
             rows={3}
             value={form.description}
             onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-            placeholder="Opcional: para que essa sala sera usada"
+            placeholder="Opcional: foco deste atendimento"
           />
 
+          <div className="reunioes-picker-grid">
+            <div className="reunioes-member-picker">
+              <p className="reunioes-detail-label">Planejadores do workspace</p>
+              {members.length === 0 && <p>Nenhum membro encontrado neste workspace.</p>}
+              {members.map((member) => {
+                const id = memberIdOf(member)
+                const checked = form.plannerMemberIds.includes(id)
+                return (
+                  <label key={`planner-${id}`} className="reunioes-member-option">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => togglePlanner(id)}
+                    />
+                    <span>{memberNameOf(member)}{id === user?.uid ? ' (voce)' : ''}</span>
+                  </label>
+                )
+              })}
+            </div>
+
+            <div className="reunioes-member-picker">
+              <p className="reunioes-detail-label">Clientes do workspace</p>
+              {members.length === 0 && <p>Nenhum membro encontrado neste workspace.</p>}
+              {members.map((member) => {
+                const id = memberIdOf(member)
+                const checked = form.clientMemberIds.includes(id)
+                return (
+                  <label key={`client-${id}`} className="reunioes-member-option">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleClient(id)}
+                    />
+                    <span>{memberNameOf(member)}{id === user?.uid ? ' (voce)' : ''}</span>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+
           <div className="reunioes-member-picker">
-            <p className="reunioes-detail-label">Membros sugeridos para esta sala</p>
-            {members.length === 0 && <p>Nenhum membro encontrado neste workspace.</p>}
-            {members.map((member) => {
-              const memberId = member.uid || member.id
-              const checked = form.participantMemberIds.includes(memberId)
-              return (
-                <label key={memberId} className="reunioes-member-option">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleParticipant(memberId)}
-                  />
-                  <span>{member.displayName || member.name || member.email || 'Membro'}</span>
-                </label>
-              )
-            })}
+            <p className="reunioes-detail-label">Convidar alguem de fora do workspace</p>
+            <div className="reunioes-external-invite-row">
+              <input
+                type="email"
+                value={draftInviteEmail}
+                onChange={(event) => setDraftInviteEmail(event.target.value)}
+                placeholder="email@exemplo.com"
+              />
+              <select value={draftInviteRole} onChange={(event) => setDraftInviteRole(event.target.value)}>
+                <option value="planner">Planejador</option>
+                <option value="client">Cliente</option>
+                <option value="viewer">Observador</option>
+              </select>
+              <Button type="button" variant="secondary" onClick={addExternalInviteDraft}>
+                Adicionar
+              </Button>
+            </div>
+
+            <div className="reunioes-invite-list">
+              {form.externalInvites.length === 0 && (
+                <p>Se a pessoa ja tem conta no app, ela vera esta sala em Reunioes depois do convite.</p>
+              )}
+              {form.externalInvites.map((invite) => (
+                <div key={`${invite.email}-${invite.role}`} className="reunioes-invite-item">
+                  <div>
+                    <strong>{invite.email}</strong>
+                    <span>{INVITE_ROLE_LABELS[invite.role] || invite.role}</span>
+                  </div>
+                  <Button size="sm" type="button" variant="ghost" onClick={() => removeExternalInviteDraft(invite.email)}>
+                    Remover
+                  </Button>
+                </div>
+              ))}
+            </div>
           </div>
 
           <p className="reunioes-form-help">
-            Esta primeira versao guarda a sala no workspace e reutiliza o mesmo link sempre que voce voltar.
+            A sessao pode nascer com membros da familia e tambem com convidados externos do app. Depois que eles aceitarem, a sala continua fixa.
           </p>
         </div>
       </Modal>

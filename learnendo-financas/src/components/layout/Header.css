@@ -89,6 +89,54 @@
   color: #fff;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.header-meetings-btn {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.26);
+  background: rgba(255, 255, 255, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  color: #fff;
+}
+
+.header-meetings-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.header-meetings-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.header-notification-badge {
+  position: absolute;
+  top: -5px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #facc15;
+  color: #0f172a;
+  font-size: 0.68rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.22);
+}
+
 .header-avatar:hover {
   background: rgba(255, 255, 255, 0.32);
 }

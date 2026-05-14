@@ -1,0 +1,827 @@
+.sessao-room-page {
+  display: grid;
+  gap: 16px;
+}
+
+.sessao-room-hero {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top right, rgba(45, 212, 191, 0.16), transparent 36%),
+    linear-gradient(135deg, #0f172a 0%, #102a43 55%, #164e63 100%);
+  color: #f8fafc;
+}
+
+.sessao-room-hero h2 {
+  margin: 0 0 8px;
+  font-size: 1.6rem;
+}
+
+.sessao-room-hero p {
+  margin: 0;
+  color: rgba(248, 250, 252, 0.86);
+  line-height: 1.55;
+}
+
+.sessao-room-eyebrow {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #99f6e4 !important;
+}
+
+.sessao-room-hero-actions,
+.sessao-room-inline-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sessao-room-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.sessao-room-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.sessao-room-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 380px);
+  gap: 16px;
+  align-items: start;
+}
+
+.sessao-room-main,
+.sessao-room-sidebar {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.sessao-room-hidden-media {
+  display: none !important;
+}
+
+.sessao-room-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sessao-panel-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid #dbe4f0;
+  border-radius: 18px;
+  background: #f8fafc;
+  text-align: left;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.sessao-panel-card:not(:disabled) {
+  cursor: pointer;
+}
+
+.sessao-panel-card:hover:not(:disabled),
+.sessao-panel-card.active {
+  transform: translateY(-1px);
+  border-color: #14b8a6;
+  box-shadow: 0 14px 28px rgba(20, 184, 166, 0.12);
+}
+
+.sessao-panel-card:disabled {
+  opacity: 0.72;
+}
+
+.sessao-panel-card strong {
+  color: #0f172a;
+}
+
+.sessao-panel-card span {
+  color: #475569;
+  line-height: 1.45;
+}
+
+.sessao-room-stage {
+  display: grid;
+  gap: 12px;
+}
+
+.sessao-room-live-banner,
+.sessao-room-focus-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.sessao-room-live-banner {
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.sessao-room-focus-card {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid #ccfbf1;
+  background: #f0fdfa;
+}
+
+.sessao-room-focus-card > div {
+  display: grid;
+  gap: 6px;
+}
+
+.sessao-room-stage-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #ccfbf1 0%, #f0fdfa 100%);
+  color: #0f172a;
+}
+
+.sessao-room-stage-body {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 18px;
+  background: #f8fafc;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.sessao-room-stage-body p,
+.sessao-room-chat-empty,
+.sessao-room-chat-text,
+.sessao-room-control-group p,
+.sessao-room-presence-list p {
+  margin: 0;
+}
+
+.sessao-room-data-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.sessao-room-action-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.sessao-room-action-summary strong {
+  display: block;
+  color: #0f172a;
+  font-size: 1.05rem;
+  margin-top: 4px;
+}
+
+.sessao-room-action-summary p,
+.sessao-room-info-text {
+  margin: 0;
+  color: #64748b;
+}
+
+.sessao-room-summary-grid,
+.sessao-room-two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sessao-room-summary-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+}
+
+.sessao-room-summary-card span {
+  color: #64748b;
+  font-size: 0.88rem;
+}
+
+.sessao-room-summary-card strong {
+  color: #0f172a;
+  font-size: 1.15rem;
+}
+
+.sessao-room-summary-card.positive {
+  border-color: #86efac;
+}
+
+.sessao-room-summary-card.negative {
+  border-color: #fecaca;
+}
+
+.sessao-room-summary-card.neutral {
+  border-color: #bfdbfe;
+}
+
+.sessao-room-summary-card.emphasis {
+  border-color: #99f6e4;
+  background: linear-gradient(135deg, #ecfeff 0%, #f0fdfa 100%);
+}
+
+.sessao-room-two-column > div,
+.sessao-room-entity-list {
+  display: grid;
+  gap: 12px;
+}
+
+.sessao-room-two-column h3 {
+  margin: 0;
+  color: #0f172a;
+}
+
+.sessao-room-entity-list p {
+  color: #64748b;
+}
+
+.sessao-room-entity-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+}
+
+.sessao-room-entity-card.project {
+  align-items: center;
+}
+
+.sessao-room-entity-card > div:first-child {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sessao-room-entity-card strong,
+.sessao-room-presence-item strong,
+.sessao-room-chat-meta strong,
+.sessao-room-chat-file strong,
+.sessao-room-chat-selected-file strong {
+  color: #0f172a;
+}
+
+.sessao-room-entity-card span,
+.sessao-room-presence-item span,
+.sessao-room-chat-meta span,
+.sessao-room-chat-file span,
+.sessao-room-chat-selected-file span {
+  color: #475569;
+  line-height: 1.45;
+}
+
+.sessao-room-entity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.sessao-room-progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #e2e8f0;
+}
+
+.sessao-room-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #14b8a6 0%, #22c55e 100%);
+}
+
+.sessao-room-textarea,
+.sessao-room-chat-textarea,
+.sessao-room-input {
+  width: 100%;
+  padding: 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 18px;
+  font: inherit;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.sessao-room-textarea,
+.sessao-room-chat-textarea {
+  resize: vertical;
+}
+
+.sessao-room-textarea {
+  min-height: 220px;
+}
+
+.sessao-room-chat-textarea {
+  min-height: 110px;
+}
+
+.sessao-room-textarea:disabled,
+.sessao-room-input:disabled {
+  background: #f8fafc;
+}
+
+.sessao-room-editor-footer,
+.sessao-room-chat-meta,
+.sessao-room-chat-file,
+.sessao-room-chat-attachment-actions,
+.sessao-room-chat-actions,
+.sessao-room-chat-upload-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sessao-room-editor-footer {
+  color: #64748b;
+  font-size: 0.92rem;
+}
+
+.sessao-room-control-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.sessao-room-actions-stack,
+.sessao-room-media-stack,
+.sessao-room-control-group {
+  display: grid;
+  gap: 10px;
+}
+
+.sessao-room-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sessao-room-form-grid.compact {
+  grid-template-columns: 140px minmax(0, 1fr);
+}
+
+.sessao-room-field {
+  display: grid;
+  gap: 6px;
+  color: #475569;
+  font-size: 0.92rem;
+}
+
+.sessao-room-field span {
+  color: #475569;
+  font-weight: 600;
+}
+
+.sessao-room-action-form,
+.sessao-room-action-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid #dbe4f0;
+  background: #f8fafc;
+}
+
+.sessao-room-action-list {
+  display: grid;
+  gap: 12px;
+}
+
+.sessao-room-action-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sessao-room-action-card-top > div {
+  display: grid;
+  gap: 6px;
+}
+
+.sessao-room-action-card strong,
+.sessao-room-action-meta strong {
+  color: #0f172a;
+}
+
+.sessao-room-action-card span,
+.sessao-room-action-meta span {
+  color: #475569;
+}
+
+.sessao-room-action-meta {
+  text-align: right;
+}
+
+.sessao-room-status-pill {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.sessao-room-status-pill.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.sessao-room-status-pill.applied {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.sessao-room-status-pill.cancelled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.sessao-room-media-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sessao-room-media-stat {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid #dbe4f0;
+  background: #f8fafc;
+}
+
+.sessao-room-media-stat span {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.sessao-room-media-stat strong,
+.sessao-room-camera-meta strong {
+  color: #0f172a;
+}
+
+.sessao-room-media-error,
+.sessao-room-media-hint {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 0.92rem;
+}
+
+.sessao-room-media-error {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.sessao-room-media-hint {
+  border: 1px solid #ccfbf1;
+  background: #f0fdfa;
+  color: #115e59;
+}
+
+.sessao-room-audio-resume {
+  padding: 11px 14px;
+  border: 1px solid #f59e0b;
+  border-radius: 14px;
+  background: #fef3c7;
+  color: #92400e;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sessao-room-camera-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sessao-room-screen-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.sessao-room-screen-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #475569;
+}
+
+.sessao-room-screen-header strong {
+  color: #0f172a;
+}
+
+.sessao-room-screen-frame {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #020617;
+}
+
+.sessao-room-camera-empty {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  color: #64748b;
+  grid-column: 1 / -1;
+}
+
+.sessao-room-camera-tile {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #dbe4f0;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
+.sessao-room-camera-frame {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #0f172a;
+}
+
+.sessao-room-camera-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #020617;
+}
+
+.sessao-room-video-element {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sessao-room-camera-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sessao-room-camera-meta,
+.sessao-room-camera-status {
+  display: grid;
+  gap: 4px;
+}
+
+.sessao-room-camera-meta span,
+.sessao-room-camera-status span {
+  color: #475569;
+  font-size: 0.84rem;
+}
+
+.sessao-room-label {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.sessao-inline-toggle,
+.sessao-lock-toggle {
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.sessao-inline-toggle:not(:disabled),
+.sessao-lock-toggle:not(:disabled) {
+  cursor: pointer;
+}
+
+.sessao-inline-toggle.active {
+  border-color: #14b8a6;
+  background: #ccfbf1;
+  color: #115e59;
+}
+
+.sessao-lock-toggle.locked {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.sessao-lock-toggle.unlocked {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.sessao-room-presence-list,
+.sessao-room-chat,
+.sessao-room-chat-list,
+.sessao-room-chat-composer,
+.sessao-room-chat-attachment {
+  display: grid;
+  gap: 10px;
+}
+
+.sessao-room-presence-item,
+.sessao-room-chat-item {
+  padding: 14px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.sessao-room-presence-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sessao-room-presence-item.online {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.sessao-room-presence-item > div,
+.sessao-room-chat-item {
+  display: grid;
+  gap: 8px;
+}
+
+.sessao-room-chat-list {
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.sessao-room-chat-item.mine {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+}
+
+.sessao-room-chat-text {
+  color: #334155;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.sessao-room-chat-image-link {
+  display: block;
+}
+
+.sessao-room-chat-image {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 1px solid #cbd5e1;
+}
+
+.sessao-room-chat-file {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #dbe4f0;
+}
+
+.sessao-room-chat-link {
+  color: #0f766e;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.sessao-room-chat-link:hover {
+  text-decoration: underline;
+}
+
+.sessao-room-chat-actions {
+  justify-content: flex-end;
+}
+
+.sessao-room-chat-delete {
+  border: 0;
+  background: transparent;
+  color: #b91c1c;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sessao-room-chat-delete:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.sessao-room-chat-composer {
+  padding-top: 6px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.sessao-room-chat-upload input {
+  display: none;
+}
+
+.sessao-room-chat-upload span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  border: 1px dashed #14b8a6;
+  border-radius: 14px;
+  color: #0f766e;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sessao-room-chat-selected-file {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+@media (max-width: 980px) {
+  .sessao-room-grid,
+  .sessao-room-panel-grid,
+  .sessao-room-summary-grid,
+  .sessao-room-two-column,
+  .sessao-room-form-grid,
+  .sessao-room-focus-card,
+  .sessao-room-media-summary-grid,
+  .sessao-room-camera-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .sessao-room-hero {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .sessao-room-hero h2 {
+    font-size: 1.35rem;
+  }
+
+  .sessao-room-hero-actions,
+  .sessao-room-inline-buttons,
+  .sessao-room-presence-item,
+  .sessao-room-action-card-top,
+  .sessao-room-editor-footer,
+  .sessao-room-entity-card,
+  .sessao-room-chat-meta,
+  .sessao-room-chat-file,
+  .sessao-room-chat-attachment-actions,
+  .sessao-room-chat-upload-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .sessao-room-action-meta {
+    text-align: left;
+  }
+
+  .sessao-room-stage-banner {
+    display: grid;
+  }
+}

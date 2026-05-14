@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
+import { getStorage } from 'firebase/storage'
 import { IS_MOCK_MODE } from './mockMode'
 
 const firebaseConfig = {
@@ -12,20 +13,21 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
-// Em mock mode, Firebase não é inicializado para evitar erros de credencial.
 let app = null
 let auth = null
 let db = null
+let storage = null
 
 if (!IS_MOCK_MODE) {
   try {
     app = initializeApp(firebaseConfig)
     auth = getAuth(app)
     db = getFirestore(app)
+    storage = getStorage(app)
   } catch (e) {
-    console.error('[Firebase] Falha na inicialização:', e.message)
+    console.error('[Firebase] Falha na inicializacao:', e.message)
   }
 }
 
-export { auth, db }
+export { auth, db, storage }
 export default app

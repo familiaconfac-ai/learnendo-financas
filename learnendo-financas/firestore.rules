@@ -1,8 +1,297 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function workspaceMemberDoc(workspaceId, uid) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid));
+    }
+
+    function workspaceDoc(workspaceId) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId));
+    }
+
+    function isWorkspaceMember(workspaceId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
+    }
+
+    function workspaceRole(workspaceId) {
+      return isWorkspaceMember(workspaceId)
+        ? workspaceMemberDoc(workspaceId, request.auth.uid).data.role
+        : '';
+    }
+
+    function isWorkspaceManager(workspaceId) {
+      return isWorkspaceMember(workspaceId)
+        && workspaceRole(workspaceId) in ['gestor', 'co-gestor', 'planejador-master', 'planejador-plus'];
+    }
+
+    function canContributeWorkspace(workspaceId) {
+      return isWorkspaceMember(workspaceId)
+        && !(workspaceRole(workspaceId) in ['planejador']);
+    }
+
+    function financialSessionDoc(workspaceId, sessionId) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/financialSessions/$(sessionId));
+    }
+
+    function financialSessionExists(workspaceId, sessionId) {
+      return exists(/databases/$(database)/documents/workspaces/$(workspaceId)/financialSessions/$(sessionId));
+    }
+
+    function isFinancialSessionInvitee(workspaceId, sessionId, inviteId) {
+      return signedIn()
+        && resource.data.inviteeEmail is string
+        && request.auth.token.email is string
+        && resource.data.inviteeEmail == request.auth.token.email;
+    }
+
+    function isFinancialSessionPlanner(workspaceId, sessionId) {
+      return signedIn()
+        && financialSessionExists(workspaceId, sessionId)
+        && (
+          isWorkspaceManager(workspaceId)
+          || (
+            financialSessionDoc(workspaceId, sessionId).data.plannerMemberIds is list
+            && request.auth.uid in financialSessionDoc(workspaceId, sessionId).data.plannerMemberIds
+          )
+        );
+    }
+
+    function isFinancialSessionParticipant(workspaceId, sessionId) {
+      return signedIn()
+        && financialSessionExists(workspaceId, sessionId)
+        && (
+          isFinancialSessionPlanner(workspaceId, sessionId)
+          || (
+            financialSessionDoc(workspaceId, sessionId).data.clientMemberIds is list
+            && request.auth.uid in financialSessionDoc(workspaceId, sessionId).data.clientMemberIds
+          )
+          || (
+            financialSessionDoc(workspaceId, sessionId).data.participantMemberIds is list
+            && request.auth.uid in financialSessionDoc(workspaceId, sessionId).data.participantMemberIds
+          )
+        );
+    }
+
+    match /users/{uid} {
+      allow read, create, update, delete: if isOwner(uid);
+
+      match /settings/{docId} {
+        allow read, create, update, delete: if isOwner(uid);
+      }
+
+      match /workspaceMemberships/{workspaceId} {
+        allow read, create, update, delete: if isOwner(uid);
+      }
+
+      match /{document=**} {
+        allow read, create, update, delete: if isOwner(uid);
+      }
+    }
+
+    match /userFamilies/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /workspaceInviteTokens/{token} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.inviterUid == request.auth.uid;
+      allow update: if signedIn() && (
+        resource.data.inviterUid == request.auth.uid
+        || (
+          resource.data.status == 'pending'
+          && request.resource.data.status == 'accepted'
+          && request.resource.data.acceptedBy == request.auth.uid
+        )
+      );
+      allow delete: if false;
+    }
+
+    match /workspaces/{workspaceId} {
+      allow get: if isWorkspaceMember(workspaceId);
+      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isWorkspaceManager(workspaceId)
+        || (
+          signedIn()
+          && resource.data.createdBy == request.auth.uid
+          && !isWorkspaceMember(workspaceId)
+        );
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create: if signedIn()
+          && (
+            isWorkspaceManager(workspaceId)
+            || request.auth.uid == uid
+            || workspaceDoc(workspaceId).data.createdBy == request.auth.uid
+          );
+        allow update: if isWorkspaceManager(workspaceId)
+          || (request.auth.uid == uid && request.resource.data.role == resource.data.role);
+        allow delete: if isWorkspaceManager(workspaceId);
+      }
+
+      match /invitations/{inviteId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create: if isWorkspaceManager(workspaceId)
+          && request.resource.data.inviterUid == request.auth.uid;
+        allow update: if isWorkspaceManager(workspaceId)
+          || (
+            isWorkspaceMember(workspaceId)
+            && resource.data.status == 'pending'
+            && request.resource.data.status == 'accepted'
+            && request.resource.data.acceptedBy == request.auth.uid
+          );
+        allow delete: if false;
+      }
+
+      match /contacts/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
+      match /transactionNatures/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
+      match /projects/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
+      match /meetingRooms/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
+      match /categories/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
+      match /budgets/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
+      match /transactions/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
+      match /debts/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
+      match /financialSessions/{sessionId} {
+        allow list: if isWorkspaceMember(workspaceId);
+        allow get: if isWorkspaceMember(workspaceId) || isFinancialSessionParticipant(workspaceId, sessionId);
+        allow create: if canContributeWorkspace(workspaceId)
+          && request.resource.data.createdBy == request.auth.uid;
+        allow update: if isFinancialSessionPlanner(workspaceId, sessionId)
+          || (
+            isFinancialSessionParticipant(workspaceId, sessionId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'lastOpenedAt',
+              'lastOpenedBy',
+              'status',
+              'updatedAt',
+            ])
+            && request.resource.data.lastOpenedBy == request.auth.uid
+          );
+        allow delete: if isFinancialSessionPlanner(workspaceId, sessionId);
+
+        match /session/{docId} {
+          allow read: if isFinancialSessionParticipant(workspaceId, sessionId);
+          allow create, update, delete: if isFinancialSessionPlanner(workspaceId, sessionId);
+        }
+
+        match /presence/{uid} {
+          allow read: if isFinancialSessionParticipant(workspaceId, sessionId);
+          allow create, update: if isFinancialSessionParticipant(workspaceId, sessionId)
+            && request.auth.uid == uid;
+          allow delete: if request.auth.uid == uid || isFinancialSessionPlanner(workspaceId, sessionId);
+        }
+
+        match /shared/{docId} {
+          allow read: if isFinancialSessionParticipant(workspaceId, sessionId);
+          allow create, update: if isFinancialSessionPlanner(workspaceId, sessionId)
+            || (
+              isFinancialSessionParticipant(workspaceId, sessionId)
+              && docId in ['notes', 'planning']
+              && request.resource.data.updatedBy == request.auth.uid
+            )
+            || (
+              isWorkspaceMember(workspaceId)
+              && docId == 'workspaceSnapshot'
+              && request.resource.data.updatedBy == request.auth.uid
+            );
+          allow delete: if isFinancialSessionPlanner(workspaceId, sessionId);
+        }
+
+        match /chat/{messageId} {
+          allow read: if isFinancialSessionParticipant(workspaceId, sessionId);
+          allow create: if isFinancialSessionParticipant(workspaceId, sessionId)
+            && request.resource.data.senderUid == request.auth.uid;
+          allow update, delete: if isFinancialSessionPlanner(workspaceId, sessionId)
+            || (
+              signedIn()
+              && resource.data.senderUid == request.auth.uid
+            );
+        }
+
+        match /actions/{actionId} {
+          allow read: if isFinancialSessionParticipant(workspaceId, sessionId);
+          allow create: if isFinancialSessionParticipant(workspaceId, sessionId)
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.status == 'pending';
+          allow update: if isFinancialSessionPlanner(workspaceId, sessionId)
+            || (
+              signedIn()
+              && resource.data.createdBy == request.auth.uid
+              && resource.data.status == 'pending'
+              && request.resource.data.status == 'cancelled'
+            );
+          allow delete: if false;
+        }
+
+        match /invites/{inviteId} {
+          allow read: if isFinancialSessionPlanner(workspaceId, sessionId)
+            || (
+              signedIn()
+              && resource.data.inviteeEmail is string
+              && request.auth.token.email is string
+              && resource.data.inviteeEmail == request.auth.token.email
+            );
+          allow create: if isFinancialSessionPlanner(workspaceId, sessionId)
+            && request.resource.data.inviterUid == request.auth.uid;
+          allow update: if isFinancialSessionPlanner(workspaceId, sessionId)
+            || (
+              signedIn()
+              && resource.data.inviteeEmail is string
+              && request.auth.token.email is string
+              && resource.data.inviteeEmail == request.auth.token.email
+              && resource.data.status == 'pending'
+              && request.resource.data.status == 'accepted'
+              && request.resource.data.acceptedBy == request.auth.uid
+            );
+          allow delete: if false;
+        }
+      }
+    }
+
     match /families/{familyId} {
-      allow read, write: if request.auth != null && (
+      allow read, write: if signedIn() && (
         resource.data.ownerUid == request.auth.uid ||
         isFamilyMember(familyId)
       );
@@ -20,18 +309,18 @@ service cloud.firestore {
       }
     }
 
-    match /userFamilies/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-
     function isFamilyOwner(familyId) {
-      return request.auth != null &&
-        get(/databases/$(database)/documents/families/$(familyId)).data.ownerUid == request.auth.uid;
+      return signedIn()
+        && get(/databases/$(database)/documents/families/$(familyId)).data.ownerUid == request.auth.uid;
     }
 
     function isFamilyMember(familyId) {
-      return request.auth != null &&
-        exists(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid));
+      return signedIn()
+        && exists(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid));
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

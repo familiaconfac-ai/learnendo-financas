@@ -97,6 +97,19 @@
   color: var(--color-text-muted);
 }
 
+.menu-user-alert {
+  margin-top: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .menu-links {
   flex: 1;
   overflow-y: auto;
@@ -122,10 +135,26 @@
   background: var(--color-bg-subtle);
   color: var(--color-primary);
 }
+.menu-link-label {
+  flex: 1;
+}
 .menu-link-icon {
   font-size: 1.2rem;
   width: 1.5rem;
   text-align: center;
+}
+.menu-link-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #facc15;
+  color: #0f172a;
+  font-size: 0.72rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .admin-link {
   color: var(--color-warning);

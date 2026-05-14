@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import { useFinancialSessionInviteNotifications } from '../../hooks/useFinancialSessionInviteNotifications'
 import { logoutUser } from '../../firebase/auth'
 import './HamburgerMenu.css'
 
@@ -21,6 +22,7 @@ const MENU_LINKS = [
 export default function HamburgerMenu({ isOpen, onClose }) {
   const navigate = useNavigate()
   const { profile } = useAuth()
+  const { sessionsCount, hasPendingInvites } = useFinancialSessionInviteNotifications()
 
   async function handleLogout() {
     await logoutUser()
@@ -58,6 +60,11 @@ export default function HamburgerMenu({ isOpen, onClose }) {
             <div>
               <div className="menu-user-name">{profile.displayName}</div>
               <div className="menu-user-email">{profile.email}</div>
+              {hasPendingInvites && (
+                <div className="menu-user-alert">
+                  {sessionsCount} convite(s) de sessao esperando por voce
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -70,7 +77,10 @@ export default function HamburgerMenu({ isOpen, onClose }) {
               onClick={() => handleNav(link.to)}
             >
               <span className="menu-link-icon">{link.icon}</span>
-              {link.label}
+              <span className="menu-link-label">{link.label}</span>
+              {link.to === '/reunioes' && hasPendingInvites && (
+                <span className="menu-link-badge">{sessionsCount}</span>
+              )}
             </button>
           ))}
         </nav>

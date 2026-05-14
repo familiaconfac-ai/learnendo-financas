@@ -1,0 +1,47 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function financialSessionDoc(workspaceId, sessionId) {
+      return firestore.get(
+        /databases/(default)/documents/workspaces/$(workspaceId)/financialSessions/$(sessionId)
+      );
+    }
+
+    function financialSessionExists(workspaceId, sessionId) {
+      return firestore.exists(
+        /databases/(default)/documents/workspaces/$(workspaceId)/financialSessions/$(sessionId)
+      );
+    }
+
+    function isFinancialSessionParticipant(workspaceId, sessionId) {
+      return signedIn()
+        && financialSessionExists(workspaceId, sessionId)
+        && (
+          (
+            financialSessionDoc(workspaceId, sessionId).data.plannerMemberIds is list
+            && request.auth.uid in financialSessionDoc(workspaceId, sessionId).data.plannerMemberIds
+          )
+          || (
+            financialSessionDoc(workspaceId, sessionId).data.clientMemberIds is list
+            && request.auth.uid in financialSessionDoc(workspaceId, sessionId).data.clientMemberIds
+          )
+          || (
+            financialSessionDoc(workspaceId, sessionId).data.participantMemberIds is list
+            && request.auth.uid in financialSessionDoc(workspaceId, sessionId).data.participantMemberIds
+          )
+        );
+    }
+
+    match /financialSessions/{workspaceId}/{sessionId}/chat/{messageId}/{fileName} {
+      allow read, write: if isFinancialSessionParticipant(workspaceId, sessionId);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import { useFinancialSessionInviteNotifications } from '../../hooks/useFinancialSessionInviteNotifications'
 import HamburgerMenu from './HamburgerMenu'
 import './Header.css'
 
@@ -30,8 +31,11 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, profile } = useAuth()
+  const { sessionsCount, hasPendingInvites } = useFinancialSessionInviteNotifications()
 
-  const title = PAGE_TITLES[location.pathname] ?? ''
+  const title = location.pathname.startsWith('/reunioes/sessao/')
+    ? 'Sessao Financeira'
+    : (PAGE_TITLES[location.pathname] ?? '')
 
   return (
     <>
@@ -60,23 +64,34 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
           )}
         </div>
 
-        <button
-          className="header-avatar"
-          onClick={() => navigate('/perfil')}
-          aria-label="Abrir perfil"
-        >
-          {profile?.photoURL || user?.photoURL ? (
-            <img
-              src={profile?.photoURL ?? user?.photoURL}
-              alt="avatar"
-              className="header-avatar-img"
-            />
-          ) : (
-            profile?.displayName?.[0]?.toUpperCase() ??
-            user?.email?.[0]?.toUpperCase() ??
-            'U'
-          )}
-        </button>
+        <div className="header-actions">
+          <button
+            className={`header-meetings-btn${hasPendingInvites ? ' has-badge' : ''}`}
+            onClick={() => navigate('/reunioes')}
+            aria-label="Abrir reunioes"
+          >
+            <span className="header-meetings-icon">🎥</span>
+            {hasPendingInvites && <span className="header-notification-badge">{sessionsCount}</span>}
+          </button>
+
+          <button
+            className="header-avatar"
+            onClick={() => navigate('/perfil')}
+            aria-label="Abrir perfil"
+          >
+            {profile?.photoURL || user?.photoURL ? (
+              <img
+                src={profile?.photoURL ?? user?.photoURL}
+                alt="avatar"
+                className="header-avatar-img"
+              />
+            ) : (
+              profile?.displayName?.[0]?.toUpperCase() ??
+              user?.email?.[0]?.toUpperCase() ??
+              'U'
+            )}
+          </button>
+        </div>
       </header>
 
       <HamburgerMenu isOpen={menuOpen} onClose={() => setMenuOpen(false)} />
