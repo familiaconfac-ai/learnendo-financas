@@ -1,28 +1,40 @@
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useFinancialSessionInviteNotifications } from '../../hooks/useFinancialSessionInviteNotifications'
+import {
+  getActiveFinancialSessionBridge,
+  subscribeActiveFinancialSessionBridge,
+} from '../../services/financialSessionBridgeService'
 import { logoutUser } from '../../firebase/auth'
 import './HamburgerMenu.css'
 
 const MENU_LINKS = [
-  { to: '/dashboard', label: 'Dashboard', icon: '🏠' },
-  { to: '/importacao', label: 'Cupom', icon: '🧾' },
-  { to: '/lancar', label: 'Lancar', icon: '➕' },
-  { to: '/lancamentos', label: 'Lancamentos', icon: '📝' },
-  { to: '/dividas', label: 'Dividas', icon: '📉' },
-  { to: '/reunioes', label: 'Reunioes', icon: '🎥' },
-  { to: '/reconciliacao', label: 'Reconciliacao', icon: '🔍' },
-  { to: '/orcamento', label: 'Orcamento', icon: '💰' },
-  { to: '/mensal', label: 'Visao Mensal', icon: '📆' },
-  { to: '/relatorios', label: 'Relatorios', icon: '📊' },
-  { to: '/familia', label: 'Familia', icon: '🏡' },
-  { to: '/perfil', label: 'Perfil', icon: '👤' },
+  { to: '/dashboard', label: 'Dashboard', icon: '\u{1F3E0}' },
+  { to: '/importacao', label: 'Cupom', icon: '\u{1F9FE}' },
+  { to: '/lancar', label: 'Lan\u00e7ar', icon: '\u2795' },
+  { to: '/lancamentos', label: 'Lan\u00e7amentos', icon: '\u{1F4DD}' },
+  { to: '/dividas', label: 'D\u00edvidas', icon: '\u{1F4C9}' },
+  { to: '/reunioes', label: 'Reuni\u00f5es', icon: '\u{1F4F9}' },
+  { to: '/reconciliacao', label: 'Reconcilia\u00e7\u00e3o', icon: '\u{1F50D}' },
+  { to: '/orcamento', label: 'Or\u00e7amento', icon: '\u{1F4B0}' },
+  { to: '/mensal', label: 'Vis\u00e3o Mensal', icon: '\u{1F4C6}' },
+  { to: '/relatorios', label: 'Relat\u00f3rios', icon: '\u{1F4CA}' },
+  { to: '/familia', label: 'Fam\u00edlia', icon: '\u{1F3E1}' },
+  { to: '/perfil', label: 'Perfil', icon: '\u{1F464}' },
 ]
 
 export default function HamburgerMenu({ isOpen, onClose }) {
   const navigate = useNavigate()
+  const [hasActiveSession, setHasActiveSession] = useState(() => !!getActiveFinancialSessionBridge())
   const { profile } = useAuth()
   const { sessionsCount, hasPendingInvites } = useFinancialSessionInviteNotifications()
+
+  useEffect(() => (
+    subscribeActiveFinancialSessionBridge((nextSession) => {
+      setHasActiveSession(!!nextSession)
+    })
+  ), [])
 
   async function handleLogout() {
     await logoutUser()
@@ -45,10 +57,10 @@ export default function HamburgerMenu({ isOpen, onClose }) {
         <div className="menu-header">
           <div className="menu-logo">
             <img src="/logo.jpg" alt="Learnendo" className="menu-logo-img" />
-            Learnendo Financas
+            Learnendo Finan\u00e7as
           </div>
           <button className="menu-close-btn" onClick={onClose} aria-label="Fechar menu">
-            ✕
+            {'\u2715'}
           </button>
         </div>
 
@@ -62,7 +74,12 @@ export default function HamburgerMenu({ isOpen, onClose }) {
               <div className="menu-user-email">{profile.email}</div>
               {hasPendingInvites && (
                 <div className="menu-user-alert">
-                  {sessionsCount} convite(s) de sessao esperando por voce
+                  {sessionsCount} convite(s) de sess\u00e3o esperando por voc\u00ea
+                </div>
+              )}
+              {hasActiveSession && (
+                <div className="menu-user-alert">
+                  Uma sess\u00e3o colaborativa est\u00e1 ativa agora
                 </div>
               )}
             </div>
@@ -87,7 +104,7 @@ export default function HamburgerMenu({ isOpen, onClose }) {
 
         <div className="menu-footer">
           <button className="menu-logout-btn" onClick={handleLogout}>
-            🚪 Sair
+            {'\u{1F6AA}'} Sair
           </button>
         </div>
       </aside>

@@ -1,0 +1,267 @@
+.financial-session-dock {
+  display: grid;
+  gap: 10px;
+  margin: 12px 16px 0;
+  padding: 12px 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #eff6ff 0%, #f0fdfa 100%);
+}
+
+.financial-session-dock__bar,
+.financial-session-dock__quick,
+.financial-session-dock__composer,
+.financial-session-dock__toolbar,
+.financial-session-dock__chat-meta,
+.financial-session-dock__screen-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.financial-session-dock__identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.financial-session-dock__identity strong,
+.financial-session-dock__participant strong,
+.financial-session-dock__attachment strong {
+  color: #0f172a;
+}
+
+.financial-session-dock__identity span,
+.financial-session-dock__participant span,
+.financial-session-dock__status,
+.financial-session-dock__attachment span,
+.financial-session-dock__request-author {
+  color: #475569;
+}
+
+.financial-session-dock__camera,
+.financial-session-dock__counter,
+.financial-session-dock__tab,
+.financial-session-dock__delete {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.financial-session-dock__camera {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 1.1rem;
+}
+
+.financial-session-dock__counter {
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.financial-session-dock__status.live {
+  color: #047857;
+  font-weight: 700;
+}
+
+.financial-session-dock__status.idle {
+  font-weight: 600;
+}
+
+.financial-session-dock__body {
+  display: grid;
+  gap: 12px;
+}
+
+.financial-session-dock__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.financial-session-dock__tab {
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #475569;
+}
+
+.financial-session-dock__tab.active {
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.financial-session-dock__panel,
+.financial-session-dock__screen,
+.financial-session-dock__request-item,
+.financial-session-dock__request-form,
+.financial-session-dock__chat-item,
+.financial-session-dock__attachment {
+  display: grid;
+  gap: 10px;
+}
+
+.financial-session-dock__alert {
+  padding: 12px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 16px;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.financial-session-dock__info,
+.financial-session-dock__chat-item p,
+.financial-session-dock__request-item p {
+  margin: 0;
+  color: #475569;
+}
+
+.financial-session-dock__hidden {
+  display: none !important;
+}
+
+.financial-session-dock__screen-frame {
+  aspect-ratio: 16 / 9;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #020617;
+}
+
+.financial-session-dock__participants {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.financial-session-dock__participant {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #dbe4f0;
+}
+
+.financial-session-dock__participant-frame {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #0f172a;
+}
+
+.financial-session-dock__video-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.financial-session-dock__placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+}
+
+.financial-session-dock__chat-list,
+.financial-session-dock__requests {
+  display: grid;
+  gap: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.financial-session-dock__chat-item,
+.financial-session-dock__request-item {
+  padding: 12px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #dbe4f0;
+}
+
+.financial-session-dock__chat-item.mine {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+}
+
+.financial-session-dock__attachment a {
+  color: #0f766e;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.financial-session-dock__attachment a:hover {
+  text-decoration: underline;
+}
+
+.financial-session-dock__delete {
+  justify-self: end;
+  background: transparent;
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.financial-session-dock__textarea,
+.financial-session-dock__input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  font: inherit;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.financial-session-dock__textarea {
+  resize: vertical;
+}
+
+.financial-session-dock__upload input {
+  display: none;
+}
+
+.financial-session-dock__upload span {
+  display: inline-flex;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed #0f766e;
+  color: #0f766e;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.financial-session-dock__selected-file {
+  display: grid;
+  gap: 4px;
+}
+
+.financial-session-dock__request-grid {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 900px) {
+  .financial-session-dock__bar,
+  .financial-session-dock__quick,
+  .financial-session-dock__toolbar,
+  .financial-session-dock__composer,
+  .financial-session-dock__chat-meta,
+  .financial-session-dock__screen-meta {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .financial-session-dock__participants,
+  .financial-session-dock__request-grid {
+    grid-template-columns: 1fr;
+  }
+}

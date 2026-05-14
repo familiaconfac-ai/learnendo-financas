@@ -3,12 +3,12 @@ import { NavLink } from 'react-router-dom'
 import './BottomNav.css'
 
 const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Inicio', icon: '🏠' },
-  { to: '/contas', label: 'Contas', icon: '💰' },
-  { to: '/lancar', label: 'Lancar', icon: '➕' },
-  { to: '/familia', label: 'Familia', icon: '🏡' },
-  { to: '/importacao', label: 'Cupom', icon: '🧾' },
-  { to: '/orcamento', label: 'Metas', icon: '📊' },
+  { to: '/dashboard', label: 'In\u00edcio', icon: '\u{1F3E0}' },
+  { to: '/contas', label: 'Contas', icon: '\u{1F4B0}' },
+  { to: '/lancar', label: 'Lan\u00e7ar', icon: '\u2795' },
+  { to: '/familia', label: 'Fam\u00edlia', icon: '\u{1F3E1}' },
+  { to: '/importacao', label: 'Cupom', icon: '\u{1F9FE}' },
+  { to: '/orcamento', label: 'Metas', icon: '\u{1F4CA}' },
 ]
 
 export default function BottomNav() {
@@ -23,8 +23,8 @@ export default function BottomNav() {
   async function handleShare() {
     const url = window.location.origin
     const shareData = {
-      title: 'Learnendo Financas',
-      text: 'Conheca o Learnendo Financas',
+      title: 'Learnendo Finan\u00e7as',
+      text: 'Conhe\u00e7a o Learnendo Finan\u00e7as',
       url,
     }
 
@@ -41,7 +41,7 @@ export default function BottomNav() {
         await navigator.clipboard.writeText(url)
         setFeedback('Link copiado com sucesso')
       } catch {
-        setFeedback('Nao foi possivel compartilhar')
+        setFeedback('N\u00e3o foi poss\u00edvel compartilhar')
       }
     }
   }
@@ -67,7 +67,7 @@ export default function BottomNav() {
           onClick={handleShare}
           aria-label="Compartilhar o app"
         >
-          <span className="bottom-nav-icon">📤</span>
+          <span className="bottom-nav-icon">{'\u{1F4E4}'}</span>
           <span className="bottom-nav-label">Share</span>
         </button>
       </nav>

@@ -1,40 +1,51 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useFinancialSessionInviteNotifications } from '../../hooks/useFinancialSessionInviteNotifications'
+import {
+  getActiveFinancialSessionBridge,
+  subscribeActiveFinancialSessionBridge,
+} from '../../services/financialSessionBridgeService'
 import HamburgerMenu from './HamburgerMenu'
 import './Header.css'
 
 const MONTH_NAMES = [
-  'Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
+  'Janeiro', 'Fevereiro', 'Mar\u00e7o', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
 ]
 
 const PAGE_TITLES = {
-  '/lancar': 'Lancar',
-  '/lancamentos': 'Lancamentos',
+  '/lancar': 'Lan\u00e7ar',
+  '/lancamentos': 'Lan\u00e7amentos',
   '/contas': 'Contas',
   '/importacao': 'Cupom',
-  '/orcamento': 'Orcamento',
-  '/mensal': 'Visao Mensal',
-  '/relatorios': 'Relatorios',
-  '/dividas': 'Dividas',
-  '/reunioes': 'Reunioes',
-  '/reconciliacao': 'Reconciliacao',
-  '/familia': 'Familia',
+  '/orcamento': 'Or\u00e7amento',
+  '/mensal': 'Vis\u00e3o Mensal',
+  '/relatorios': 'Relat\u00f3rios',
+  '/dividas': 'D\u00edvidas',
+  '/reunioes': 'Reuni\u00f5es',
+  '/reconciliacao': 'Reconcilia\u00e7\u00e3o',
+  '/familia': 'Fam\u00edlia',
   '/perfil': 'Perfil',
   '/admin': 'Painel Admin',
 }
 
 export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [hasActiveSession, setHasActiveSession] = useState(() => !!getActiveFinancialSessionBridge())
   const location = useLocation()
   const navigate = useNavigate()
   const { user, profile } = useAuth()
   const { sessionsCount, hasPendingInvites } = useFinancialSessionInviteNotifications()
 
+  useEffect(() => (
+    subscribeActiveFinancialSessionBridge((nextSession) => {
+      setHasActiveSession(!!nextSession)
+    })
+  ), [])
+
   const title = location.pathname.startsWith('/reunioes/sessao/')
-    ? 'Sessao Financeira'
+    ? 'Sess\u00e3o Financeira'
     : (PAGE_TITLES[location.pathname] ?? '')
 
   return (
@@ -45,7 +56,7 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
           onClick={() => setMenuOpen(true)}
           aria-label="Abrir menu"
         >
-          <span className="hamburger-icon">☰</span>
+          <span className="hamburger-icon">{'\u2630'}</span>
         </button>
 
         <div className="header-center">
@@ -53,8 +64,8 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
             <h1 className="header-title">{title}</h1>
           ) : (
             <div className="header-brand">
-              <img src="/logo.jpg" alt="Learnendo Financas" className="header-logo" />
-              <span className="header-brand-name">Learnendo Financas</span>
+              <img src="/logo.jpg" alt="Learnendo Finan\u00e7as" className="header-logo" />
+              <span className="header-brand-name">Learnendo Finan\u00e7as</span>
             </div>
           )}
           {showMonthNav && (
@@ -66,11 +77,11 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
 
         <div className="header-actions">
           <button
-            className={`header-meetings-btn${hasPendingInvites ? ' has-badge' : ''}`}
+            className={`header-meetings-btn${hasPendingInvites || hasActiveSession ? ' has-badge' : ''}`}
             onClick={() => navigate('/reunioes')}
-            aria-label="Abrir reunioes"
+            aria-label="Abrir reuni\u00f5es"
           >
-            <span className="header-meetings-icon">🎥</span>
+            <span className="header-meetings-icon">{'\u{1F4F9}'}</span>
             {hasPendingInvites && <span className="header-notification-badge">{sessionsCount}</span>}
           </button>
 
@@ -86,9 +97,9 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
                 className="header-avatar-img"
               />
             ) : (
-              profile?.displayName?.[0]?.toUpperCase() ??
-              user?.email?.[0]?.toUpperCase() ??
-              'U'
+              profile?.displayName?.[0]?.toUpperCase()
+              ?? user?.email?.[0]?.toUpperCase()
+              ?? 'U'
             )}
           </button>
         </div>

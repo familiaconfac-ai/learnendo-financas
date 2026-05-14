@@ -60,11 +60,11 @@ export function canApplyFinancialActionRequest(sessionRole) {
 }
 
 export function participantAccessLabel(sessionRole, state) {
-  if (sessionRole === 'planner') return 'Controle total da sessao'
+  if (sessionRole === 'planner') return 'Controle total da sessão'
   if (sessionRole === 'client') {
-    if (state?.clientEditLocked || state?.clientAccessMode === 'view_only') return 'Somente visualizacao'
-    if (state?.clientAccessMode === 'guided_edit') return 'Edicao guiada'
-    return 'Edicao liberada'
+    if (state?.clientEditLocked || state?.clientAccessMode === 'view_only') return 'Somente visualização'
+    if (state?.clientAccessMode === 'guided_edit') return 'Edição guiada'
+    return 'Edição liberada'
   }
   return 'Acompanhamento'
 }
