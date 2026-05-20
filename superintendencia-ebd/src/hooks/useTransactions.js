@@ -38,7 +38,9 @@ export function useTransactions(year, month) {
     try {
       await ensureMonthlyRecurringTransactions(user.uid, year, month, { workspaceId: activeWorkspaceId })
       const data = await fetchTransactionsWithOptions(user.uid, year, month, {
+        // Mantém os lançamentos do workspace atual e soma o legado pessoal do mês.
         workspaceId: activeWorkspaceId,
+        includeLegacyPersonal: true,
         viewerRole: myRole,
         viewerUid: user.uid,
       })
