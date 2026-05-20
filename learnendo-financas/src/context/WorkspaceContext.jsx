@@ -295,7 +295,9 @@ export function WorkspaceProvider({ children }) {
   async function createInviteLink(role = 'membro', target = {}) {
     if (!user?.uid || !activeWorkspaceId) throw new Error('Workspace não selecionado')
     if (!permissions.canInvite) throw new Error('Seu papel não pode convidar membros')
-    return createWorkspaceInvite(activeWorkspaceId, user.uid, role, target)
+    const invite = await createWorkspaceInvite(activeWorkspaceId, user.uid, role, target)
+    await reloadWorkspaceData()
+    return invite
   }
 
   async function cancelInvite(inviteId) {

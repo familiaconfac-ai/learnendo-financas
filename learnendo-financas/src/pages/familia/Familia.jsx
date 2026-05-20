@@ -77,7 +77,6 @@ const EXTERNAL_DEBT_TYPE_OPTIONS = [
 function memberStableId(member) {
   return member?.uid || member?.id || ''
 }
-
 function debtReasonLabel(reasonType) {
   return INTERNAL_DEBT_REASON_OPTIONS.find((option) => option.value === reasonType)?.label || 'Emprestimo'
 }
@@ -431,16 +430,35 @@ export default function Familia() {
 
   async function handleInviteWhatsApp(e) {
     e.preventDefault()
-    const phone    = invitePhone.replace(/\D/g, '')
-    const famName  = familyName || 'nossa família'
-    const invite = await createInviteLink(inviteRole || 'membro', { phone, method: 'whatsapp' })
-    const message  = `Olá! Você foi convidado(a) para participar de "${famName}" no Learnendo Finanças.\n\nAceite por este link: ${invite.link}`
-    const waUrl    = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+    const phone = invitePhone.replace(/\D/g, '')
+    if (phone.length < 10) {
+      showToast('Informe um numero de WhatsApp valido com DDD e codigo do pais.', 'err')
+      return
+    }
 
-    window.open(waUrl, '_blank', 'noopener,noreferrer')
-    setInviteOpen(false)
-    setInvitePhone('')
-    showToast('WhatsApp aberto com o convite 📲')
+    const famName = familyName || 'nossa familia'
+    const inviteWindow = window.open('', '_blank', 'noopener,noreferrer')
+    setSaving(true)
+    try {
+      const invite = await createInviteLink(inviteRole || 'membro', { phone, method: 'whatsapp' })
+      const message = 'Ola! Voce foi convidado(a) para participar de "' + famName + '" no Learnendo Financas.\n\nAceite por este link: ' + invite.link
+      const waUrl = 'https://wa.me/' + phone + '?text=' + encodeURIComponent(message)
+
+      if (inviteWindow) {
+        inviteWindow.location.href = waUrl
+      } else {
+        window.location.href = waUrl
+      }
+
+      setInviteOpen(false)
+      setInvitePhone('')
+      showToast('WhatsApp aberto com o convite.')
+    } catch (err) {
+      if (inviteWindow && !inviteWindow.closed) inviteWindow.close()
+      showToast('Erro ao convidar: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function handleInviteEmail(e) {
@@ -2085,7 +2103,7 @@ export default function Familia() {
                   <button type="button" className="btn-cancel" onClick={() => setInviteOpen(false)}>
                     Cancelar
                   </button>
-                  <button type="submit" className="btn-whatsapp">
+                  <button type="submit" className="btn-whatsapp" disabled={saving}>
                     📲 Abrir WhatsApp
                   </button>
                 </div>
@@ -2248,4 +2266,5 @@ export default function Familia() {
     </div>
   )
 }
+
 
