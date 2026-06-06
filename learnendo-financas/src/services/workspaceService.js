@@ -189,14 +189,14 @@ export function normalizeWorkspaceRole(role) {
   return 'membro'
 }
 
-export function getPermissionsByRole(role) {
+export function getPermissionsByRole(role, memberStatus = 'active') {
   const normalizedRole = normalizeWorkspaceRole(role)
   const isFullManager = normalizedRole === 'gestor' || normalizedRole === 'planejador-master'
   const isCoManager = normalizedRole === 'co-gestor' || normalizedRole === 'planejador-plus' || normalizedRole === 'planejador-blind'
   const isContributor = normalizedRole === 'membro'
   const isReadonlyPlanner = normalizedRole === 'planejador'
   const canViewAmounts = normalizedRole !== 'planejador-blind'
-  return {
+  const basePermissions = {
     canInvite: isFullManager,
     canRemoveMember: isFullManager,
     canChangeRoles: isFullManager,
@@ -209,6 +209,24 @@ export function getPermissionsByRole(role) {
     canViewAmounts,
     viewPrivateOthers: isFullManager || isCoManager,
   }
+
+  if (memberStatus && memberStatus !== 'active') {
+    return {
+      ...basePermissions,
+      canInvite: false,
+      canRemoveMember: false,
+      canChangeRoles: false,
+      canEditBudget: false,
+      canCreateGlobalCategories: false,
+      canImport: false,
+      canConfirm: false,
+      canLaunch: false,
+      readOnly: true,
+      viewPrivateOthers: false,
+    }
+  }
+
+  return basePermissions
 }
 
 async function ensureDefaultNatures(workspaceId) {
@@ -782,7 +800,7 @@ export async function acceptWorkspaceInvite(uid, token) {
     name: memberIdentity.name,
     avatarInitial: memberIdentity.avatarInitial,
     role,
-    status: 'active',
+    status: 'pending_confirmation',
     joinedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   }, { merge: true })
@@ -790,13 +808,13 @@ export async function acceptWorkspaceInvite(uid, token) {
   await setDoc(userMembershipDoc(uid, invite.workspaceId), {
     workspaceId: invite.workspaceId,
     role,
-    status: 'active',
+    status: 'pending_confirmation',
     joinedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   }, { merge: true })
 
   await updateDoc(inviteTokenDoc(token), {
-    status: 'accepted',
+    status: 'awaiting_confirmation',
     acceptedBy: uid,
     acceptedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -804,7 +822,7 @@ export async function acceptWorkspaceInvite(uid, token) {
 
   if (invite.inviteId) {
     await updateDoc(workspaceInviteDoc(invite.workspaceId, invite.inviteId), {
-      status: 'accepted',
+      status: 'awaiting_confirmation',
       acceptedBy: uid,
       acceptedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -814,7 +832,7 @@ export async function acceptWorkspaceInvite(uid, token) {
   await syncLegacyFamilyMirror(invite.workspaceId, {
     ...memberIdentity,
     role,
-    status: 'active',
+    status: 'pending_confirmation',
     joinedAt: serverTimestamp(),
   }, {
     ...workspaceData,
@@ -823,6 +841,74 @@ export async function acceptWorkspaceInvite(uid, token) {
 
   await setActiveWorkspaceId(uid, invite.workspaceId)
   return invite.workspaceId
+}
+
+export async function approveWorkspaceInvite(workspaceId, inviteId, actorUid = null) {
+  if (!workspaceId || !inviteId) throw new Error('Convite nao selecionado')
+
+  const inviteRef = workspaceInviteDoc(workspaceId, inviteId)
+  const inviteSnap = await getDoc(inviteRef)
+  if (!inviteSnap.exists()) throw new Error('Convite nao encontrado')
+
+  const invite = { id: inviteSnap.id, ...inviteSnap.data() }
+  if (invite.status !== 'awaiting_confirmation') {
+    throw new Error('Este convite ainda nao esta aguardando confirmacao')
+  }
+  if (!invite.acceptedBy) {
+    throw new Error('Este convite ainda nao foi aceito pela pessoa convidada')
+  }
+
+  const role = invite.role || 'membro'
+  const workspaceSnap = await getDoc(workspaceDoc(workspaceId))
+  const workspaceData = workspaceSnap.exists() ? workspaceSnap.data() : {}
+  const profile = await getUserProfileData(invite.acceptedBy)
+  const memberIdentity = buildMemberIdentity(invite.acceptedBy, profile)
+
+  await setDoc(workspaceMemberDoc(workspaceId, invite.acceptedBy), {
+    uid: invite.acceptedBy,
+    email: memberIdentity.email,
+    displayName: memberIdentity.displayName,
+    name: memberIdentity.name,
+    avatarInitial: memberIdentity.avatarInitial,
+    role,
+    status: 'active',
+    joinedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }, { merge: true })
+
+  await setDoc(userMembershipDoc(invite.acceptedBy, workspaceId), {
+    workspaceId,
+    role,
+    status: 'active',
+    joinedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }, { merge: true })
+
+  await updateDoc(inviteRef, {
+    status: 'accepted',
+    approvedBy: actorUid || null,
+    approvedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  })
+
+  if (invite.token) {
+    await updateDoc(inviteTokenDoc(invite.token), {
+      status: 'accepted',
+      approvedBy: actorUid || null,
+      approvedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  }
+
+  await syncLegacyFamilyMirror(workspaceId, {
+    ...memberIdentity,
+    role,
+    status: 'active',
+    joinedAt: serverTimestamp(),
+  }, {
+    ...workspaceData,
+    workspaceId,
+  })
 }
 
 export async function removeWorkspaceMember(workspaceId, actor, memberUid) {

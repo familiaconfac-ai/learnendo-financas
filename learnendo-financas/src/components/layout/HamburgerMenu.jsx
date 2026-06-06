@@ -1,11 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { useFinancialSessionInviteNotifications } from '../../hooks/useFinancialSessionInviteNotifications'
-import {
-  getActiveFinancialSessionBridge,
-  subscribeActiveFinancialSessionBridge,
-} from '../../services/financialSessionBridgeService'
 import { logoutUser } from '../../firebase/auth'
 import './HamburgerMenu.css'
 
@@ -15,7 +10,6 @@ const MENU_LINKS = [
   { to: '/lancar', label: 'Lan\u00e7ar', icon: '\u2795' },
   { to: '/lancamentos', label: 'Lan\u00e7amentos', icon: '\u{1F4DD}' },
   { to: '/dividas', label: 'D\u00edvidas', icon: '\u{1F4C9}' },
-  { to: '/reunioes', label: 'Reuni\u00f5es', icon: '\u{1F4F9}' },
   { to: '/reconciliacao', label: 'Reconcilia\u00e7\u00e3o', icon: '\u{1F50D}' },
   { to: '/orcamento', label: 'Or\u00e7amento', icon: '\u{1F4B0}' },
   { to: '/mensal', label: 'Vis\u00e3o Mensal', icon: '\u{1F4C6}' },
@@ -26,15 +20,7 @@ const MENU_LINKS = [
 
 export default function HamburgerMenu({ isOpen, onClose }) {
   const navigate = useNavigate()
-  const [hasActiveSession, setHasActiveSession] = useState(() => !!getActiveFinancialSessionBridge())
   const { profile } = useAuth()
-  const { sessionsCount, hasPendingInvites } = useFinancialSessionInviteNotifications()
-
-  useEffect(() => (
-    subscribeActiveFinancialSessionBridge((nextSession) => {
-      setHasActiveSession(!!nextSession)
-    })
-  ), [])
 
   async function handleLogout() {
     await logoutUser()
@@ -72,16 +58,6 @@ export default function HamburgerMenu({ isOpen, onClose }) {
             <div>
               <div className="menu-user-name">{profile.displayName}</div>
               <div className="menu-user-email">{profile.email}</div>
-              {hasPendingInvites && (
-                <div className="menu-user-alert">
-                  {sessionsCount} convite(s) de sess\u00e3o esperando por voc\u00ea
-                </div>
-              )}
-              {hasActiveSession && (
-                <div className="menu-user-alert">
-                  Uma sess\u00e3o colaborativa est\u00e1 ativa agora
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -95,9 +71,6 @@ export default function HamburgerMenu({ isOpen, onClose }) {
             >
               <span className="menu-link-icon">{link.icon}</span>
               <span className="menu-link-label">{link.label}</span>
-              {link.to === '/reunioes' && hasPendingInvites && (
-                <span className="menu-link-badge">{sessionsCount}</span>
-              )}
             </button>
           ))}
         </nav>

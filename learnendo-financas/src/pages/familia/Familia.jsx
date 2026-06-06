@@ -39,6 +39,7 @@ const ROLE_DESC = {
 
 const INV_STATUS_META = {
   pending:   { label: 'Aguardando', cls: 'inv-pending'  },
+  awaiting_confirmation: { label: 'Aguardando sua confirmacao', cls: 'inv-pending' },
   accepted:  { label: 'Aceito',     cls: 'inv-accepted' },
   declined:  { label: 'Recusado',   cls: 'inv-declined' },
   expired:   { label: 'Expirado',   cls: 'inv-expired'  },
@@ -134,6 +135,12 @@ function debtSettlementStatusLabel(status) {
   return 'Aguardando confirmacao'
 }
 
+function memberInviteStatusLabel(status) {
+  if (status === 'pending_confirmation') return 'Aguardando confirmacao'
+  if (status === 'pending') return 'Pendente'
+  return ''
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
 function useToast() {
@@ -152,8 +159,11 @@ export default function Familia() {
   const { selectedMonth, selectedYear } = useFinance()
   const { accounts } = useAccounts()
   const {
+    workspaces,
+    changeWorkspace,
     createInviteLink,
     cancelInvite: cancelWorkspaceInvite,
+    approveInvite,
     activeWorkspace,
     activeWorkspaceId,
     permissions,
@@ -220,6 +230,7 @@ export default function Familia() {
   const [externalDebtForm,   setExternalDebtForm]    = useState(defaultExternalDebtForm())
   const [settlementOpen,     setSettlementOpen]      = useState(false)
   const [settlementForm,     setSettlementForm]      = useState(defaultSettlementForm())
+  const [quickSettlementDrafts, setQuickSettlementDrafts] = useState({})
   const [activeMemberLedgerId, setActiveMemberLedgerId] = useState('')
   const [rolesExpanded,      setRolesExpanded]       = useState(false)
   const [generalLedgerExpanded, setGeneralLedgerExpanded] = useState(false)
@@ -258,11 +269,27 @@ export default function Familia() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
+  const familyWorkspace = useMemo(() => {
+    if (activeWorkspace?.type === 'family') return activeWorkspace
+    if (family?.id) {
+      const matchingFamily = (workspaces || []).find((workspace) => workspace.id === family.id)
+      if (matchingFamily) return matchingFamily
+    }
+    return (workspaces || []).find((workspace) => workspace.type === 'family') || null
+  }, [activeWorkspace, family?.id, workspaces])
+
+  useEffect(() => {
+    if (!familyWorkspace?.id) return
+    if (activeWorkspace?.id === familyWorkspace.id) return
+    void changeWorkspace(familyWorkspace.id)
+  }, [activeWorkspace?.id, changeWorkspace, familyWorkspace?.id])
+
+  const familyWorkspaceReady = activeWorkspace?.type === 'family' && activeWorkspace?.id === familyWorkspace?.id
   const myMember   = members.find((m) => m.uid === user?.uid || m.id === user?.uid)
-  const familyName = activeWorkspace?.name || family?.name || 'Familia'
+  const familyName = familyWorkspace?.name || family?.name || 'Familia'
   const familyMembers = workspaceMembers?.length > 0 ? workspaceMembers : members
   const currentMemberLabel = myMember?.displayName || user?.displayName || user?.email || 'Voce'
-  const canInviteMembers = Boolean(permissions?.canInvite || (!activeWorkspace && canManage))
+  const canInviteMembers = Boolean((familyWorkspaceReady && permissions?.canInvite) || (!activeWorkspace && canManage))
   const canChangeMemberRoles = Boolean(permissions?.canChangeRoles || (!activeWorkspace && canManage))
   const canRemoveMembers = Boolean(permissions?.canRemoveMember || (!activeWorkspace && canManage))
   const canManageProjects = Boolean(permissions?.canEditBudget || (!activeWorkspace && canManage))
@@ -271,7 +298,7 @@ export default function Familia() {
     const modern = (workspaceInvitations || []).map((item) => ({ ...item, _source: 'workspace' }))
     const legacy = (invitations || []).map((item) => ({ ...item, _source: 'legacy-family' }))
     const merged = modern.length > 0 ? [...modern, ...legacy] : legacy
-    return merged.filter((item) => item.status === 'pending')
+    return merged.filter((item) => item.status === 'pending' || item.status === 'awaiting_confirmation')
   }, [workspaceInvitations, invitations])
   const activeProjects = Array.isArray(projects) ? projects.filter((project) => project.status !== 'archived') : []
   const leadProject = activeProjects[0] || null
@@ -428,6 +455,16 @@ export default function Familia() {
     }
   }
 
+  async function ensureFamilyWorkspaceSelected() {
+    if (familyWorkspaceReady) return familyWorkspace?.id || activeWorkspaceId
+    if (!familyWorkspace?.id) {
+      showToast('Nenhuma familia ativa foi encontrada para este convite.', 'err')
+      return ''
+    }
+    await changeWorkspace(familyWorkspace.id)
+    return familyWorkspace.id
+  }
+
   async function handleInviteWhatsApp(e) {
     e.preventDefault()
     const phone = invitePhone.replace(/\D/g, '')
@@ -440,8 +477,10 @@ export default function Familia() {
     const inviteWindow = window.open('', '_blank', 'noopener,noreferrer')
     setSaving(true)
     try {
-      const invite = await createInviteLink(inviteRole || 'membro', { phone, method: 'whatsapp' })
-      const message = 'Ola! Voce foi convidado(a) para participar de "' + famName + '" no Learnendo Financas.\n\nAceite por este link: ' + invite.link
+      const workspaceId = await ensureFamilyWorkspaceSelected()
+      if (!workspaceId) return
+      const invite = await createInviteLink(inviteRole || 'membro', { phone, method: 'whatsapp' }, workspaceId)
+      const message = 'Ola! Voce foi convidado(a) para entrar na familia "' + famName + '" no Learnendo Financas.\n\nSe ainda nao tiver conta, instale o app e crie seu cadastro. Depois, toque neste link para entrar na familia:\n' + invite.link
       const waUrl = 'https://wa.me/' + phone + '?text=' + encodeURIComponent(message)
 
       if (inviteWindow) {
@@ -466,13 +505,15 @@ export default function Familia() {
     if (!inviteEmail.trim()) return
     setSaving(true)
     try {
+      const workspaceId = await ensureFamilyWorkspaceSelected()
+      if (!workspaceId) return
       const invite = await createInviteLink(inviteRole || 'membro', {
         email: inviteEmail.trim(),
         method: 'email',
-      })
+      }, workspaceId)
       const subject = encodeURIComponent(`Convite para ${familyName}`)
       const body = encodeURIComponent(
-        `Olá!\n\nVocê foi convidado(a) para participar de "${familyName}" no Learnendo Finanças.\n\nAceite por este link:\n${invite.link}`,
+        `Ola!\n\nVoce foi convidado(a) para entrar na familia "${familyName}" no Learnendo Financas.\n\nSe ainda nao tiver conta, instale o app e crie seu cadastro. Depois, toque neste link para entrar na familia:\n${invite.link}`,
       )
       window.open(`mailto:${inviteEmail.trim()}?subject=${subject}&body=${body}`, '_blank', 'noopener,noreferrer')
       setInviteOpen(false)
@@ -668,6 +709,51 @@ export default function Familia() {
     setSettlementOpen(true)
   }
 
+  function updateQuickSettlementDraft(debtId, patch) {
+    setQuickSettlementDrafts((current) => ({
+      ...current,
+      [debtId]: {
+        amount: current[debtId]?.amount || '',
+        notes: current[debtId]?.notes || '',
+        ...patch,
+      },
+    }))
+  }
+
+  async function handleQuickSettlementSubmit(debt) {
+    if (!debt?.id) return
+    const draft = quickSettlementDrafts[debt.id] || {}
+    const amount = Number(draft.amount || 0)
+
+    if (debt.debtorMemberId !== user?.uid) {
+      showToast('Somente quem deve pode marcar um envio.', 'err')
+      return
+    }
+    if (!amount || amount <= 0) {
+      showToast('Informe o valor enviado.', 'err')
+      return
+    }
+
+    setSaving(true)
+    try {
+      await addSettlement(debt.id, {
+        amount,
+        note: String(draft.notes || '').trim(),
+        createdByName: currentMemberLabel,
+        paymentMethod: 'manual',
+      })
+      setQuickSettlementDrafts((current) => ({
+        ...current,
+        [debt.id]: { amount: '', notes: '' },
+      }))
+      showToast('Envio registrado. Agora falta a confirmacao do recebedor.')
+    } catch (err) {
+      showToast('Erro ao registrar envio: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleCreateSettlement(e) {
     e.preventDefault()
 
@@ -686,11 +772,6 @@ export default function Familia() {
       showToast('Informe o valor enviado.', 'err')
       return
     }
-    if (amount > Number(debt.remainingAmount || 0)) {
-      showToast('O valor nao pode ser maior que o saldo em aberto.', 'err')
-      return
-    }
-
     setSaving(true)
     try {
       await addSettlement(debt.id, {
@@ -713,7 +794,7 @@ export default function Familia() {
     setSaving(true)
     try {
       await confirmSettlement(debt.id, settlement.id)
-      showToast('Recebimento confirmado. O saldo foi abatido. ✅')
+      showToast('Recebimento confirmado. Se passou do valor devido, o saldo virou credito automaticamente. ✅')
     } catch (err) {
       showToast('Erro ao confirmar recebimento: ' + err.message, 'err')
     } finally {
@@ -846,16 +927,11 @@ export default function Familia() {
   }
 
   async function handleShareApp() {
-    if (!canInviteMembers) {
-      showToast('Seu papel nao pode convidar novos membros.', 'err')
-      return
-    }
-
-    const invite = await createInviteLink(inviteRole || 'membro', { method: 'link' })
+    const appUrl = `${window.location.origin}/cadastro`
     const shareData = {
-      title: 'Convite de workspace',
-      text:  `Convite para o workspace ${family?.name || ''} (${inviteRole || 'membro'})`,
-      url:   invite.link,
+      title: 'Learnendo Financas',
+      text:  'Use o Learnendo Financas para organizar sua propria vida financeira ou criar a sua familia dentro do app.',
+      url:   appUrl,
     }
     if (navigator.share) {
       try {
@@ -863,11 +939,25 @@ export default function Familia() {
       } catch (_) { /* user cancelled */ }
     } else {
       try {
-        await navigator.clipboard.writeText(invite.link)
-        showToast('Link de convite copiado 📋')
+        await navigator.clipboard.writeText(appUrl)
+        showToast('Link do app copiado.')
       } catch (_) {
-        showToast('Link: ' + invite.link)
+        showToast('Link: ' + appUrl)
       }
+    }
+  }
+
+  async function handleApproveInvite(invite) {
+    if (!invite?.id || invite._source === 'legacy-family') return
+    setSaving(true)
+    try {
+      await approveInvite(invite.id)
+      await reload()
+      showToast('Entrada na familia confirmada.')
+    } catch (err) {
+      showToast('Erro ao confirmar convite: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -1152,13 +1242,15 @@ export default function Familia() {
             const memberId = memberStableId(m)
             const isMe      = m.uid === user?.uid || m.id === user?.uid
             const isGestor  = m.role === 'gestor'
-            const memberPermissions = getPermissionsByRole(m.role)
+            const memberPermissions = getPermissionsByRole(m.role, m.status)
             const canEdit = !memberPermissions.readOnly
             const canEditRoleTarget = canChangeMemberRoles && !isMe
             const memberDebtSummary = memberDebtSummaryById.get(memberId)
             const memberDebts = memberDebtDetailsById.get(memberId) || []
             const hasMemberDebtPanel = !isMe && (memberDebts.length > 0 || canRegisterInternalDebt)
             const isLedgerOpen = activeMemberLedgerId === memberId
+            const memberNetBalance = Number(memberDebtSummary?.netBalance || 0)
+            const memberNetTone = memberNetBalance > 0 ? 'green' : (memberNetBalance < 0 ? 'red' : 'neutral')
             return (
               <li key={memberId} className="member-item">
                 <div className="member-avatar" data-role={m.role}>
@@ -1168,7 +1260,7 @@ export default function Familia() {
                   <span className="member-name">
                     {m.displayName}
                     {isMe && <span className="member-you">você</span>}
-                    {m.status === 'pending' && <span className="member-status-pending">Pendente</span>}
+                    {memberInviteStatusLabel(m.status) && <span className="member-status-pending">{memberInviteStatusLabel(m.status)}</span>}
                   </span>
                   <span className="member-email">{m.email}</span>
                   {m.note && <span className="member-email">Obs: {m.note}</span>}
@@ -1192,18 +1284,13 @@ export default function Familia() {
                       {canEdit ? '✏️ Pode editar' : '👁️ Só visualiza'}
                     </span>
                   </div>
-                  {!isMe && memberDebtSummary && (memberDebtSummary.owesToMe > 0 || memberDebtSummary.iOwe > 0) && (
+                  {!isMe && hasMemberDebtPanel && (
                     <div className="member-ledger-row">
-                      {memberDebtSummary.owesToMe > 0 && (
-                        <span className="member-ledger-chip member-ledger-chip--green">
-                          Te deve {formatCurrency(memberDebtSummary.owesToMe)}
-                        </span>
-                      )}
-                      {memberDebtSummary.iOwe > 0 && (
-                        <span className="member-ledger-chip member-ledger-chip--red">
-                          Voce deve {formatCurrency(memberDebtSummary.iOwe)}
-                        </span>
-                      )}
+                      <span className={`member-ledger-chip member-ledger-chip--${memberNetTone}`}>
+                        {memberNetBalance > 0 && `A receber ${formatCurrency(memberNetBalance)}`}
+                        {memberNetBalance < 0 && `Voce deve ${formatCurrency(Math.abs(memberNetBalance))}`}
+                        {memberNetBalance === 0 && 'Saldo zerado'}
+                      </span>
                     </div>
                   )}
                   {hasMemberDebtPanel && (
@@ -1213,7 +1300,7 @@ export default function Familia() {
                         className="member-inline-btn"
                         onClick={() => handleMemberDebtOpen(m)}
                       >
-                        {memberDebts.length > 0 ? 'Atualizar saldo' : 'Registrar saldo'}
+                        {memberDebts.length > 0 ? 'Ajustar saldo' : 'Registrar saldo'}
                       </button>
                       <button
                         type="button"
@@ -1283,7 +1370,7 @@ export default function Familia() {
                                         className="member-inline-btn"
                                         onClick={() => handleSettlementOpen(debt)}
                                       >
-                                        Registrar restituicao
+                                        Registrar envio
                                       </button>
                                     )}
                                     <button
@@ -1295,6 +1382,33 @@ export default function Familia() {
                                       Excluir conta
                                     </button>
                                   </div>
+                                  {isDebtor && remainingAmount > 0 && (
+                                    <div className="member-quick-settlement">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        inputMode="decimal"
+                                        value={quickSettlementDrafts[debt.id]?.amount || ''}
+                                        onChange={(e) => updateQuickSettlementDraft(debt.id, { amount: e.target.value })}
+                                        placeholder="Valor enviado"
+                                      />
+                                      <input
+                                        type="text"
+                                        value={quickSettlementDrafts[debt.id]?.notes || ''}
+                                        onChange={(e) => updateQuickSettlementDraft(debt.id, { notes: e.target.value })}
+                                        placeholder="Observacao opcional"
+                                      />
+                                      <button
+                                        type="button"
+                                        className="member-inline-btn"
+                                        disabled={saving}
+                                        onClick={() => handleQuickSettlementSubmit(debt)}
+                                      >
+                                        Marcar como enviado
+                                      </button>
+                                    </div>
+                                  )}
                                   {settlements.length > 0 ? (
                                     <ul className="member-settlement-list">
                                       {settlements.map((settlement) => {
@@ -1386,7 +1500,7 @@ export default function Familia() {
       {/* Convites pendentes */}
       {visibleInvitations.length > 0 && (
         <Card>
-          <CardHeader title="Convites enviados" subtitle="Aguardando resposta" />
+          <CardHeader title="Convites da familia" subtitle="Acompanhe quem ainda nao entrou ou quem ja pediu acesso" />
           <ul className="invites-list">
             {visibleInvitations.map((inv) => {
                 const meta = INV_STATUS_META[inv.status] ?? { label: inv.status, cls: '' }
@@ -1398,6 +1512,16 @@ export default function Familia() {
                     <span className="invite-email">{dest}</span>
                     <span className={`invite-status ${meta.cls}`}>{meta.label}</span>
                     <span className="invite-role">{ROLE_META[inv.role]?.label ?? inv.role}</span>
+                    {inv.status === 'awaiting_confirmation' && inv._source !== 'legacy-family' && (
+                      <button
+                        type="button"
+                        className="invite-cancel-btn"
+                        onClick={() => handleApproveInvite(inv)}
+                        disabled={saving}
+                      >
+                        Confirmar
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="invite-cancel-btn"
@@ -1622,14 +1746,13 @@ export default function Familia() {
       <Card>
         <div className="share-app-row">
           <div className="share-app-info">
-            <strong>Convidar para o workspace</strong>
-            <p>Gera link com workspaceId e papel ({inviteRole || 'membro'}).</p>
+            <strong>Compartilhar o app</strong>
+            <p>Este link e geral do aplicativo. Cada pessoa cria a propria conta e a propria familia.</p>
           </div>
           <button className="btn-share-app" onClick={handleShareApp}>
-            🔗 Convidar
+            🔗 Compartilhar
           </button>
         </div>
-        {activeWorkspaceId && <p className="workspace-id-hint">Workspace atual: {activeWorkspaceId}</p>}
       </Card>
 
       {/* ── Modals ─────────────────────────────────────────────────────────── */}

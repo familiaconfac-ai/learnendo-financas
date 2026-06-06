@@ -19,8 +19,6 @@ import Contas from '../pages/contas/Contas'
 import Importacao from '../pages/importacao/Importacao'
 import Reconciliacao from '../pages/reconciliacao/Reconciliacao'
 import Dividas from '../pages/dividas/Dividas'
-import Reunioes from '../pages/reunioes/Reunioes'
-import SessaoFinanceiraRoom from '../pages/reunioes/SessaoFinanceiraRoom'
 
 // Admin pages
 import AdminDashboard from '../pages/admin/AdminDashboard'
@@ -46,9 +44,6 @@ export default function AppRoutes() {
           <Route path="/perfil"        element={<Perfil />} />
           <Route path="/contas"        element={<Contas />} />
           <Route path="/dividas"       element={<Dividas />} />
-          <Route path="/reunioes"      element={<Reunioes />} />
-          <Route path="/reunioes/sessao/:workspaceId/:sessionId" element={<SessaoFinanceiraRoom />} />
-          <Route path="/reunioes/sessao/:sessionId" element={<SessaoFinanceiraRoom />} />
           <Route path="/importacao"    element={<Importacao />} />
           <Route path="/reconciliacao" element={<Reconciliacao />} />
         </Route>

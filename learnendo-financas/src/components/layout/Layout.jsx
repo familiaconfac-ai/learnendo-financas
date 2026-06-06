@@ -1,7 +1,6 @@
 import { Outlet } from 'react-router-dom'
 import Header from './Header'
 import BottomNav from './BottomNav'
-import FinancialSessionDock from './FinancialSessionDock'
 import { useFinance } from '../../context/FinanceContext'
 import { useLocation } from 'react-router-dom'
 import './Layout.css'
@@ -23,7 +22,6 @@ export default function Layout() {
         showMonthNav={showMonthNav}
       />
       <main className="app-main">
-        <FinancialSessionDock />
         <Outlet />
       </main>
       <BottomNav />

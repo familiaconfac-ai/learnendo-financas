@@ -8,6 +8,7 @@ import {
   createWorkspace,
   createWorkspaceInvite,
   cancelWorkspaceInvite,
+  approveWorkspaceInvite,
   fetchWorkspaceMembers,
   fetchWorkspaceContacts,
   fetchWorkspaceNatures,
@@ -56,7 +57,10 @@ export function WorkspaceProvider({ children }) {
     () => normalizeWorkspaceRole(activeWorkspace?.memberRole),
     [activeWorkspace?.memberRole],
   )
-  const permissions = useMemo(() => getPermissionsByRole(myRole), [myRole])
+  const permissions = useMemo(
+    () => getPermissionsByRole(myRole, activeWorkspace?.memberStatus),
+    [activeWorkspace?.memberStatus, myRole],
+  )
 
   const resolveBestWorkspaceId = useCallback(async (workspaceList, preferredId = null) => {
     const preferredExists = workspaceList.some((ws) => ws.id === preferredId)
@@ -292,10 +296,11 @@ export function WorkspaceProvider({ children }) {
     return workspaceId
   }
 
-  async function createInviteLink(role = 'membro', target = {}) {
-    if (!user?.uid || !activeWorkspaceId) throw new Error('Workspace não selecionado')
+  async function createInviteLink(role = 'membro', target = {}, workspaceIdOverride = null) {
+    const resolvedWorkspaceId = workspaceIdOverride || activeWorkspaceId
+    if (!user?.uid || !resolvedWorkspaceId) throw new Error('Workspace não selecionado')
     if (!permissions.canInvite) throw new Error('Seu papel não pode convidar membros')
-    const invite = await createWorkspaceInvite(activeWorkspaceId, user.uid, role, target)
+    const invite = await createWorkspaceInvite(resolvedWorkspaceId, user.uid, role, target)
     await reloadWorkspaceData()
     return invite
   }
@@ -304,6 +309,13 @@ export function WorkspaceProvider({ children }) {
     if (!user?.uid || !activeWorkspaceId || !inviteId) throw new Error('Convite não selecionado')
     if (!permissions.canInvite) throw new Error('Seu papel não pode cancelar convites')
     await cancelWorkspaceInvite(activeWorkspaceId, inviteId)
+    await reloadWorkspaceData()
+  }
+
+  async function approveInvite(inviteId) {
+    if (!user?.uid || !activeWorkspaceId || !inviteId) throw new Error('Convite nao selecionado')
+    if (!permissions.canInvite) throw new Error('Seu papel nao pode confirmar convites')
+    await approveWorkspaceInvite(activeWorkspaceId, inviteId, user.uid)
     await reloadWorkspaceData()
   }
 
@@ -339,6 +351,7 @@ export function WorkspaceProvider({ children }) {
         createNewWorkspace,
         createInviteLink,
         cancelInvite,
+        approveInvite,
       }}
     >
       {children}

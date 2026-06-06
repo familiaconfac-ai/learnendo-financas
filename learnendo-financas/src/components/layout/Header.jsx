@@ -1,11 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { useFinancialSessionInviteNotifications } from '../../hooks/useFinancialSessionInviteNotifications'
-import {
-  getActiveFinancialSessionBridge,
-  subscribeActiveFinancialSessionBridge,
-} from '../../services/financialSessionBridgeService'
 import HamburgerMenu from './HamburgerMenu'
 import './Header.css'
 
@@ -23,7 +18,6 @@ const PAGE_TITLES = {
   '/mensal': 'Vis\u00e3o Mensal',
   '/relatorios': 'Relat\u00f3rios',
   '/dividas': 'D\u00edvidas',
-  '/reunioes': 'Reuni\u00f5es',
   '/reconciliacao': 'Reconcilia\u00e7\u00e3o',
   '/familia': 'Fam\u00edlia',
   '/perfil': 'Perfil',
@@ -32,21 +26,11 @@ const PAGE_TITLES = {
 
 export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const [hasActiveSession, setHasActiveSession] = useState(() => !!getActiveFinancialSessionBridge())
   const location = useLocation()
   const navigate = useNavigate()
   const { user, profile } = useAuth()
-  const { sessionsCount, hasPendingInvites } = useFinancialSessionInviteNotifications()
 
-  useEffect(() => (
-    subscribeActiveFinancialSessionBridge((nextSession) => {
-      setHasActiveSession(!!nextSession)
-    })
-  ), [])
-
-  const title = location.pathname.startsWith('/reunioes/sessao/')
-    ? 'Sess\u00e3o Financeira'
-    : (PAGE_TITLES[location.pathname] ?? '')
+  const title = PAGE_TITLES[location.pathname] ?? ''
 
   return (
     <>
@@ -76,15 +60,6 @@ export default function Header({ selectedMonth, selectedYear, showMonthNav }) {
         </div>
 
         <div className="header-actions">
-          <button
-            className={`header-meetings-btn${hasPendingInvites || hasActiveSession ? ' has-badge' : ''}`}
-            onClick={() => navigate('/reunioes')}
-            aria-label="Abrir reuni\u00f5es"
-          >
-            <span className="header-meetings-icon">{'\u{1F4F9}'}</span>
-            {hasPendingInvites && <span className="header-notification-badge">{sessionsCount}</span>}
-          </button>
-
           <button
             className="header-avatar"
             onClick={() => navigate('/perfil')}

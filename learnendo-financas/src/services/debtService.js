@@ -254,6 +254,50 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
   return ref.id
 }
 
+function buildOverflowDebtNote(debt, settlement, overflowAmount) {
+  const parts = []
+  if (debt?.notes) parts.push(String(debt.notes).trim())
+  parts.push(
+    `Saldo invertido automaticamente apos confirmacao de envio maior que o devido (${overflowAmount.toFixed(2)}).`,
+  )
+  if (settlement?.note) {
+    parts.push(`Observacao do envio original: ${settlement.note}`)
+  }
+  return parts.join('\n\n').trim() || null
+}
+
+function buildOverflowDebtRecord(workspaceId, debt, settlement, overflowAmount, actorUid = null) {
+  return {
+    name: debt?.name?.trim() || 'Saldo invertido',
+    type: debt?.type || 'pessoa',
+    totalAmount: overflowAmount,
+    paidAmount: 0,
+    initialPaidAmount: 0,
+    remainingAmount: overflowAmount,
+    status: 'open',
+    workspaceId,
+    createdBy: actorUid || settlement?.confirmedByUid || null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    relationshipKind: normalizeOptionalString(debt?.relationshipKind),
+    reasonType: normalizeFamilyReasonType(debt?.reasonType),
+    reasonLabel: normalizeOptionalString(debt?.reasonLabel),
+    creditorMemberId: normalizeOptionalString(debt?.debtorMemberId),
+    creditorMemberName: normalizeOptionalString(debt?.debtorMemberName),
+    debtorMemberId: normalizeOptionalString(debt?.creditorMemberId),
+    debtorMemberName: normalizeOptionalString(debt?.creditorMemberName),
+    counterpartyMemberId: normalizeOptionalString(debt?.creditorMemberId),
+    counterpartyMemberName: normalizeOptionalString(debt?.creditorMemberName),
+    contactId: normalizeOptionalString(debt?.contactId),
+    contactName: normalizeOptionalString(debt?.contactName),
+    notes: buildOverflowDebtNote(debt, settlement, overflowAmount),
+    settlements: [],
+    interestRate: debt?.interestRate || null,
+    dueDate: null,
+    installmentPlan: null,
+  }
+}
+
 export async function fetchDebtById(workspaceId, debtId) {
   if (!workspaceId || !debtId) return null
   const snap = await getDoc(debtDoc(workspaceId, debtId))
@@ -336,11 +380,6 @@ export async function requestDebtSettlement(workspaceId, debtId, payload = {}, a
       throw new Error('Somente quem deve pode informar uma restituição')
     }
 
-    const remainingAmount = toAmount(debt.remainingAmount)
-    if (amount > remainingAmount) {
-      throw new Error('O valor informado nao pode ser maior que o saldo em aberto')
-    }
-
     const nextSettlement = {
       id: createSettlementId(),
       amount,
@@ -381,26 +420,38 @@ export async function confirmDebtSettlement(workspaceId, debtId, settlementId, a
       throw new Error('Somente quem vai receber pode confirmar esta restituição')
     }
 
+    const remainingAmount = toAmount(debt.remainingAmount)
+    let confirmedSettlement = null
     const nextSettlements = debt.settlements.map((settlement) => {
       if (settlement.id !== settlementId) return settlement
       if (settlement.status !== 'pending') {
         throw new Error('Esta restituição ja foi processada')
       }
-      return {
+      confirmedSettlement = {
         ...settlement,
         status: 'confirmed',
         confirmedAt: new Date().toISOString(),
         confirmedByUid: actorUid || null,
       }
+      return confirmedSettlement
     })
 
     const exists = nextSettlements.some((settlement) => settlement.id === settlementId)
-    if (!exists) throw new Error('Restituicao nao encontrada')
+    if (!exists || !confirmedSettlement) throw new Error('Restituicao nao encontrada')
 
     transaction.update(ref, {
       settlements: nextSettlements,
       updatedAt: serverTimestamp(),
     })
+
+    const overflowAmount = Math.max(0, toAmount(confirmedSettlement.amount) - remainingAmount)
+    if (overflowAmount > 0) {
+      const overflowRef = doc(debtsCol(workspaceId))
+      transaction.set(
+        overflowRef,
+        buildOverflowDebtRecord(workspaceId, debt, confirmedSettlement, overflowAmount, actorUid),
+      )
+    }
   })
 
   await recalculateDebtBalance(workspaceId, debtId)

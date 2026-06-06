@@ -22,6 +22,11 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
     }
 
+    function isActiveWorkspaceMember(workspaceId) {
+      return isWorkspaceMember(workspaceId)
+        && workspaceMemberDoc(workspaceId, request.auth.uid).data.status == 'active';
+    }
+
     function workspaceRole(workspaceId) {
       return isWorkspaceMember(workspaceId)
         ? workspaceMemberDoc(workspaceId, request.auth.uid).data.role
@@ -29,12 +34,12 @@ service cloud.firestore {
     }
 
     function isWorkspaceManager(workspaceId) {
-      return isWorkspaceMember(workspaceId)
+      return isActiveWorkspaceMember(workspaceId)
         && workspaceRole(workspaceId) in ['gestor', 'co-gestor', 'planejador-master', 'planejador-plus'];
     }
 
     function canContributeWorkspace(workspaceId) {
-      return isWorkspaceMember(workspaceId)
+      return isActiveWorkspaceMember(workspaceId)
         && !(workspaceRole(workspaceId) in ['planejador']);
     }
 
@@ -108,7 +113,7 @@ service cloud.firestore {
         resource.data.inviterUid == request.auth.uid
         || (
           resource.data.status == 'pending'
-          && request.resource.data.status == 'accepted'
+          && request.resource.data.status == 'awaiting_confirmation'
           && request.resource.data.acceptedBy == request.auth.uid
         )
       );
@@ -147,7 +152,7 @@ service cloud.firestore {
           || (
             isWorkspaceMember(workspaceId)
             && resource.data.status == 'pending'
-            && request.resource.data.status == 'accepted'
+            && request.resource.data.status == 'awaiting_confirmation'
             && request.resource.data.acceptedBy == request.auth.uid
           );
         allow delete: if false;

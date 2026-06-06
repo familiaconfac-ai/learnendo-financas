@@ -48,7 +48,7 @@ export default function InviteAccept() {
     try {
       const workspaceId = await acceptWorkspaceInvite(user.uid, token)
       setStatus('accepted')
-      setMessage('Convite aceito com sucesso!')
+      setMessage('Pedido enviado. Agora a familia precisa confirmar sua entrada.')
       setTimeout(() => navigate('/familia', { replace: true, state: { workspaceId } }), 600)
     } catch (err) {
       setStatus('error')
@@ -59,7 +59,7 @@ export default function InviteAccept() {
   return (
     <div className="auth-screen">
       <div className="auth-form">
-        <h2 className="auth-title">Convite para workspace</h2>
+        <h2 className="auth-title">Convite para familia</h2>
 
         {status === 'loading' && <p>Validando convite…</p>}
 
@@ -76,7 +76,7 @@ export default function InviteAccept() {
             )}
             {!loading && user && (
               <button className="invite-link-btn" onClick={handleAccept}>
-                Aceitar convite
+                Solicitar entrada
               </button>
             )}
           </>
