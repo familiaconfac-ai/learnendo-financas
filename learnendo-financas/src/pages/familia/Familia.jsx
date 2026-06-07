@@ -169,7 +169,10 @@ function dateValueFromFirestoreLike(value) {
 
 function sortDebtsByOldestFirst(debts = []) {
   return [...debts].sort((a, b) => {
-    const diff = dateValueFromFirestoreLike(a?.createdAt) - dateValueFromFirestoreLike(b?.createdAt)
+    const diff = (
+      dateValueFromFirestoreLike(a?.loanConfirmedAt || a?.receiptConfirmedAt || a?.createdAt)
+      - dateValueFromFirestoreLike(b?.loanConfirmedAt || b?.receiptConfirmedAt || b?.createdAt)
+    )
     if (diff !== 0) return diff
     return String(a?.id || '').localeCompare(String(b?.id || ''))
   })
@@ -214,6 +217,7 @@ export default function Familia() {
     paymentsByDebtId,
     addDebt,
     addSettlement,
+    confirmReceipt,
     confirmSettlement,
     cancelSettlement,
     removeDebt,
@@ -357,17 +361,24 @@ export default function Familia() {
     [familyDebtLedger],
   )
   const memberDebtDetailsById = useMemo(
-    () => new Map(
-      familyDebtLedger.map((entry) => [
-        entry.memberId,
-        [...(entry.debts || [])].sort((a, b) => {
-          const remainingDiff = Number(b.remainingAmount || 0) - Number(a.remainingAmount || 0)
-          if (remainingDiff !== 0) return remainingDiff
-          return String(a.name || '').localeCompare(String(b.name || ''))
-        }),
-      ]),
-    ),
-    [familyDebtLedger],
+    () => {
+      const grouped = new Map()
+      for (const debt of familyInternalDebts) {
+        const counterpartId = counterpartMemberIdForDebt(debt, user?.uid)
+        if (!counterpartId) continue
+        const current = grouped.get(counterpartId) || []
+        current.push(debt)
+        grouped.set(counterpartId, current)
+      }
+
+      return new Map(
+        [...grouped.entries()].map(([memberId, memberDebts]) => [
+          memberId,
+          sortDebtsByOldestFirst(memberDebts),
+        ]),
+      )
+    },
+    [familyInternalDebts, user?.uid],
   )
   const openFamilyInternalDebts = useMemo(
     () => familyDebtLedger
@@ -723,7 +734,11 @@ export default function Familia() {
         notes: memberDebtForm.notes.trim(),
       })
       handleMemberDebtModalClose()
-      showToast('Pendencia interna registrada ✅')
+      showToast(
+        memberDebtForm.reasonType === 'emprestimo'
+          ? 'Emprestimo registrado. Agora quem recebeu precisa confirmar o recebimento.'
+          : 'Pendencia interna registrada ✅',
+      )
     } catch (err) {
       showToast('Erro ao registrar pendencia: ' + err.message, 'err')
     } finally {
@@ -780,13 +795,50 @@ export default function Familia() {
     }))
   }
 
+  async function createMemberPaymentRequests(orderedDebts = [], amount, note = '') {
+    const activeDebts = sortDebtsByOldestFirst(
+      (Array.isArray(orderedDebts) ? orderedDebts : []).filter((debt) => Number(debt.remainingAmount || 0) > 0),
+    )
+    const anchorDebt = activeDebts[0] || null
+    let lastAllocatedDebt = anchorDebt
+    let remainingToAllocate = Number(amount || 0)
+
+    if (!anchorDebt?.id) {
+      throw new Error('Nenhuma conta em aberto foi encontrada para este membro.')
+    }
+
+    for (const debt of activeDebts) {
+      if (remainingToAllocate <= 0) break
+      const currentDebtRemaining = Number(debt.remainingAmount || 0)
+      if (currentDebtRemaining <= 0) continue
+      const amountForDebt = Math.min(currentDebtRemaining, remainingToAllocate)
+      await addSettlement(debt.id, {
+        amount: amountForDebt,
+        note,
+        createdByName: currentMemberLabel,
+        paymentMethod: 'manual',
+      })
+      lastAllocatedDebt = debt
+      remainingToAllocate = Number((remainingToAllocate - amountForDebt).toFixed(2))
+    }
+
+    if (remainingToAllocate > 0) {
+      await addSettlement((lastAllocatedDebt || anchorDebt).id, {
+        amount: remainingToAllocate,
+        note,
+        createdByName: currentMemberLabel,
+        paymentMethod: 'manual',
+      })
+    }
+
+    return anchorDebt
+  }
+
   async function handleMemberSettlementSubmit(memberId, debts = []) {
     const draft = memberSettlementDrafts[memberId] || defaultMemberSettlementDraft(debts)
-    const orderedDebts = sortDebtsByOldestFirst(
-      (Array.isArray(debts) ? debts : []).filter((debt) => Number(debt.remainingAmount || 0) > 0),
-    )
+    const orderedDebts = sortDebtsByOldestFirst((Array.isArray(debts) ? debts : []))
     const targetDebt = orderedDebts[0] || null
-    let remainingToAllocate = Number(draft.amount || 0)
+    const amount = Number(draft.amount || 0)
 
     if (!targetDebt?.id) {
       showToast('Nenhuma conta em aberto foi encontrada para este membro.', 'err')
@@ -796,42 +848,20 @@ export default function Familia() {
       showToast('Somente quem deve pode marcar um envio.', 'err')
       return
     }
-    if (!remainingToAllocate || remainingToAllocate <= 0) {
+    if (!amount || amount <= 0) {
       showToast('Informe o novo valor enviado.', 'err')
       return
     }
 
     setSaving(true)
     try {
-      for (const debt of orderedDebts) {
-        if (remainingToAllocate <= 0) break
-        const currentDebtRemaining = Number(debt.remainingAmount || 0)
-        if (currentDebtRemaining <= 0) continue
-        const amountForDebt = Math.min(currentDebtRemaining, remainingToAllocate)
-        await addSettlement(debt.id, {
-          amount: amountForDebt,
-          note: String(draft.notes || '').trim(),
-          createdByName: currentMemberLabel,
-          paymentMethod: 'manual',
-        })
-        remainingToAllocate = Number((remainingToAllocate - amountForDebt).toFixed(2))
-      }
-
-      if (remainingToAllocate > 0) {
-        await addSettlement(targetDebt.id, {
-          amount: remainingToAllocate,
-          note: String(draft.notes || '').trim(),
-          createdByName: currentMemberLabel,
-          paymentMethod: 'manual',
-        })
-      }
-
+      const anchorDebt = await createMemberPaymentRequests(orderedDebts, amount, String(draft.notes || '').trim())
       setMemberSettlementDrafts((current) => ({
         ...current,
         [memberId]: {
           ...(current[memberId] || defaultMemberSettlementDraft(debts)),
           open: false,
-          debtId: targetDebt.id,
+          debtId: anchorDebt.id,
           amount: '',
           notes: '',
         },
@@ -848,6 +878,13 @@ export default function Familia() {
     if (!debt?.id) return
     const draft = quickSettlementDrafts[debt.id] || {}
     const amount = Number(draft.amount || 0)
+    const relatedDebts = sortDebtsByOldestFirst(
+      familyInternalDebts.filter((item) => (
+        item.debtorMemberId === debt.debtorMemberId
+        && item.creditorMemberId === debt.creditorMemberId
+        && item.status !== 'pending_confirmation'
+      )),
+    )
 
     if (debt.debtorMemberId !== user?.uid) {
       showToast('Somente quem deve pode marcar um envio.', 'err')
@@ -860,12 +897,7 @@ export default function Familia() {
 
     setSaving(true)
     try {
-      await addSettlement(debt.id, {
-        amount,
-        note: String(draft.notes || '').trim(),
-        createdByName: currentMemberLabel,
-        paymentMethod: 'manual',
-      })
+      await createMemberPaymentRequests(relatedDebts, amount, String(draft.notes || '').trim())
       setQuickSettlementDrafts((current) => ({
         ...current,
         [debt.id]: { amount: '', notes: '' },
@@ -883,6 +915,13 @@ export default function Familia() {
 
     const debt = familyInternalDebts.find((item) => item.id === settlementForm.debtId)
     const amount = Number(settlementForm.amount || 0)
+    const relatedDebts = sortDebtsByOldestFirst(
+      familyInternalDebts.filter((item) => (
+        item.debtorMemberId === debt?.debtorMemberId
+        && item.creditorMemberId === debt?.creditorMemberId
+        && item.status !== 'pending_confirmation'
+      )),
+    )
 
     if (!debt) {
       showToast('Selecione uma pendencia valida.', 'err')
@@ -898,12 +937,7 @@ export default function Familia() {
     }
     setSaving(true)
     try {
-      await addSettlement(debt.id, {
-        amount,
-        note: settlementForm.notes.trim(),
-        createdByName: currentMemberLabel,
-        paymentMethod: 'pix',
-      })
+      await createMemberPaymentRequests(relatedDebts, amount, settlementForm.notes.trim())
       handleSettlementModalClose()
       showToast('Restituicao registrada. Agora falta a confirmacao do recebedor. ✅')
     } catch (err) {
@@ -921,6 +955,19 @@ export default function Familia() {
       showToast('Recebimento confirmado. Se passou do valor devido, o saldo virou credito automaticamente. ✅')
     } catch (err) {
       showToast('Erro ao confirmar recebimento: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleConfirmDebtReceipt(debt) {
+    if (!debt?.id) return
+    setSaving(true)
+    try {
+      await confirmReceipt(debt.id)
+      showToast('Emprestimo confirmado. Agora ele entrou no saldo e comeca a contar juros.')
+    } catch (err) {
+      showToast('Erro ao confirmar recebimento do emprestimo: ' + err.message, 'err')
     } finally {
       setSaving(false)
     }
@@ -1383,6 +1430,14 @@ export default function Familia() {
                 : 0
               return sum + pendingTotal
             }, 0)
+            const pendingLoanReceipts = memberDebts.filter((debt) => (
+              debt.status === 'pending_confirmation'
+              && debt.debtorMemberId === user?.uid
+            ))
+            const pendingLoanReceiptAmount = pendingLoanReceipts.reduce(
+              (sum, debt) => sum + Number(debt.originalAmount || debt.totalAmount || 0),
+              0,
+            )
             const hasMemberDebtPanel = !isMe && (memberDebts.length > 0 || canRegisterInternalDebt)
             const isLedgerOpen = activeMemberLedgerId === memberId
             const memberNetBalance = Number(memberDebtSummary?.netBalance || 0)
@@ -1426,7 +1481,7 @@ export default function Familia() {
                     <div className="member-ledger-row">
                       <span className={`member-ledger-chip member-ledger-chip--${memberNetTone}`}>
                         {memberNetBalance > 0 && `A receber ${formatCurrency(memberNetBalance)}`}
-                        {memberNetBalance < 0 && `Voce deve ${formatCurrency(Math.abs(memberNetBalance))}`}
+                        {memberNetBalance < 0 && formatCurrency(Math.abs(memberNetBalance))}
                         {memberNetBalance === 0 && 'Saldo zerado'}
                       </span>
                       {memberNetBalance < 0 && debtorMemberDebts.length > 0 && (
@@ -1442,6 +1497,11 @@ export default function Familia() {
                       {pendingIncomingSettlementAmount > 0 && (
                         <span className="member-ledger-chip member-ledger-chip--blue">
                           Voce recebeu {formatCurrency(pendingIncomingSettlementAmount)} para confirmar
+                        </span>
+                      )}
+                      {pendingLoanReceiptAmount > 0 && (
+                        <span className="member-ledger-chip member-ledger-chip--blue">
+                          Confirmar recebimento do emprestimo {formatCurrency(pendingLoanReceiptAmount)}
                         </span>
                       )}
                     </div>
@@ -1525,18 +1585,25 @@ export default function Familia() {
                           </div>
                           <div className="member-debt-list">
                             {memberDebts.map((debt) => {
+                              const isPendingReceiptConfirmation = debt.status === 'pending_confirmation'
                               const remainingAmount = Number(debt.remainingAmount || 0)
                               const paidAmount = Number(debt.paidAmount || 0)
                               const totalAmount = Number(debt.totalAmount || 0)
+                              const originalAmount = Number(debt.originalAmount || debt.totalAmount || 0)
                               const accruedInterestAmount = Number(debt.accruedInterestAmount || 0)
                               const debtPayments = paymentsByDebtId[debt.id] || []
                               const settlements = Array.isArray(debt.settlements) ? debt.settlements : []
                               const isDebtor = debt.debtorMemberId === user?.uid
                               const isCreditor = debt.creditorMemberId === user?.uid
                               const counterpartName = m.displayName || debt.counterpartyMemberName || 'Membro'
-                              const relationLabel = isCreditor
+                              const relationLabel = isPendingReceiptConfirmation
+                                ? `Aguardando sua confirmacao de recebimento de ${counterpartName}`
+                                : isCreditor
                                 ? `${counterpartName} te deve`
                                 : `Voce deve para ${counterpartName}`
+                              const debtStatusLabel = isPendingReceiptConfirmation
+                                ? 'Aguardando confirmacao'
+                                : (remainingAmount > 0 ? 'Em aberto' : 'Quitado')
 
                               return (
                                 <div key={debt.id} className="member-debt-entry">
@@ -1546,20 +1613,33 @@ export default function Familia() {
                                       <p>{relationLabel}</p>
                                     </div>
                                     <span className={`member-debt-balance ${isCreditor ? 'green' : 'red'}`}>
-                                      {formatCurrency(remainingAmount)}
+                                      {formatCurrency(isPendingReceiptConfirmation ? originalAmount : remainingAmount)}
                                     </span>
                                   </div>
                                   <div className="family-debt-meta">
                                     <span>{debt.reasonLabel || debtReasonLabel(debt.reasonType)}</span>
-                                    {!!debt.interestRate && <span>Juros {String(debt.interestRate).replace('.', ',')}% a.m.</span>}
-                                    <span>Total {formatCurrency(totalAmount)}</span>
-                                    {accruedInterestAmount > 0 && <span>Juros acumulados {formatCurrency(accruedInterestAmount)}</span>}
-                                    <span>Ja compensado {formatCurrency(paidAmount)}</span>
-                                    <span>{debtPayments.length} confirmacao(oes)</span>
+                                    <span>Valor original {formatCurrency(originalAmount)}</span>
+                                    <span>Status {debtStatusLabel}</span>
+                                    {debt.loanConfirmedAt && <span>Confirmado em {formatDateBR(debt.loanConfirmedAt)}</span>}
+                                    {!isPendingReceiptConfirmation && !!debt.interestRate && <span>Juros {String(debt.interestRate).replace('.', ',')}% a.m.</span>}
+                                    {!isPendingReceiptConfirmation && <span>Saldo restante {formatCurrency(remainingAmount)}</span>}
+                                    {!isPendingReceiptConfirmation && accruedInterestAmount > 0 && <span>Juros acumulados {formatCurrency(accruedInterestAmount)}</span>}
+                                    {!isPendingReceiptConfirmation && <span>Ja abatido {formatCurrency(paidAmount)}</span>}
+                                    {!isPendingReceiptConfirmation && <span>{debtPayments.length} confirmacao(oes)</span>}
                                   </div>
                                   {debt.notes && <p className="family-debt-notes">{debt.notes}</p>}
                                   <div className="member-debt-entry-actions">
-                                    {isDebtor && remainingAmount > 0 && (
+                                    {isPendingReceiptConfirmation && isDebtor && (
+                                      <button
+                                        type="button"
+                                        className="member-inline-btn"
+                                        disabled={saving}
+                                        onClick={() => handleConfirmDebtReceipt(debt)}
+                                      >
+                                        Confirmar recebimento do emprestimo
+                                      </button>
+                                    )}
+                                    {!isPendingReceiptConfirmation && isDebtor && remainingAmount > 0 && (
                                       <button
                                         type="button"
                                         className="member-inline-btn"
@@ -1577,7 +1657,7 @@ export default function Familia() {
                                       Excluir conta
                                     </button>
                                   </div>
-                                  {isDebtor && remainingAmount > 0 && (
+                                  {!isPendingReceiptConfirmation && isDebtor && remainingAmount > 0 && (
                                     <div className="member-quick-settlement">
                                       <input
                                         type="number"
@@ -1604,7 +1684,7 @@ export default function Familia() {
                                       </button>
                                     </div>
                                   )}
-                                  {settlements.length > 0 ? (
+                                  {!isPendingReceiptConfirmation && settlements.length > 0 ? (
                                     <ul className="member-settlement-list">
                                       {settlements.map((settlement) => {
                                         const canConfirmPending = isCreditor && settlement.status === 'pending'
@@ -1652,11 +1732,11 @@ export default function Familia() {
                                         )
                                       })}
                                     </ul>
-                                  ) : (
+                                  ) : !isPendingReceiptConfirmation ? (
                                     <p className="member-settlement-empty">
                                       Nenhuma restituicao registrada ainda nesta conta.
                                     </p>
-                                  )}
+                                  ) : null}
                                 </div>
                               )
                             })}

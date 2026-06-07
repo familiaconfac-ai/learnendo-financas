@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext'
 import { useWorkspace } from '../context/WorkspaceContext'
 import {
   cancelDebtSettlement,
+  confirmDebtReceipt,
   confirmDebtSettlement,
   createDebt,
   deleteDebt,
@@ -82,6 +83,15 @@ export function useDebts() {
     await reload()
   }
 
+  async function confirmReceipt(debtId) {
+    if (!user?.uid) throw new Error('Usuario nao autenticado')
+    if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
+    if (!permissions.canConfirm) throw new Error('Seu papel nao permite confirmar emprestimos neste workspace')
+
+    await confirmDebtReceipt(activeWorkspaceId, debtId, user.uid)
+    await reload()
+  }
+
   async function cancelSettlement(debtId, settlementId) {
     if (!user?.uid) throw new Error('Usuario nao autenticado')
     if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
@@ -117,6 +127,7 @@ export function useDebts() {
     reload,
     addDebt,
     addSettlement,
+    confirmReceipt,
     confirmSettlement,
     cancelSettlement,
     removeDebt,
