@@ -150,6 +150,31 @@ function memberInviteStatusLabel(status) {
   return ''
 }
 
+function memberSettlementDebtLabel(debt) {
+  if (!debt) return ''
+  const reason = debt.reasonLabel || debtReasonLabel(debt.reasonType)
+  const customName = String(debt.name || '').trim()
+  if (customName && customName !== reason) {
+    return `${reason} · ${customName} · restante ${formatCurrency(debt.remainingAmount)}`
+  }
+  return `${reason} · restante ${formatCurrency(debt.remainingAmount)}`
+}
+
+function dateValueFromFirestoreLike(value) {
+  if (!value) return 0
+  if (typeof value?.toDate === 'function') return value.toDate().getTime()
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function sortDebtsByOldestFirst(debts = []) {
+  return [...debts].sort((a, b) => {
+    const diff = dateValueFromFirestoreLike(a?.createdAt) - dateValueFromFirestoreLike(b?.createdAt)
+    if (diff !== 0) return diff
+    return String(a?.id || '').localeCompare(String(b?.id || ''))
+  })
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
 function useToast() {
@@ -757,8 +782,11 @@ export default function Familia() {
 
   async function handleMemberSettlementSubmit(memberId, debts = []) {
     const draft = memberSettlementDrafts[memberId] || defaultMemberSettlementDraft(debts)
-    const targetDebt = debts.find((debt) => debt.id === draft.debtId) || debts[0]
-    const amount = Number(draft.amount || 0)
+    const orderedDebts = sortDebtsByOldestFirst(
+      (Array.isArray(debts) ? debts : []).filter((debt) => Number(debt.remainingAmount || 0) > 0),
+    )
+    const targetDebt = orderedDebts[0] || null
+    let remainingToAllocate = Number(draft.amount || 0)
 
     if (!targetDebt?.id) {
       showToast('Nenhuma conta em aberto foi encontrada para este membro.', 'err')
@@ -768,19 +796,36 @@ export default function Familia() {
       showToast('Somente quem deve pode marcar um envio.', 'err')
       return
     }
-    if (!amount || amount <= 0) {
+    if (!remainingToAllocate || remainingToAllocate <= 0) {
       showToast('Informe o novo valor enviado.', 'err')
       return
     }
 
     setSaving(true)
     try {
-      await addSettlement(targetDebt.id, {
-        amount,
-        note: String(draft.notes || '').trim(),
-        createdByName: currentMemberLabel,
-        paymentMethod: 'manual',
-      })
+      for (const debt of orderedDebts) {
+        if (remainingToAllocate <= 0) break
+        const currentDebtRemaining = Number(debt.remainingAmount || 0)
+        if (currentDebtRemaining <= 0) continue
+        const amountForDebt = Math.min(currentDebtRemaining, remainingToAllocate)
+        await addSettlement(debt.id, {
+          amount: amountForDebt,
+          note: String(draft.notes || '').trim(),
+          createdByName: currentMemberLabel,
+          paymentMethod: 'manual',
+        })
+        remainingToAllocate = Number((remainingToAllocate - amountForDebt).toFixed(2))
+      }
+
+      if (remainingToAllocate > 0) {
+        await addSettlement(targetDebt.id, {
+          amount: remainingToAllocate,
+          note: String(draft.notes || '').trim(),
+          createdByName: currentMemberLabel,
+          paymentMethod: 'manual',
+        })
+      }
+
       setMemberSettlementDrafts((current) => ({
         ...current,
         [memberId]: {
@@ -791,7 +836,7 @@ export default function Familia() {
           notes: '',
         },
       }))
-      showToast('Envio registrado. Agora o outro membro precisa confirmar o recebimento.')
+      showToast('Envio registrado. Ele vai abater primeiro as contas mais antigas, depois o outro membro confirma o recebimento.')
     } catch (err) {
       showToast('Erro ao registrar envio: ' + err.message, 'err')
     } finally {
@@ -1326,12 +1371,24 @@ export default function Familia() {
             const canEditRoleTarget = canChangeMemberRoles && !isMe
             const memberDebtSummary = memberDebtSummaryById.get(memberId)
             const memberDebts = memberDebtDetailsById.get(memberId) || []
-            const debtorMemberDebts = memberDebts.filter((debt) => debt.debtorMemberId === user?.uid && Number(debt.remainingAmount || 0) > 0)
+            const debtorMemberDebts = sortDebtsByOldestFirst(
+              memberDebts.filter((debt) => debt.debtorMemberId === user?.uid && Number(debt.remainingAmount || 0) > 0),
+            )
+            const pendingIncomingSettlementAmount = memberDebts.reduce((sum, debt) => {
+              if (debt.creditorMemberId !== user?.uid) return sum
+              const pendingTotal = Array.isArray(debt.settlements)
+                ? debt.settlements
+                  .filter((settlement) => settlement.status === 'pending')
+                  .reduce((acc, settlement) => acc + Number(settlement.amount || 0), 0)
+                : 0
+              return sum + pendingTotal
+            }, 0)
             const hasMemberDebtPanel = !isMe && (memberDebts.length > 0 || canRegisterInternalDebt)
             const isLedgerOpen = activeMemberLedgerId === memberId
             const memberNetBalance = Number(memberDebtSummary?.netBalance || 0)
             const memberNetTone = memberNetBalance > 0 ? 'green' : (memberNetBalance < 0 ? 'red' : 'neutral')
             const memberSettlementDraft = memberSettlementDrafts[memberId] || defaultMemberSettlementDraft(debtorMemberDebts)
+            const selectedMemberSettlementDebt = debtorMemberDebts[0] || null
             return (
               <li key={memberId} className="member-item">
                 <div className="member-avatar" data-role={m.role}>
@@ -1382,21 +1439,23 @@ export default function Familia() {
                           {memberSettlementDraft.open ? 'Fechar alteracao' : 'Alterar valor'}
                         </button>
                       )}
+                      {pendingIncomingSettlementAmount > 0 && (
+                        <span className="member-ledger-chip member-ledger-chip--blue">
+                          Voce recebeu {formatCurrency(pendingIncomingSettlementAmount)} para confirmar
+                        </span>
+                      )}
                     </div>
                   )}
                   {!isMe && memberNetBalance < 0 && debtorMemberDebts.length > 0 && memberSettlementDraft.open && (
                     <div className="member-ledger-adjust">
-                      {debtorMemberDebts.length > 1 && (
-                        <select
-                          value={memberSettlementDraft.debtId}
-                          onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { debtId: e.target.value })}
-                        >
-                          {debtorMemberDebts.map((debt) => (
-                            <option key={debt.id} value={debt.id}>
-                              {debt.name} · restante {formatCurrency(debt.remainingAmount)}
-                            </option>
-                          ))}
-                        </select>
+                      <div className="member-ledger-adjust-title">
+                        <strong>Registrar valor enviado</strong>
+                        <span>O saldo vermelho so muda depois que o outro membro confirmar o recebimento.</span>
+                      </div>
+                      {selectedMemberSettlementDebt && (
+                        <div className="member-ledger-adjust-summary">
+                          Vai abater primeiro: {memberSettlementDebtLabel(selectedMemberSettlementDebt)}
+                        </div>
                       )}
                       <input
                         type="number"
