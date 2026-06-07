@@ -31,9 +31,87 @@ function toAmount(value) {
   return Math.max(0, numeric)
 }
 
+function roundCurrency(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100
+}
+
 function normalizeOptionalString(value) {
   const text = String(value || '').trim()
   return text || null
+}
+
+const DEFAULT_LOAN_INTEREST_RATE = 1.5
+const DAY_IN_MS = 24 * 60 * 60 * 1000
+
+function toMillis(value) {
+  if (!value) return 0
+  if (typeof value?.toDate === 'function') {
+    return value.toDate().getTime()
+  }
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeInterestRate(value, debt = null) {
+  const numeric = Number(value)
+  if (Number.isFinite(numeric) && numeric > 0) return numeric
+  if (String(debt?.reasonType || '').trim().toLowerCase() === 'emprestimo') {
+    return DEFAULT_LOAN_INTEREST_RATE
+  }
+  return 0
+}
+
+function buildDebtInterestSnapshot(debt, nowMs = Date.now()) {
+  const principalTotalAmount = toAmount(debt?.totalAmount)
+  const paidAmount = toAmount(debt?.paidAmount)
+  const interestRate = normalizeInterestRate(debt?.interestRate, debt)
+  const storedRemainingAmount = Math.max(0, principalTotalAmount - paidAmount)
+  const lastAccruedAtSource = debt?.interestLastAccruedAt || debt?.createdAt || debt?.updatedAt || null
+  const lastAccruedAtMs = toMillis(lastAccruedAtSource)
+
+  if (!interestRate || storedRemainingAmount <= 0 || !lastAccruedAtMs || nowMs <= lastAccruedAtMs) {
+    return {
+      interestRate,
+      principalTotalAmount,
+      paidAmount,
+      accruedInterestAmount: 0,
+      totalAmount: principalTotalAmount,
+      remainingAmount: Math.max(0, principalTotalAmount - paidAmount),
+      interestAccruedThrough: lastAccruedAtSource || new Date(nowMs).toISOString(),
+    }
+  }
+
+  const elapsedDays = (nowMs - lastAccruedAtMs) / DAY_IN_MS
+  const accruedInterestAmount = roundCurrency(
+    storedRemainingAmount * (interestRate / 100) * (elapsedDays / 30),
+  )
+  const totalAmount = roundCurrency(principalTotalAmount + accruedInterestAmount)
+  const remainingAmount = roundCurrency(Math.max(0, totalAmount - paidAmount))
+
+  return {
+    interestRate,
+    principalTotalAmount,
+    paidAmount,
+    accruedInterestAmount,
+    totalAmount,
+    remainingAmount,
+    interestAccruedThrough: new Date(nowMs).toISOString(),
+  }
+}
+
+function decorateDebtWithInterest(debt, nowMs = Date.now()) {
+  const interestSnapshot = buildDebtInterestSnapshot(debt, nowMs)
+  return {
+    ...debt,
+    interestRate: interestSnapshot.interestRate || null,
+    storedTotalAmount: toAmount(debt?.totalAmount),
+    totalAmount: interestSnapshot.totalAmount,
+    paidAmount: interestSnapshot.paidAmount,
+    remainingAmount: interestSnapshot.remainingAmount,
+    accruedInterestAmount: interestSnapshot.accruedInterestAmount,
+    interestAccruedThrough: interestSnapshot.interestAccruedThrough,
+    status: interestSnapshot.remainingAmount > 0 ? 'open' : 'settled',
+  }
 }
 
 function normalizeFamilyReasonType(value) {
@@ -201,13 +279,14 @@ export function buildFamilyDebtLedger(debts = [], currentUserId = '', members = 
 
 export async function fetchDebts(workspaceId) {
   if (!workspaceId) return []
+  const nowMs = Date.now()
   const snap = await getDocs(debtsCol(workspaceId))
   return snap.docs
-    .map((d) => ({
+    .map((d) => decorateDebtWithInterest({
       id: d.id,
       ...d.data(),
       settlements: normalizeDebtSettlements(d.data()?.settlements),
-    }))
+    }, nowMs))
     .sort((a, b) => {
       const aDate = a.createdAt?.toDate?.()?.getTime?.() || 0
       const bDate = b.createdAt?.toDate?.()?.getTime?.() || 0
@@ -220,6 +299,7 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
   const totalAmount = toAmount(payload.totalAmount)
   const initialPaidAmount = toAmount(payload.paidAmount || 0)
   const remainingAmount = Math.max(0, totalAmount - initialPaidAmount)
+  const interestRate = normalizeInterestRate(payload.interestRate, payload)
 
   const ref = await addDoc(debtsCol(workspaceId), {
     name: payload.name?.trim() || 'Divida sem nome',
@@ -246,7 +326,8 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
     contactName: normalizeOptionalString(payload.contactName),
     notes: normalizeOptionalString(payload.notes),
     settlements: normalizeDebtSettlements(payload.settlements),
-    interestRate: payload.interestRate || null,
+    interestRate: interestRate || null,
+    interestLastAccruedAt: new Date().toISOString(),
     dueDate: payload.dueDate || null,
     installmentPlan: payload.installmentPlan || null,
   })
@@ -293,6 +374,7 @@ function buildOverflowDebtRecord(workspaceId, debt, settlement, overflowAmount, 
     notes: buildOverflowDebtNote(debt, settlement, overflowAmount),
     settlements: [],
     interestRate: debt?.interestRate || null,
+    interestLastAccruedAt: settlement?.confirmedAt || new Date().toISOString(),
     dueDate: null,
     installmentPlan: null,
   }
@@ -302,11 +384,11 @@ export async function fetchDebtById(workspaceId, debtId) {
   if (!workspaceId || !debtId) return null
   const snap = await getDoc(debtDoc(workspaceId, debtId))
   if (!snap.exists()) return null
-  return {
+  return decorateDebtWithInterest({
     id: snap.id,
     ...snap.data(),
     settlements: normalizeDebtSettlements(snap.data()?.settlements),
-  }
+  })
 }
 
 export async function fetchDebtPayments(workspaceId, debtId) {
@@ -338,13 +420,16 @@ export async function recalculateDebtBalance(workspaceId, debtId) {
     .filter((payment) => payment.origin !== 'debt_settlement')
     .reduce((sum, tx) => sum + toAmount(tx.amount), 0)
   const settlementPaidAmount = confirmedSettlementsTotal(debt)
-  const paidAmount = toAmount(debt.initialPaidAmount || 0) + transactionPaidAmount + settlementPaidAmount
-  const totalAmount = toAmount(debt.totalAmount)
-  const remainingAmount = Math.max(0, totalAmount - paidAmount)
+  const paidAmount = roundCurrency(toAmount(debt.initialPaidAmount || 0) + transactionPaidAmount + settlementPaidAmount)
+  const totalAmount = roundCurrency(toAmount(debt.totalAmount))
+  const remainingAmount = roundCurrency(Math.max(0, totalAmount - paidAmount))
 
   await updateDoc(debtDoc(workspaceId, debtId), {
+    totalAmount,
     paidAmount,
     remainingAmount,
+    interestRate: debt.interestRate || null,
+    interestLastAccruedAt: debt.interestAccruedThrough || new Date().toISOString(),
     status: remainingAmount > 0 ? 'open' : 'settled',
     updatedAt: serverTimestamp(),
   })
@@ -415,14 +500,23 @@ export async function confirmDebtSettlement(workspaceId, debtId, settlementId, a
       ...snap.data(),
       settlements: normalizeDebtSettlements(snap.data()?.settlements),
     }
+    const interestSnapshot = buildDebtInterestSnapshot(debt)
+    const debtWithInterest = {
+      ...debt,
+      interestRate: interestSnapshot.interestRate || null,
+      totalAmount: interestSnapshot.totalAmount,
+      paidAmount: interestSnapshot.paidAmount,
+      remainingAmount: interestSnapshot.remainingAmount,
+      interestAccruedThrough: interestSnapshot.interestAccruedThrough,
+    }
 
-    if (debt.creditorMemberId && actorUid && debt.creditorMemberId !== actorUid) {
+    if (debtWithInterest.creditorMemberId && actorUid && debtWithInterest.creditorMemberId !== actorUid) {
       throw new Error('Somente quem vai receber pode confirmar esta restituição')
     }
 
-    const remainingAmount = toAmount(debt.remainingAmount)
+    const remainingAmount = toAmount(debtWithInterest.remainingAmount)
     let confirmedSettlement = null
-    const nextSettlements = debt.settlements.map((settlement) => {
+    const nextSettlements = debtWithInterest.settlements.map((settlement) => {
       if (settlement.id !== settlementId) return settlement
       if (settlement.status !== 'pending') {
         throw new Error('Esta restituição ja foi processada')
@@ -440,6 +534,10 @@ export async function confirmDebtSettlement(workspaceId, debtId, settlementId, a
     if (!exists || !confirmedSettlement) throw new Error('Restituicao nao encontrada')
 
     transaction.update(ref, {
+      totalAmount: roundCurrency(debtWithInterest.totalAmount),
+      remainingAmount,
+      interestRate: debtWithInterest.interestRate || null,
+      interestLastAccruedAt: debtWithInterest.interestAccruedThrough || new Date().toISOString(),
       settlements: nextSettlements,
       updatedAt: serverTimestamp(),
     })
@@ -449,7 +547,7 @@ export async function confirmDebtSettlement(workspaceId, debtId, settlementId, a
       const overflowRef = doc(debtsCol(workspaceId))
       transaction.set(
         overflowRef,
-        buildOverflowDebtRecord(workspaceId, debt, confirmedSettlement, overflowAmount, actorUid),
+        buildOverflowDebtRecord(workspaceId, debtWithInterest, confirmedSettlement, overflowAmount, actorUid),
       )
     }
   })

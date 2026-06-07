@@ -287,6 +287,32 @@
   flex-wrap: wrap;
   margin-top: 0.45rem;
 }
+
+.member-ledger-adjust {
+  margin-top: 0.55rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.member-ledger-adjust select,
+.member-ledger-adjust input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: #fff;
+  color: var(--color-text);
+}
+
+.member-ledger-adjust-hint {
+  grid-column: 1 / -1;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
 .member-ledger-chip {
   display: inline-flex;
   align-items: center;
@@ -867,6 +893,10 @@
   }
 
   .member-quick-settlement {
+    grid-template-columns: 1fr;
+  }
+
+  .member-ledger-adjust {
     grid-template-columns: 1fr;
   }
 }

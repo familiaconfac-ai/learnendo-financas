@@ -106,6 +106,15 @@ function defaultSettlementForm() {
   }
 }
 
+function defaultMemberSettlementDraft(debts = []) {
+  return {
+    open: false,
+    debtId: debts[0]?.id || '',
+    amount: '',
+    notes: '',
+  }
+}
+
 function defaultExternalDebtForm() {
   return {
     name: '',
@@ -231,6 +240,7 @@ export default function Familia() {
   const [settlementOpen,     setSettlementOpen]      = useState(false)
   const [settlementForm,     setSettlementForm]      = useState(defaultSettlementForm())
   const [quickSettlementDrafts, setQuickSettlementDrafts] = useState({})
+  const [memberSettlementDrafts, setMemberSettlementDrafts] = useState({})
   const [activeMemberLedgerId, setActiveMemberLedgerId] = useState('')
   const [rolesExpanded,      setRolesExpanded]       = useState(false)
   const [generalLedgerExpanded, setGeneralLedgerExpanded] = useState(false)
@@ -684,6 +694,7 @@ export default function Familia() {
         counterpartyMemberName: selectedMemberName,
         contactId: `member:${selectedMemberId}`,
         contactName: selectedMemberName,
+        interestRate: memberDebtForm.reasonType === 'emprestimo' ? 1.5 : null,
         notes: memberDebtForm.notes.trim(),
       })
       handleMemberDebtModalClose()
@@ -718,6 +729,74 @@ export default function Familia() {
         ...patch,
       },
     }))
+  }
+
+  function toggleMemberSettlementDraft(memberId, debts = []) {
+    setMemberSettlementDrafts((current) => {
+      const existing = current[memberId] || defaultMemberSettlementDraft(debts)
+      return {
+        ...current,
+        [memberId]: {
+          ...existing,
+          debtId: existing.debtId || debts[0]?.id || '',
+          open: !existing.open,
+        },
+      }
+    })
+  }
+
+  function updateMemberSettlementDraft(memberId, debts = [], patch = {}) {
+    setMemberSettlementDrafts((current) => ({
+      ...current,
+      [memberId]: {
+        ...(current[memberId] || defaultMemberSettlementDraft(debts)),
+        ...patch,
+      },
+    }))
+  }
+
+  async function handleMemberSettlementSubmit(memberId, debts = []) {
+    const draft = memberSettlementDrafts[memberId] || defaultMemberSettlementDraft(debts)
+    const targetDebt = debts.find((debt) => debt.id === draft.debtId) || debts[0]
+    const amount = Number(draft.amount || 0)
+
+    if (!targetDebt?.id) {
+      showToast('Nenhuma conta em aberto foi encontrada para este membro.', 'err')
+      return
+    }
+    if (targetDebt.debtorMemberId !== user?.uid) {
+      showToast('Somente quem deve pode marcar um envio.', 'err')
+      return
+    }
+    if (!amount || amount <= 0) {
+      showToast('Informe o novo valor enviado.', 'err')
+      return
+    }
+
+    setSaving(true)
+    try {
+      await addSettlement(targetDebt.id, {
+        amount,
+        note: String(draft.notes || '').trim(),
+        createdByName: currentMemberLabel,
+        paymentMethod: 'manual',
+      })
+      setMemberSettlementDrafts((current) => ({
+        ...current,
+        [memberId]: {
+          ...(current[memberId] || defaultMemberSettlementDraft(debts)),
+          open: false,
+          debtId: targetDebt.id,
+          amount: '',
+          notes: '',
+        },
+      }))
+      showToast('Envio registrado. Agora o outro membro precisa confirmar o recebimento.')
+    } catch (err) {
+      showToast('Erro ao registrar envio: ' + err.message, 'err')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function handleQuickSettlementSubmit(debt) {
@@ -1247,10 +1326,12 @@ export default function Familia() {
             const canEditRoleTarget = canChangeMemberRoles && !isMe
             const memberDebtSummary = memberDebtSummaryById.get(memberId)
             const memberDebts = memberDebtDetailsById.get(memberId) || []
+            const debtorMemberDebts = memberDebts.filter((debt) => debt.debtorMemberId === user?.uid && Number(debt.remainingAmount || 0) > 0)
             const hasMemberDebtPanel = !isMe && (memberDebts.length > 0 || canRegisterInternalDebt)
             const isLedgerOpen = activeMemberLedgerId === memberId
             const memberNetBalance = Number(memberDebtSummary?.netBalance || 0)
             const memberNetTone = memberNetBalance > 0 ? 'green' : (memberNetBalance < 0 ? 'red' : 'neutral')
+            const memberSettlementDraft = memberSettlementDrafts[memberId] || defaultMemberSettlementDraft(debtorMemberDebts)
             return (
               <li key={memberId} className="member-item">
                 <div className="member-avatar" data-role={m.role}>
@@ -1290,6 +1371,58 @@ export default function Familia() {
                         {memberNetBalance > 0 && `A receber ${formatCurrency(memberNetBalance)}`}
                         {memberNetBalance < 0 && `Voce deve ${formatCurrency(Math.abs(memberNetBalance))}`}
                         {memberNetBalance === 0 && 'Saldo zerado'}
+                      </span>
+                      {memberNetBalance < 0 && debtorMemberDebts.length > 0 && (
+                        <button
+                          type="button"
+                          className="member-inline-btn"
+                          disabled={saving}
+                          onClick={() => toggleMemberSettlementDraft(memberId, debtorMemberDebts)}
+                        >
+                          {memberSettlementDraft.open ? 'Fechar alteracao' : 'Alterar valor'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {!isMe && memberNetBalance < 0 && debtorMemberDebts.length > 0 && memberSettlementDraft.open && (
+                    <div className="member-ledger-adjust">
+                      {debtorMemberDebts.length > 1 && (
+                        <select
+                          value={memberSettlementDraft.debtId}
+                          onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { debtId: e.target.value })}
+                        >
+                          {debtorMemberDebts.map((debt) => (
+                            <option key={debt.id} value={debt.id}>
+                              {debt.name} · restante {formatCurrency(debt.remainingAmount)}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        inputMode="decimal"
+                        value={memberSettlementDraft.amount}
+                        onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { amount: e.target.value })}
+                        placeholder="Novo valor enviado"
+                      />
+                      <input
+                        type="text"
+                        value={memberSettlementDraft.notes}
+                        onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { notes: e.target.value })}
+                        placeholder="Observacao opcional"
+                      />
+                      <button
+                        type="button"
+                        className="member-inline-btn"
+                        disabled={saving}
+                        onClick={() => handleMemberSettlementSubmit(memberId, debtorMemberDebts)}
+                      >
+                        Enviar para confirmar
+                      </button>
+                      <span className="member-ledger-adjust-hint">
+                        O outro membro confirma o recebimento e o saldo vermelho baixa automaticamente.
                       </span>
                     </div>
                   )}
@@ -1336,6 +1469,7 @@ export default function Familia() {
                               const remainingAmount = Number(debt.remainingAmount || 0)
                               const paidAmount = Number(debt.paidAmount || 0)
                               const totalAmount = Number(debt.totalAmount || 0)
+                              const accruedInterestAmount = Number(debt.accruedInterestAmount || 0)
                               const debtPayments = paymentsByDebtId[debt.id] || []
                               const settlements = Array.isArray(debt.settlements) ? debt.settlements : []
                               const isDebtor = debt.debtorMemberId === user?.uid
@@ -1358,7 +1492,9 @@ export default function Familia() {
                                   </div>
                                   <div className="family-debt-meta">
                                     <span>{debt.reasonLabel || debtReasonLabel(debt.reasonType)}</span>
+                                    {!!debt.interestRate && <span>Juros {String(debt.interestRate).replace('.', ',')}% a.m.</span>}
                                     <span>Total {formatCurrency(totalAmount)}</span>
+                                    {accruedInterestAmount > 0 && <span>Juros acumulados {formatCurrency(accruedInterestAmount)}</span>}
                                     <span>Ja compensado {formatCurrency(paidAmount)}</span>
                                     <span>{debtPayments.length} confirmacao(oes)</span>
                                   </div>
