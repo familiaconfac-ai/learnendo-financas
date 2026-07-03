@@ -12,8 +12,29 @@ import { addMember } from '../../services/familyService'
 import { buildFamilyDebtLedger, isFamilyInternalDebt } from '../../services/debtService'
 import { fetchAllTransactionsForWorkspace } from '../../services/transactionService'
 import { calculateMonthlySummary } from '../../utils/financeCalculations'
-import { getPermissionsByRole } from '../../services/workspaceService'
+import { getPermissionsByRole, getWorkspaceInviteByToken } from '../../services/workspaceService'
 import './Familia.css'
+
+const PENDING_WORKSPACE_INVITE_KEY = 'lf:pending-workspace-invite-token'
+
+function readPendingWorkspaceInviteToken() {
+  try {
+    return localStorage.getItem(PENDING_WORKSPACE_INVITE_KEY) || ''
+  } catch (_) {
+    return ''
+  }
+}
+
+function clearPendingWorkspaceInviteToken(token = '') {
+  try {
+    const currentToken = localStorage.getItem(PENDING_WORKSPACE_INVITE_KEY)
+    if (!token || !currentToken || currentToken === token) {
+      localStorage.removeItem(PENDING_WORKSPACE_INVITE_KEY)
+    }
+  } catch (_) {
+    // Ignore storage cleanup failures.
+  }
+}
 
 // ── Role metadata (new canonical names) ────────────────────────────────────
 
@@ -276,6 +297,8 @@ export default function Familia() {
   const [workspaceTransactions, setWorkspaceTransactions] = useState([])
   const [summaryLoading,     setSummaryLoading]      = useState(false)
   const [summaryMode,        setSummaryMode]         = useState('month')
+  const [pendingInviteResume, setPendingInviteResume] = useState(null)
+  const [pendingInviteLoading, setPendingInviteLoading] = useState(false)
 
   // ── Load consolidated workspace transactions for summary ───────────────────
 
@@ -305,6 +328,57 @@ export default function Familia() {
     })()
     return () => { cancelled = true }
   }, [user?.uid, activeWorkspaceId, workspaceRole])
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setPendingInviteResume(null)
+      setPendingInviteLoading(false)
+      return
+    }
+
+    const storedToken = readPendingWorkspaceInviteToken()
+    if (!storedToken) {
+      setPendingInviteResume(null)
+      setPendingInviteLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setPendingInviteLoading(true)
+
+    ;(async () => {
+      try {
+        const invite = await getWorkspaceInviteByToken(storedToken)
+        if (cancelled) return
+
+        const isStillUseful = invite
+          && !invite.expired
+          && (
+            invite.status === 'pending'
+            || (invite.status === 'awaiting_confirmation' && invite.acceptedBy === user.uid)
+          )
+
+        if (!isStillUseful) {
+          clearPendingWorkspaceInviteToken(storedToken)
+          setPendingInviteResume(null)
+          return
+        }
+
+        setPendingInviteResume({ token: storedToken, invite, error: '' })
+      } catch (err) {
+        if (cancelled) return
+        setPendingInviteResume({
+          token: storedToken,
+          invite: null,
+          error: err?.message || 'Nao foi possivel validar o convite salvo.',
+        })
+      } finally {
+        if (!cancelled) setPendingInviteLoading(false)
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [user?.uid])
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -339,6 +413,53 @@ export default function Familia() {
     const merged = modern.length > 0 ? [...modern, ...legacy] : legacy
     return merged.filter((item) => item.status === 'pending' || item.status === 'awaiting_confirmation')
   }, [workspaceInvitations, invitations])
+  const pendingInviteDestination = pendingInviteResume?.invite?.email || pendingInviteResume?.invite?.phone || ''
+  const pendingInviteAlreadyRequested = pendingInviteResume?.invite?.status === 'awaiting_confirmation'
+    && pendingInviteResume?.invite?.acceptedBy === user?.uid
+  const pendingInviteCard = (pendingInviteLoading || pendingInviteResume) ? (
+    <Card>
+      <CardHeader
+        title="Convite pendente"
+        subtitle={pendingInviteLoading ? 'Verificando convite salvo...' : 'Retome o convite recebido para entrar na familia'}
+      />
+      {pendingInviteLoading ? (
+        <p className="member-email">Estamos conferindo o convite salvo neste aparelho.</p>
+      ) : (
+        <>
+          <p className="member-email">
+            {pendingInviteAlreadyRequested
+              ? 'Seu pedido de entrada ja foi enviado. Agora a familia precisa confirmar sua entrada.'
+              : pendingInviteResume?.error
+                ? 'Existe um convite salvo neste aparelho. Abra o link novamente para continuar.'
+                : pendingInviteDestination
+                  ? `Encontramos um convite salvo para ${pendingInviteDestination}.`
+                  : 'Encontramos um convite salvo neste aparelho.'}
+          </p>
+          <div className="member-actions-row">
+            {!pendingInviteAlreadyRequested && (
+              <button
+                type="button"
+                className="member-inline-btn"
+                onClick={() => window.location.assign(`/convite/${pendingInviteResume.token}`)}
+              >
+                Continuar convite
+              </button>
+            )}
+            <button
+              type="button"
+              className="member-inline-btn member-inline-btn--ghost"
+              onClick={() => {
+                clearPendingWorkspaceInviteToken(pendingInviteResume?.token)
+                setPendingInviteResume(null)
+              }}
+            >
+              Dispensar
+            </button>
+          </div>
+        </>
+      )}
+    </Card>
+  ) : null
   const activeProjects = Array.isArray(projects) ? projects.filter((project) => project.status !== 'archived') : []
   const leadProject = activeProjects[0] || null
   const projectLabel = leadProject ? leadProject.name : 'Projetos'
@@ -1179,6 +1300,7 @@ export default function Familia() {
   if (!family && !activeWorkspace) {
     return (
       <div className="familia-page">
+        {pendingInviteCard}
         <div className="familia-empty">
           <span className="familia-empty-icon">🏡</span>
           <p className="familia-empty-title">Você ainda não tem uma família</p>
@@ -1227,6 +1349,7 @@ export default function Familia() {
 
   return (
     <div className="familia-page">
+      {pendingInviteCard}
 
       {/* Cabeçalho */}
       <div className="familia-header">

@@ -12,7 +12,7 @@ import {
   where,
   serverTimestamp,
 } from 'firebase/firestore'
-import { db } from '../firebase/config'
+import { auth, db } from '../firebase/config'
 import { DEFAULT_TRANSACTION_NATURES } from '../constants/transactionNatures'
 
 function workspaceCol() {
@@ -95,6 +95,10 @@ function randomToken() {
   return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
 }
 
+function normalizeEmail(value = '') {
+  return String(value || '').trim().toLowerCase()
+}
+
 function isManager(role) {
   return role === 'gestor' || role === 'co-gestor'
 }
@@ -117,7 +121,7 @@ function buildMemberIdentity(uid, profile = null) {
     || profile?.email
     || 'Membro',
   ).trim()
-  const email = String(profile?.email || '').trim().toLowerCase()
+  const email = normalizeEmail(profile?.email)
   return {
     uid,
     displayName,
@@ -125,6 +129,17 @@ function buildMemberIdentity(uid, profile = null) {
     email,
     avatarInitial: displayName.charAt(0).toUpperCase() || 'M',
   }
+}
+
+function resolveInviteActorEmail(uid, profile = null) {
+  const profileEmail = normalizeEmail(profile?.email)
+  if (profileEmail) return profileEmail
+
+  if (auth?.currentUser?.uid === uid) {
+    return normalizeEmail(auth.currentUser.email)
+  }
+
+  return ''
 }
 
 async function syncLegacyFamilyMirror(workspaceId, member, workspaceData = {}) {
@@ -739,14 +754,16 @@ export async function upsertWorkspaceNature(workspaceId, natureId, patch) {
 export async function createWorkspaceInvite(workspaceId, inviterUid, role = 'membro', target = {}) {
   const token = randomToken()
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  const normalizedEmail = normalizeEmail(target.email)
+  const normalizedPhone = String(target.phone || '').replace(/\D/g, '')
 
   const invitePayload = {
     workspaceId,
     role,
     inviterUid,
     status: 'pending',
-    email: target.email || null,
-    phone: target.phone || null,
+    email: normalizedEmail || null,
+    phone: normalizedPhone || null,
     method: target.method || 'link',
     token,
     expiresAt,
@@ -791,7 +808,22 @@ export async function acceptWorkspaceInvite(uid, token) {
   const workspaceSnap = await getDoc(workspaceDoc(invite.workspaceId))
   const workspaceData = workspaceSnap.exists() ? workspaceSnap.data() : {}
   const profile = await getUserProfileData(uid)
-  const memberIdentity = buildMemberIdentity(uid, profile)
+  const currentEmail = resolveInviteActorEmail(uid, profile)
+  const invitedEmail = normalizeEmail(invite.email)
+
+  if (invitedEmail) {
+    if (!currentEmail) {
+      throw new Error('Entre com o e-mail convidado para aceitar este convite.')
+    }
+    if (currentEmail !== invitedEmail) {
+      throw new Error(`Este convite foi enviado para ${invitedEmail}. Entre com esse e-mail para continuar.`)
+    }
+  }
+
+  const memberIdentity = buildMemberIdentity(uid, {
+    ...profile,
+    email: currentEmail || profile?.email || '',
+  })
 
   await setDoc(workspaceMemberDoc(invite.workspaceId, uid), {
     uid,

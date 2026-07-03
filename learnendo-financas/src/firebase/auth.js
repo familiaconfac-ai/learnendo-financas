@@ -8,8 +8,9 @@ import {
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db } from './config'
 import { IS_MOCK_MODE, MOCK_USER } from './mockMode'
+import { ensureUserRegistryProfile, normalizeUserEmail } from '../services/userRegistryService'
 
-// Comunica mudanças de sessão mock para o AuthContext via eventos de window
+// Comunica mudancas de sessao mock para o AuthContext via eventos de window
 function dispatchMock(event) {
   window.dispatchEvent(new CustomEvent(event))
 }
@@ -19,21 +20,16 @@ export async function registerUser(email, password, displayName) {
     dispatchMock('lf:mock:login')
     return { ...MOCK_USER, email, displayName }
   }
-  // createUserWithEmailAndPassword throws Firebase errors — let them propagate to the UI
+
   const credential = await createUserWithEmailAndPassword(auth, email, password)
-  // updateProfile + Firestore write are best-effort: if they fail the user is still authenticated
+
   try {
     await updateProfile(credential.user, { displayName })
-    await setDoc(doc(db, 'users', credential.user.uid), {
-      uid: credential.user.uid,
-      email,
-      displayName,
-      role: 'user',
-      createdAt: serverTimestamp(),
-    })
+    await ensureUserRegistryProfile(credential.user, displayName)
   } catch (e) {
-    console.warn('[registerUser] Profile save failed — user authenticated, Firestore record pending:', e.message)
+    console.warn('[registerUser] Profile save failed - user authenticated, Firestore record pending:', e.message)
   }
+
   return credential.user
 }
 
@@ -42,29 +38,35 @@ export async function loginUser(email, password) {
     dispatchMock('lf:mock:login')
     return MOCK_USER
   }
+
   const credential = await signInWithEmailAndPassword(auth, email, password)
+  try {
+    await ensureUserRegistryProfile(credential.user)
+  } catch (e) {
+    console.warn('[loginUser] Profile sync failed:', e.message)
+  }
   return credential.user
 }
 
 export async function logoutUser() {
   if (IS_MOCK_MODE) {
     dispatchMock('lf:mock:logout')
-    // Limpa contexto local
     try {
-      localStorage.removeItem('activeWorkspaceId');
-      localStorage.removeItem('activeFamilyId');
-      sessionStorage.removeItem('activeWorkspaceId');
-      sessionStorage.removeItem('activeFamilyId');
+      localStorage.removeItem('activeWorkspaceId')
+      localStorage.removeItem('activeFamilyId')
+      sessionStorage.removeItem('activeWorkspaceId')
+      sessionStorage.removeItem('activeFamilyId')
     } catch {}
     return
   }
-  // Limpa contexto local
+
   try {
-    localStorage.removeItem('activeWorkspaceId');
-    localStorage.removeItem('activeFamilyId');
-    sessionStorage.removeItem('activeWorkspaceId');
-    sessionStorage.removeItem('activeFamilyId');
+    localStorage.removeItem('activeWorkspaceId')
+    localStorage.removeItem('activeFamilyId')
+    sessionStorage.removeItem('activeWorkspaceId')
+    sessionStorage.removeItem('activeFamilyId')
   } catch {}
+
   await signOut(auth)
 }
 
@@ -90,6 +92,7 @@ export async function updateUserProfileData(uid, data) {
     photoURL: data.photoURL || '',
     preferredCurrency: data.preferredCurrency || 'BRL',
     preferredExpenseCategoryId: data.preferredExpenseCategoryId || null,
+    email: normalizeUserEmail(data.email || auth.currentUser?.email || ''),
     updatedAt: serverTimestamp(),
   }
 

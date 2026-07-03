@@ -19,9 +19,25 @@
 }
 .admin-stat-row:last-child { border-bottom: none; }
 
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.admin-error-box,
+.admin-empty {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.admin-error-box {
+  color: var(--color-danger);
+}
+
 .admin-user-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.75rem;
   padding: 0.65rem 0;
   border-bottom: 1px solid var(--color-border);
@@ -41,16 +57,42 @@
   flex-shrink: 0;
 }
 .admin-user-info { flex: 1; min-width: 0; }
+.admin-user-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+}
 .admin-user-name { display: block; font-size: 0.88rem; font-weight: 600; color: var(--color-text); }
 .admin-user-email { display: block; font-size: 0.75rem; color: var(--color-text-muted); }
-.admin-user-values {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  font-size: 0.8rem;
-  font-weight: 600;
-  gap: 0.1rem;
-  flex-shrink: 0;
+.admin-user-meta {
+  display: block;
+  font-size: 0.73rem;
+  color: var(--color-text-muted);
+  margin-top: 0.15rem;
 }
+
+.admin-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.admin-status-badge--admin {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.admin-status-badge--user {
+  background: #dcfce7;
+  color: #15803d;
+}
+
 .text-success { color: var(--color-success); }
 .text-danger  { color: var(--color-danger); }

@@ -9,6 +9,12 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function isAdminUser() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
     function workspaceMemberDoc(workspaceId, uid) {
       return get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid));
     }
@@ -87,7 +93,9 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read, create, update, delete: if isOwner(uid);
+      allow read: if isOwner(uid) || isAdminUser();
+      allow create: if isOwner(uid);
+      allow update, delete: if isOwner(uid) || isAdminUser();
 
       match /settings/{docId} {
         allow read, create, update, delete: if isOwner(uid);
@@ -100,6 +108,19 @@ service cloud.firestore {
       match /{document=**} {
         allow read, create, update, delete: if isOwner(uid);
       }
+    }
+
+    match /appStats/{docId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && docId == 'registration'
+        && request.resource.data.lastUserNumber == 1;
+      allow update: if signedIn()
+        && docId == 'registration'
+        && request.resource.data.lastUserNumber is int
+        && resource.data.lastUserNumber is int
+        && request.resource.data.lastUserNumber == resource.data.lastUserNumber + 1;
+      allow delete: if false;
     }
 
     match /userFamilies/{uid} {
