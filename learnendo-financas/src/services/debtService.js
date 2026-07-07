@@ -12,6 +12,7 @@ import {
   where,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
+import { normalizePaymentMethodId } from '../constants/transactionPaymentMethods'
 
 function debtsCol(workspaceId) {
   return collection(db, 'workspaces', workspaceId, 'debts')
@@ -38,6 +39,18 @@ function roundCurrency(value) {
 function normalizeOptionalString(value) {
   const text = String(value || '').trim()
   return text || null
+}
+
+function normalizeExternalDebtDirection(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_')
+  if (normalized === 'contact_owes_me') return 'contact_owes_me'
+  return 'i_owe_contact'
+}
+
+function invertExternalDebtDirection(value) {
+  return normalizeExternalDebtDirection(value) === 'contact_owes_me'
+    ? 'i_owe_contact'
+    : 'contact_owes_me'
 }
 
 const DEFAULT_LOAN_INTEREST_RATE = 1.5
@@ -245,12 +258,24 @@ export function normalizeDebtSettlements(value = []) {
         confirmedByUid: normalizeOptionalString(entry?.confirmedByUid),
         cancelledAt: entry?.cancelledAt || null,
         cancelledByUid: normalizeOptionalString(entry?.cancelledByUid),
-        paymentMethod: normalizeOptionalString(entry?.paymentMethod) || 'pix',
+        paymentMethod: normalizePaymentMethodId(entry?.paymentMethod) || 'pix',
+        accountId: normalizeOptionalString(entry?.accountId),
+        cardId: normalizeOptionalString(entry?.cardId),
+        cardName: normalizeOptionalString(entry?.cardName),
         note: normalizeOptionalString(entry?.note),
+        linkedTransactionId: normalizeOptionalString(entry?.linkedTransactionId),
+        linkedTransactionCreatedAt: entry?.linkedTransactionCreatedAt || null,
       }
     })
     .filter(Boolean)
     .sort((a, b) => settlementSortValue(b) - settlementSortValue(a))
+}
+
+function settlementLinkedTransactionExists(settlement, transactionEntries = []) {
+  const linkedTransactionId = normalizeOptionalString(settlement?.linkedTransactionId)
+  if (!linkedTransactionId) return false
+  return (Array.isArray(transactionEntries) ? transactionEntries : [])
+    .some((entry) => String(entry?.id || '') === linkedTransactionId && isConfirmedDebtPayment(entry))
 }
 
 function buildSettlementHistoryEntry(settlement) {
@@ -264,18 +289,22 @@ function buildSettlementHistoryEntry(settlement) {
     paymentMethod: settlement.paymentMethod || 'pix',
     createdAt: settlement.createdAt,
     createdByName: settlement.createdByName || null,
+    linkedTransactionId: settlement.linkedTransactionId || null,
   }
 }
 
-function buildConfirmedSettlementEntries(debt) {
+function buildConfirmedSettlementEntries(debt, transactionEntries = []) {
   return normalizeDebtSettlements(debt?.settlements)
     .filter((settlement) => settlement.status === 'confirmed')
+    .filter((settlement) => !settlementLinkedTransactionExists(settlement, transactionEntries))
     .map(buildSettlementHistoryEntry)
 }
 
 function buildConfirmedPaymentReplayEntries(debt, transactionEntries = []) {
+  const normalizedTransactions = Array.isArray(transactionEntries) ? transactionEntries : []
   const settlementEntries = normalizeDebtSettlements(debt?.settlements)
     .filter((settlement) => settlement.status === 'confirmed')
+    .filter((settlement) => !settlementLinkedTransactionExists(settlement, normalizedTransactions))
     .map((settlement) => ({
       id: settlement.id,
       amount: settlement.amount,
@@ -283,7 +312,7 @@ function buildConfirmedPaymentReplayEntries(debt, transactionEntries = []) {
       origin: 'debt_settlement',
     }))
 
-  const transactionReplayEntries = (Array.isArray(transactionEntries) ? transactionEntries : [])
+  const transactionReplayEntries = normalizedTransactions
     .filter(isConfirmedDebtPayment)
     .map((entry) => ({
       id: entry.id,
@@ -320,11 +349,97 @@ function isConfirmedDebtPayment(tx) {
     && isDebtLinkedTransaction(tx)
 }
 
+function externalDebtReceivable(debt) {
+  return getExternalDebtDirection(debt) === 'contact_owes_me'
+}
+
+function buildDebtSettlementTransactionPayload(workspaceId, debt, settlement, actorUid = null) {
+  const confirmedAt = settlement?.confirmedAt || new Date().toISOString()
+  const date = String(confirmedAt).slice(0, 10)
+  const competencyMonth = date.slice(0, 7)
+  const amount = roundCurrency(toAmount(settlement?.amount))
+  const paymentMethod = normalizePaymentMethodId(settlement?.paymentMethod) || 'pix'
+  const isFamilyDebt = isFamilyInternalDebt(debt)
+  const ownerUid = normalizeOptionalString(
+    isFamilyDebt
+      ? debt?.debtorMemberId
+      : (debt?.createdBy || actorUid),
+  )
+  const contactId = normalizeOptionalString(
+    debt?.contactId
+      || (isFamilyDebt && debt?.creditorMemberId ? `member:${debt.creditorMemberId}` : null),
+  )
+  const contactName = normalizeOptionalString(
+    debt?.contactName
+      || debt?.counterpartyMemberName
+      || debt?.creditorMemberName
+      || debt?.debtorMemberName
+      || debt?.name,
+  )
+  const receivable = !isFamilyDebt && externalDebtReceivable(debt)
+
+  const transactionNatureId = receivable ? 'nature_loan_repayment' : 'nature_debt_payment'
+  const transactionNatureKey = receivable ? 'devolucao_emprestimo' : 'pagamento_divida'
+  const transactionNatureLabel = receivable ? 'Devolucao de emprestimo' : 'Pagamento de divida'
+  const type = receivable ? 'income' : 'expense'
+  const counterpartName = contactName || 'contato'
+  const description = receivable
+    ? `Recebimento de ${counterpartName} · ${debt?.name || 'Pendencia'}`
+    : `Pagamento para ${counterpartName} · ${debt?.name || 'Pendencia'}`
+
+  return {
+    type,
+    description,
+    amount,
+    date,
+    competencyMonth,
+    workspaceId,
+    createdBy: actorUid || ownerUid || null,
+    userId: ownerUid || actorUid || null,
+    categoryId: null,
+    categoryName: null,
+    subcategoryId: null,
+    subcategoryName: null,
+    transactionNatureId,
+    transactionNatureKey,
+    transactionNatureLabel,
+    paymentMethod,
+    accountId: paymentMethod === 'credit_card' || paymentMethod === 'cash'
+      ? null
+      : normalizeOptionalString(settlement?.accountId),
+    cardId: paymentMethod === 'credit_card'
+      ? normalizeOptionalString(settlement?.cardId)
+      : null,
+    cardName: paymentMethod === 'credit_card'
+      ? normalizeOptionalString(settlement?.cardName)
+      : null,
+    contactId,
+    contactName,
+    debtId: debt?.id || null,
+    debtName: debt?.name || null,
+    countsAsDebtSettlement: true,
+    notes: normalizeOptionalString(settlement?.note) || 'Lancamento gerado automaticamente pela confirmacao da restituicao.',
+    origin: 'manual',
+    status: 'confirmed',
+    affectsBudget: false,
+    balanceImpact: false,
+    autoGeneratedByDebtSettlement: true,
+    debtSettlementId: settlement?.id || null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }
+}
+
 export function isFamilyInternalDebt(debt) {
   if (!debt) return false
   if (debt.relationshipKind === 'family_member') return true
   if (debt.debtorMemberId || debt.creditorMemberId) return true
   return String(debt.type || '').startsWith('familia_')
+}
+
+export function getExternalDebtDirection(debt) {
+  if (!debt || isFamilyInternalDebt(debt)) return null
+  return normalizeExternalDebtDirection(debt.externalDirection)
 }
 
 function entryName(entry) {
@@ -412,7 +527,13 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
   const remainingAmount = Math.max(0, totalAmount - initialPaidAmount)
   const interestRate = normalizeInterestRate(payload.interestRate, payload)
   const reasonType = normalizeFamilyReasonType(payload.reasonType)
-  const requiresReceiptConfirmation = normalizeOptionalString(payload.relationshipKind) === 'family_member'
+  const relationshipKind = normalizeOptionalString(payload.relationshipKind)
+    || (
+      normalizeOptionalString(payload.contactId) || normalizeOptionalString(payload.contactName)
+        ? 'external_contact'
+        : null
+    )
+  const requiresReceiptConfirmation = relationshipKind === 'family_member'
     && reasonType === 'emprestimo'
     && normalizeOptionalString(payload.creditorMemberId)
     && normalizeOptionalString(payload.debtorMemberId)
@@ -432,7 +553,7 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
     createdBy: actorUid || null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    relationshipKind: normalizeOptionalString(payload.relationshipKind),
+    relationshipKind,
     reasonType,
     reasonLabel: normalizeOptionalString(payload.reasonLabel),
     creditorMemberId: normalizeOptionalString(payload.creditorMemberId),
@@ -443,6 +564,9 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
     counterpartyMemberName: normalizeOptionalString(payload.counterpartyMemberName),
     contactId: normalizeOptionalString(payload.contactId),
     contactName: normalizeOptionalString(payload.contactName),
+    externalDirection: relationshipKind === 'external_contact'
+      ? normalizeExternalDebtDirection(payload.externalDirection)
+      : null,
     notes: normalizeOptionalString(payload.notes),
     settlements: normalizeDebtSettlements(payload.settlements),
     interestRate: interestRate || null,
@@ -495,6 +619,9 @@ function buildOverflowDebtRecord(workspaceId, debt, settlement, overflowAmount, 
     counterpartyMemberName: normalizeOptionalString(debt?.creditorMemberName),
     contactId: normalizeOptionalString(debt?.contactId),
     contactName: normalizeOptionalString(debt?.contactName),
+    externalDirection: normalizeOptionalString(debt?.relationshipKind) === 'external_contact'
+      ? invertExternalDebtDirection(debt?.externalDirection)
+      : null,
     notes: buildOverflowDebtNote(debt, settlement, overflowAmount),
     settlements: [],
     interestRate: debt?.interestRate || null,
@@ -527,7 +654,7 @@ export async function fetchDebtPayments(workspaceId, debtId) {
     .filter(isConfirmedDebtPayment)
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
 
-  const settlementPayments = buildConfirmedSettlementEntries(debt)
+  const settlementPayments = buildConfirmedSettlementEntries(debt, transactionPayments)
 
   return [...settlementPayments, ...transactionPayments]
     .sort((a, b) => String(b.date || b.createdAt || '').localeCompare(String(a.date || a.createdAt || '')))
@@ -647,7 +774,10 @@ export async function requestDebtSettlement(workspaceId, debtId, payload = {}, a
       createdAt: new Date().toISOString(),
       createdByUid: actorUid || null,
       createdByName: normalizeOptionalString(payload.createdByName),
-      paymentMethod: normalizeOptionalString(payload.paymentMethod) || 'pix',
+      paymentMethod: normalizePaymentMethodId(payload.paymentMethod) || 'pix',
+      accountId: normalizeOptionalString(payload.accountId),
+      cardId: normalizeOptionalString(payload.cardId),
+      cardName: normalizeOptionalString(payload.cardName),
       note: normalizeOptionalString(payload.note),
       confirmedAt: null,
       confirmedByUid: null,
@@ -706,12 +836,19 @@ export async function confirmDebtSettlement(workspaceId, debtId, settlementId, a
       if (settlement.status !== 'pending') {
         throw new Error('Esta restituição ja foi processada')
       }
+      const linkedTransactionRef = doc(txCol(workspaceId))
       confirmedSettlement = {
         ...settlement,
         status: 'confirmed',
         confirmedAt: new Date().toISOString(),
         confirmedByUid: actorUid || null,
+        linkedTransactionId: linkedTransactionRef.id,
+        linkedTransactionCreatedAt: new Date().toISOString(),
       }
+      transaction.set(
+        linkedTransactionRef,
+        buildDebtSettlementTransactionPayload(workspaceId, debtWithInterest, confirmedSettlement, actorUid),
+      )
       return confirmedSettlement
     })
 
@@ -813,8 +950,15 @@ export async function deleteDebtSettlement(workspaceId, debtId, settlementId) {
       settlements: normalizeDebtSettlements(snap.data()?.settlements),
     }
 
-    const exists = debt.settlements.some((settlement) => settlement.id === settlementId)
-    if (!exists) throw new Error('Restituicao nao encontrada')
+    const targetSettlement = debt.settlements.find((settlement) => settlement.id === settlementId)
+    if (!targetSettlement) throw new Error('Restituicao nao encontrada')
+    const linkedTransactionId = normalizeOptionalString(targetSettlement.linkedTransactionId)
+    if (linkedTransactionId) {
+      const linkedTransactionSnap = await transaction.get(doc(txCol(workspaceId), linkedTransactionId))
+      if (linkedTransactionSnap.exists()) {
+        throw new Error('Esta restituicao ja esta refletida em Lancamentos. Exclua primeiro o lancamento vinculado.')
+      }
+    }
 
     const nextSettlements = debt.settlements.filter((settlement) => settlement.id !== settlementId)
 

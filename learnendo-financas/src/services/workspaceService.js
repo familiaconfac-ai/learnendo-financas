@@ -51,6 +51,14 @@ function workspaceMeetingRoomsCol(workspaceId) {
   return collection(db, 'workspaces', workspaceId, 'meetingRooms')
 }
 
+function workspaceAccountsCol(workspaceId) {
+  return collection(db, 'workspaces', workspaceId, 'accounts')
+}
+
+function workspaceCardsCol(workspaceId) {
+  return collection(db, 'workspaces', workspaceId, 'cards')
+}
+
 function workspaceMeetingRoomDoc(workspaceId, roomId) {
   return doc(db, 'workspaces', workspaceId, 'meetingRooms', roomId)
 }
@@ -101,6 +109,15 @@ function normalizeEmail(value = '') {
 
 function isManager(role) {
   return role === 'gestor' || role === 'co-gestor'
+}
+
+function normalizeMemberDisplayName(payload = {}) {
+  return String(
+    payload.displayName
+    || payload.name
+    || payload.email
+    || 'Membro',
+  ).trim()
 }
 
 async function getUserProfileData(uid) {
@@ -351,7 +368,9 @@ export async function fetchUserWorkspaces(uid) {
     }),
   )
 
-  return workspaceDocs.filter(Boolean)
+  return workspaceDocs
+    .filter(Boolean)
+    .filter((workspace) => workspace.active !== false)
 }
 
 export async function ensureWorkspaceBootstrap(uid, profile = null) {
@@ -400,6 +419,112 @@ export async function fetchWorkspaceMembers(workspaceId) {
     }),
   )
   return members
+}
+
+export async function updateWorkspaceDetails(workspaceId, payload = {}) {
+  if (!workspaceId) throw new Error('Workspace nao selecionado')
+
+  const patch = {
+    updatedAt: serverTimestamp(),
+  }
+
+  if (payload.name !== undefined) {
+    patch.name = String(payload.name || '').trim() || 'Meu Workspace'
+  }
+  if (payload.active !== undefined) {
+    patch.active = !!payload.active
+  }
+  if (payload.archivedAt !== undefined) {
+    patch.archivedAt = payload.archivedAt
+  }
+  if (payload.archivedBy !== undefined) {
+    patch.archivedBy = payload.archivedBy || null
+  }
+
+  await updateDoc(workspaceDoc(workspaceId), patch)
+}
+
+export async function archiveWorkspace(workspaceId, actorUid = null) {
+  if (!workspaceId) throw new Error('Workspace nao selecionado')
+
+  await updateDoc(workspaceDoc(workspaceId), {
+    active: false,
+    archivedAt: serverTimestamp(),
+    archivedBy: actorUid || null,
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function createWorkspaceMember(workspaceId, actor, payload = {}) {
+  if (!workspaceId) throw new Error('Workspace nao selecionado')
+
+  const actorPermissions = getPermissionsByRole(actor?.role)
+  if (!actorPermissions.canInvite) {
+    throw new Error('Seu papel nao permite adicionar membros')
+  }
+
+  const normalizedRole = normalizeWorkspaceRole(payload.role || 'membro')
+  const displayName = normalizeMemberDisplayName(payload)
+  const normalizedEmail = normalizeEmail(payload.email)
+  const basePayload = {
+    uid: payload.uid || null,
+    email: normalizedEmail || '',
+    displayName,
+    name: displayName,
+    avatarInitial: String(payload.avatarInitial || displayName.charAt(0) || 'M').charAt(0).toUpperCase(),
+    role: normalizedRole,
+    note: String(payload.note || '').trim() || '',
+    status: payload.status || 'active',
+    joinedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }
+
+  if (!payload.uid) {
+    const ref = await addDoc(workspaceMembersCol(workspaceId), basePayload)
+    try {
+      const workspaceSnapshot = await getDoc(workspaceDoc(workspaceId))
+      if (workspaceSnapshot.exists() && workspaceSnapshot.data()?.type === 'family') {
+        await setDoc(familyMemberDoc(workspaceId, ref.id), {
+          ...basePayload,
+          updatedAt: serverTimestamp(),
+        }, { merge: true })
+      }
+    } catch (_) {
+      // Compatibilidade legada: nao interrompe o cadastro canonico.
+    }
+    return ref.id
+  }
+
+  await setDoc(workspaceMemberDoc(workspaceId, payload.uid), basePayload, { merge: true })
+  await setDoc(userMembershipDoc(payload.uid, workspaceId), {
+    workspaceId,
+    role: normalizedRole,
+    status: payload.status || 'active',
+    joinedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }, { merge: true })
+
+  try {
+    const workspaceSnapshot = await getDoc(workspaceDoc(workspaceId))
+    const workspaceData = workspaceSnapshot.exists() ? workspaceSnapshot.data() : {}
+    await syncLegacyFamilyMirror(workspaceId, {
+      ...buildMemberIdentity(payload.uid, {
+        displayName,
+        name: displayName,
+        email: normalizedEmail,
+      }),
+      role: normalizedRole,
+      status: payload.status || 'active',
+      joinedAt: serverTimestamp(),
+    }, {
+      ...workspaceData,
+      workspaceId,
+    })
+  } catch (_) {
+    // Compatibilidade legada: nao interrompe o cadastro canonico.
+  }
+
+  return payload.uid
 }
 
 export async function fetchWorkspaceContacts(workspaceId) {
@@ -949,13 +1074,22 @@ export async function removeWorkspaceMember(workspaceId, actor, memberUid) {
     throw new Error('Seu papel nao permite remover membros')
   }
 
-  await deleteDoc(workspaceMemberDoc(workspaceId, memberUid))
-  await deleteDoc(userMembershipDoc(memberUid, workspaceId))
+  const memberRef = workspaceMemberDoc(workspaceId, memberUid)
+  const memberSnap = await getDoc(memberRef)
+  const memberData = memberSnap.exists() ? memberSnap.data() : null
+  const linkedUid = String(memberData?.uid || '').trim()
+
+  await deleteDoc(memberRef)
+  if (linkedUid) {
+    await deleteDoc(userMembershipDoc(linkedUid, workspaceId))
+  }
   try {
     await deleteDoc(familyMemberDoc(workspaceId, memberUid))
-    const linkedFamily = await getDoc(userFamilyDoc(memberUid))
-    if (linkedFamily.exists() && linkedFamily.data()?.familyId === workspaceId) {
-      await deleteDoc(userFamilyDoc(memberUid))
+    if (linkedUid) {
+      const linkedFamily = await getDoc(userFamilyDoc(linkedUid))
+      if (linkedFamily.exists() && linkedFamily.data()?.familyId === workspaceId) {
+        await deleteDoc(userFamilyDoc(linkedUid))
+      }
     }
   } catch (_) {
     // Compatibilidade legada: nao interrompe remocao principal.
@@ -975,10 +1109,15 @@ export async function updateWorkspaceMemberRole(workspaceId, actor, memberUid, r
     updatedAt: serverTimestamp(),
   })
 
-  await setDoc(userMembershipDoc(memberUid, workspaceId), {
-    role: normalizedRole,
-    updatedAt: serverTimestamp(),
-  }, { merge: true })
+  const memberSnap = await getDoc(workspaceMemberDoc(workspaceId, memberUid))
+  const linkedUid = String(memberSnap.exists() ? memberSnap.data()?.uid || '' : '').trim()
+
+  if (linkedUid) {
+    await setDoc(userMembershipDoc(linkedUid, workspaceId), {
+      role: normalizedRole,
+      updatedAt: serverTimestamp(),
+    }, { merge: true })
+  }
 
   try {
     await setDoc(familyMemberDoc(workspaceId, memberUid), {

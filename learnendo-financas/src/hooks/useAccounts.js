@@ -1,23 +1,30 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useWorkspace } from '../context/WorkspaceContext'
 import { fetchAccounts, addAccount, updateAccount, deleteAccount } from '../services/accountService'
 
 /**
- * Hook para contas bancárias do usuário.
- * Lê/escreve em users/{uid}/accounts no Firestore.
+ * Hook para contas bancarias do workspace ativo.
+ * Usa workspaces/{workspaceId}/accounts como fonte canonica, com fallback legado.
  */
 export function useAccounts() {
   const { user } = useAuth()
+  const { activeWorkspaceId } = useWorkspace()
   const [accounts, setAccounts] = useState([])
-  const [loading, setLoading]   = useState(true)
-  const [error, setError]       = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   const reload = useCallback(async () => {
-    if (!user?.uid) { setAccounts([]); setLoading(false); return }
+    if (!user?.uid) {
+      setAccounts([])
+      setLoading(false)
+      return
+    }
+
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchAccounts(user.uid)
+      const data = await fetchAccounts(user.uid, { workspaceId: activeWorkspaceId })
       setAccounts(data)
     } catch (err) {
       console.error('[useAccounts] Error:', err.message)
@@ -26,26 +33,26 @@ export function useAccounts() {
     } finally {
       setLoading(false)
     }
-  }, [user?.uid])
+  }, [activeWorkspaceId, user?.uid])
 
   useEffect(() => { reload() }, [reload])
 
   async function add(data) {
-    if (!user?.uid) throw new Error('Usuário não autenticado')
-    const id = await addAccount(user.uid, data)
+    if (!user?.uid) throw new Error('Usuario nao autenticado')
+    const id = await addAccount(user.uid, data, { workspaceId: activeWorkspaceId })
     await reload()
     return id
   }
 
   async function update(accId, data) {
-    if (!user?.uid) throw new Error('Usuário não autenticado')
-    await updateAccount(user.uid, accId, data)
+    if (!user?.uid) throw new Error('Usuario nao autenticado')
+    await updateAccount(user.uid, accId, data, { workspaceId: activeWorkspaceId })
     await reload()
   }
 
   async function remove(accId) {
-    if (!user?.uid) throw new Error('Usuário não autenticado')
-    await deleteAccount(user.uid, accId)
+    if (!user?.uid) throw new Error('Usuario nao autenticado')
+    await deleteAccount(user.uid, accId, { workspaceId: activeWorkspaceId })
     await reload()
   }
 

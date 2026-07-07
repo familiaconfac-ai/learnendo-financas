@@ -204,6 +204,16 @@ service cloud.firestore {
         allow create, update, delete: if canContributeWorkspace(workspaceId);
       }
 
+      match /accounts/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
+      match /cards/{docId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update, delete: if canContributeWorkspace(workspaceId);
+      }
+
       match /budgets/{docId} {
         allow read: if isWorkspaceMember(workspaceId);
         allow create, update, delete: if canContributeWorkspace(workspaceId);

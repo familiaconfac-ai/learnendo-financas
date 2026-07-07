@@ -4,15 +4,16 @@ import { formatCurrency } from '../../utils/formatCurrency'
 import { formatDateBR } from '../../utils/formatDate'
 import { useFamilia } from '../../hooks/useFamilia'
 import { useAccounts } from '../../hooks/useAccounts'
+import { useCards } from '../../hooks/useCards'
 import { useDebts } from '../../hooks/useDebts'
 import { useAuth } from '../../context/AuthContext'
 import { useFinance } from '../../context/FinanceContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
-import { addMember } from '../../services/familyService'
-import { buildFamilyDebtLedger, isFamilyInternalDebt } from '../../services/debtService'
+import { buildFamilyDebtLedger, getExternalDebtDirection, isFamilyInternalDebt } from '../../services/debtService'
 import { fetchAllTransactionsForWorkspace } from '../../services/transactionService'
 import { calculateMonthlySummary } from '../../utils/financeCalculations'
 import { getPermissionsByRole, getWorkspaceInviteByToken } from '../../services/workspaceService'
+import { TRANSACTION_PAYMENT_METHODS, normalizePaymentMethodId } from '../../constants/transactionPaymentMethods'
 import './Familia.css'
 
 const PENDING_WORKSPACE_INVITE_KEY = 'lf:pending-workspace-invite-token'
@@ -96,6 +97,11 @@ const EXTERNAL_DEBT_TYPE_OPTIONS = [
   { value: 'empresa', label: 'Empresa' },
 ]
 
+const EXTERNAL_DEBT_DIRECTION_OPTIONS = [
+  { value: 'i_owe_contact', label: 'Eu devo para essa pessoa' },
+  { value: 'contact_owes_me', label: 'Essa pessoa me deve' },
+]
+
 function memberStableId(member) {
   return member?.uid || member?.id || ''
 }
@@ -124,6 +130,9 @@ function defaultSettlementForm() {
     debtId: '',
     amount: '',
     notes: '',
+    paymentMethod: 'pix',
+    accountId: '',
+    cardId: '',
   }
 }
 
@@ -133,6 +142,19 @@ function defaultMemberSettlementDraft(debts = []) {
     debtId: debts[0]?.id || '',
     amount: '',
     notes: '',
+    paymentMethod: 'pix',
+    accountId: '',
+    cardId: '',
+  }
+}
+
+function defaultQuickSettlementDraft() {
+  return {
+    amount: '',
+    notes: '',
+    paymentMethod: 'pix',
+    accountId: '',
+    cardId: '',
   }
 }
 
@@ -140,6 +162,7 @@ function defaultExternalDebtForm() {
   return {
     name: '',
     type: 'pessoa',
+    direction: 'i_owe_contact',
     totalAmount: '',
     paidAmount: '',
     monthlyAmount: '',
@@ -181,6 +204,23 @@ function memberSettlementDebtLabel(debt) {
   return `${reason} · restante ${formatCurrency(debt.remainingAmount)}`
 }
 
+function externalDebtRelationLabel(debt) {
+  if (getExternalDebtDirection(debt) === 'contact_owes_me') {
+    return `${debt.contactName || debt.name || 'Contato'} te deve`
+  }
+  return `Voce deve para ${debt.contactName || debt.name || 'Contato'}`
+}
+
+function accountOptionLabel(account) {
+  if (!account) return ''
+  return [account.name, account.bank].filter(Boolean).join(' · ')
+}
+
+function cardOptionLabel(card) {
+  if (!card) return ''
+  return [card.name, card.flag ? String(card.flag).toUpperCase() : '', card.holderName].filter(Boolean).join(' · ')
+}
+
 function dateValueFromFirestoreLike(value) {
   if (!value) return 0
   if (typeof value?.toDate === 'function') return value.toDate().getTime()
@@ -216,6 +256,7 @@ export default function Familia() {
   const { user } = useAuth()
   const { selectedMonth, selectedYear } = useFinance()
   const { accounts } = useAccounts()
+  const { cards } = useCards()
   const {
     workspaces,
     changeWorkspace,
@@ -226,10 +267,12 @@ export default function Familia() {
     activeWorkspaceId,
     permissions,
     debtLedger,
+    contacts,
     projects,
     members: workspaceMembers,
     invitations: workspaceInvitations,
     myRole: workspaceRole,
+    addExternalContact,
     addProject,
     editProject,
   } = useWorkspace()
@@ -248,7 +291,7 @@ export default function Familia() {
     family, members, invitations, loading, error,
     myRole, canManage, reload,
     create, editName, deleteFamily,
-    removeMember, changeRole, cancelInvite: cancelLegacyInvite,
+    removeMember, changeRole, addMember: addFamilyMember, cancelInvite: cancelLegacyInvite,
   } = useFamilia()
   const { toast, show: showToast } = useToast()
 
@@ -473,6 +516,18 @@ export default function Familia() {
     () => (Array.isArray(debts) ? debts : []).filter((debt) => !isFamilyInternalDebt(debt)),
     [debts],
   )
+  const openExternalPayableDebts = useMemo(
+    () => externalDebts
+      .filter((debt) => Number(debt.remainingAmount || 0) > 0 && getExternalDebtDirection(debt) !== 'contact_owes_me')
+      .sort((a, b) => Number(b.remainingAmount || 0) - Number(a.remainingAmount || 0)),
+    [externalDebts],
+  )
+  const openExternalReceivableDebts = useMemo(
+    () => externalDebts
+      .filter((debt) => Number(debt.remainingAmount || 0) > 0 && getExternalDebtDirection(debt) === 'contact_owes_me')
+      .sort((a, b) => Number(b.remainingAmount || 0) - Number(a.remainingAmount || 0)),
+    [externalDebts],
+  )
   const familyDebtLedger = useMemo(
     () => buildFamilyDebtLedger(familyInternalDebts, user?.uid, familyMembers),
     [familyInternalDebts, familyMembers, user?.uid],
@@ -531,12 +586,17 @@ export default function Familia() {
     () => externalDebts.reduce((acc, debt) => {
       acc.total += Number(debt.totalAmount || 0)
       acc.paid += Number(debt.paidAmount || 0)
-      acc.remaining += Number(debt.remainingAmount || 0)
+      const remainingAmount = Number(debt.remainingAmount || 0)
+      if (getExternalDebtDirection(debt) === 'contact_owes_me') {
+        acc.receivable += remainingAmount
+      } else {
+        acc.payable += remainingAmount
+      }
       return acc
-    }, { total: 0, paid: 0, remaining: 0 }),
+    }, { total: 0, paid: 0, payable: 0, receivable: 0 }),
     [externalDebts],
   )
-  const combinedDebtTotal = Number(familyDebtOverview.iOwe || 0) + Number(externalDebtSummary.remaining || 0)
+  const combinedDebtTotal = Number(familyDebtOverview.iOwe || 0) + Number(externalDebtSummary.payable || 0)
   const legacyContactLedger = useMemo(
     () => (Array.isArray(debtLedger) ? debtLedger : []).filter((item) => !String(item.contactId || '').startsWith('member:')),
     [debtLedger],
@@ -557,6 +617,9 @@ export default function Familia() {
   const totalReceitas = Number(summarySnapshot?.receitas || 0)
   const totalDespesas = Number((summarySnapshot?.despesas || 0) + (summarySnapshot?.investimentos || 0))
   const totalSaldo = Number(summarySnapshot?.saldo || 0)
+  const selectedSettlementPaymentMethod = normalizePaymentMethodId(settlementForm.paymentMethod) || 'pix'
+  const settlementRequiresCard = selectedSettlementPaymentMethod === 'credit_card'
+  const settlementRequiresAccount = !settlementRequiresCard && selectedSettlementPaymentMethod !== 'cash'
   const summarySubtitle = summaryLoading
     ? 'Carregando…'
     : summaryMode === 'year'
@@ -711,7 +774,7 @@ export default function Familia() {
 
     setSaving(true)
     try {
-      await addMember(user.uid, family.id, {
+      await addFamilyMember({
         uid: null,
         displayName: name,
         name,
@@ -874,9 +937,8 @@ export default function Familia() {
 
   function handleSettlementOpen(debt) {
     setSettlementForm({
+      ...defaultSettlementForm(),
       debtId: debt?.id || '',
-      amount: '',
-      notes: '',
     })
     setSettlementOpen(true)
   }
@@ -885,8 +947,8 @@ export default function Familia() {
     setQuickSettlementDrafts((current) => ({
       ...current,
       [debtId]: {
-        amount: current[debtId]?.amount || '',
-        notes: current[debtId]?.notes || '',
+        ...defaultQuickSettlementDraft(),
+        ...(current[debtId] || {}),
         ...patch,
       },
     }))
@@ -916,13 +978,28 @@ export default function Familia() {
     }))
   }
 
-  async function createMemberPaymentRequests(orderedDebts = [], amount, note = '') {
+  function validateSettlementSourceDraft(draft = {}) {
+    const paymentMethod = normalizePaymentMethodId(draft.paymentMethod) || 'pix'
+    if (paymentMethod === 'credit_card' && !draft.cardId) {
+      throw new Error('Selecione o cartao usado neste envio.')
+    }
+    if (paymentMethod !== 'credit_card' && paymentMethod !== 'cash' && !draft.accountId) {
+      throw new Error('Selecione a conta usada neste envio.')
+    }
+    return paymentMethod
+  }
+
+  async function createMemberPaymentRequests(orderedDebts = [], amount, note = '', paymentMeta = {}) {
     const activeDebts = sortDebtsByOldestFirst(
       (Array.isArray(orderedDebts) ? orderedDebts : []).filter((debt) => Number(debt.remainingAmount || 0) > 0),
     )
     const anchorDebt = activeDebts[0] || null
     let lastAllocatedDebt = anchorDebt
     let remainingToAllocate = Number(amount || 0)
+    const normalizedPaymentMethod = normalizePaymentMethodId(paymentMeta.paymentMethod) || 'pix'
+    const selectedCard = normalizedPaymentMethod === 'credit_card'
+      ? (Array.isArray(cards) ? cards.find((card) => card.id === paymentMeta.cardId) : null)
+      : null
 
     if (!anchorDebt?.id) {
       throw new Error('Nenhuma conta em aberto foi encontrada para este membro.')
@@ -937,7 +1014,12 @@ export default function Familia() {
         amount: amountForDebt,
         note,
         createdByName: currentMemberLabel,
-        paymentMethod: 'manual',
+        paymentMethod: normalizedPaymentMethod,
+        accountId: normalizedPaymentMethod === 'credit_card' || normalizedPaymentMethod === 'cash'
+          ? null
+          : (paymentMeta.accountId || null),
+        cardId: normalizedPaymentMethod === 'credit_card' ? (paymentMeta.cardId || null) : null,
+        cardName: normalizedPaymentMethod === 'credit_card' ? (selectedCard?.name || null) : null,
       })
       lastAllocatedDebt = debt
       remainingToAllocate = Number((remainingToAllocate - amountForDebt).toFixed(2))
@@ -948,7 +1030,12 @@ export default function Familia() {
         amount: remainingToAllocate,
         note,
         createdByName: currentMemberLabel,
-        paymentMethod: 'manual',
+        paymentMethod: normalizedPaymentMethod,
+        accountId: normalizedPaymentMethod === 'credit_card' || normalizedPaymentMethod === 'cash'
+          ? null
+          : (paymentMeta.accountId || null),
+        cardId: normalizedPaymentMethod === 'credit_card' ? (paymentMeta.cardId || null) : null,
+        cardName: normalizedPaymentMethod === 'credit_card' ? (selectedCard?.name || null) : null,
       })
     }
 
@@ -973,10 +1060,16 @@ export default function Familia() {
       showToast('Informe o novo valor enviado.', 'err')
       return
     }
+    try {
+      validateSettlementSourceDraft(draft)
+    } catch (err) {
+      showToast(err.message, 'err')
+      return
+    }
 
     setSaving(true)
     try {
-      const anchorDebt = await createMemberPaymentRequests(orderedDebts, amount, String(draft.notes || '').trim())
+      const anchorDebt = await createMemberPaymentRequests(orderedDebts, amount, String(draft.notes || '').trim(), draft)
       setMemberSettlementDrafts((current) => ({
         ...current,
         [memberId]: {
@@ -985,6 +1078,9 @@ export default function Familia() {
           debtId: anchorDebt.id,
           amount: '',
           notes: '',
+          paymentMethod: draft.paymentMethod || 'pix',
+          accountId: draft.accountId || '',
+          cardId: draft.cardId || '',
         },
       }))
       showToast('Envio registrado. Ele vai abater primeiro as contas mais antigas, depois o outro membro confirma o recebimento.')
@@ -997,7 +1093,7 @@ export default function Familia() {
 
   async function handleQuickSettlementSubmit(debt) {
     if (!debt?.id) return
-    const draft = quickSettlementDrafts[debt.id] || {}
+    const draft = quickSettlementDrafts[debt.id] || defaultQuickSettlementDraft()
     const amount = Number(draft.amount || 0)
     const relatedDebts = sortDebtsByOldestFirst(
       familyInternalDebts.filter((item) => (
@@ -1015,13 +1111,24 @@ export default function Familia() {
       showToast('Informe o valor enviado.', 'err')
       return
     }
+    try {
+      validateSettlementSourceDraft(draft)
+    } catch (err) {
+      showToast(err.message, 'err')
+      return
+    }
 
     setSaving(true)
     try {
-      await createMemberPaymentRequests(relatedDebts, amount, String(draft.notes || '').trim())
+      await createMemberPaymentRequests(relatedDebts, amount, String(draft.notes || '').trim(), draft)
       setQuickSettlementDrafts((current) => ({
         ...current,
-        [debt.id]: { amount: '', notes: '' },
+        [debt.id]: {
+          ...defaultQuickSettlementDraft(),
+          paymentMethod: draft.paymentMethod || 'pix',
+          accountId: draft.accountId || '',
+          cardId: draft.cardId || '',
+        },
       }))
       showToast('Envio registrado. Agora falta a confirmacao do recebedor.')
     } catch (err) {
@@ -1056,9 +1163,15 @@ export default function Familia() {
       showToast('Informe o valor enviado.', 'err')
       return
     }
+    try {
+      validateSettlementSourceDraft(settlementForm)
+    } catch (err) {
+      showToast(err.message, 'err')
+      return
+    }
     setSaving(true)
     try {
-      await createMemberPaymentRequests(relatedDebts, amount, settlementForm.notes.trim())
+      await createMemberPaymentRequests(relatedDebts, amount, settlementForm.notes.trim(), settlementForm)
       handleSettlementModalClose()
       showToast('Restituicao registrada. Agora falta a confirmacao do recebedor. ✅')
     } catch (err) {
@@ -1147,28 +1260,38 @@ export default function Familia() {
   async function handleCreateExternalDebt(e) {
     e.preventDefault()
 
+    const normalizedName = externalDebtForm.name.trim()
     const totalAmount = Number(externalDebtForm.totalAmount || 0)
     const paidAmount = Number(externalDebtForm.paidAmount || 0)
     const monthlyAmount = Number(externalDebtForm.monthlyAmount || 0)
 
-    if (!externalDebtForm.name.trim()) {
-      showToast('Informe de quem e esta divida.', 'err')
+    if (!normalizedName) {
+      showToast('Informe a pessoa ou instituicao.', 'err')
       return
     }
     if (!totalAmount || totalAmount <= 0) {
-      showToast('Informe o valor total da divida.', 'err')
+      showToast('Informe o valor total da pendencia.', 'err')
       return
     }
     if (paidAmount < 0 || paidAmount > totalAmount) {
-      showToast('O valor ja pago precisa ficar entre zero e o total.', 'err')
+      showToast('O valor ja compensado precisa ficar entre zero e o total.', 'err')
       return
     }
 
     setSaving(true)
     try {
+      const existingContact = (Array.isArray(contacts) ? contacts : []).find(
+        (contact) => String(contact?.name || '').trim().toLowerCase() === normalizedName.toLowerCase(),
+      )
+      const linkedContact = existingContact || await addExternalContact(normalizedName)
+
       await addDebt({
-        name: externalDebtForm.name.trim(),
+        name: normalizedName,
         type: externalDebtForm.type,
+        relationshipKind: 'external_contact',
+        contactId: linkedContact?.id || null,
+        contactName: linkedContact?.name || normalizedName,
+        externalDirection: externalDebtForm.direction,
         totalAmount,
         paidAmount,
         notes: externalDebtForm.notes.trim(),
@@ -1177,9 +1300,9 @@ export default function Familia() {
           : null,
       })
       handleExternalDebtModalClose()
-      showToast('Divida externa registrada. ✅')
+      showToast('Pendencia externa registrada. ✅')
     } catch (err) {
-      showToast('Erro ao registrar divida externa: ' + err.message, 'err')
+      showToast('Erro ao registrar pendencia externa: ' + err.message, 'err')
     } finally {
       setSaving(false)
     }
@@ -1655,6 +1778,39 @@ export default function Familia() {
                         onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { notes: e.target.value })}
                         placeholder="Observacao opcional"
                       />
+                      <select
+                        value={memberSettlementDraft.paymentMethod}
+                        onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, {
+                          paymentMethod: e.target.value,
+                          accountId: normalizePaymentMethodId(e.target.value) === 'credit_card' ? '' : memberSettlementDraft.accountId,
+                          cardId: normalizePaymentMethodId(e.target.value) === 'credit_card' ? memberSettlementDraft.cardId : '',
+                        })}
+                      >
+                        {TRANSACTION_PAYMENT_METHODS.map((method) => (
+                          <option key={method.id} value={method.id}>{method.label}</option>
+                        ))}
+                      </select>
+                      {normalizePaymentMethodId(memberSettlementDraft.paymentMethod) === 'credit_card' ? (
+                        <select
+                          value={memberSettlementDraft.cardId}
+                          onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { cardId: e.target.value })}
+                        >
+                          <option value="">Selecione o cartao</option>
+                          {cards.map((card) => (
+                            <option key={card.id} value={card.id}>{cardOptionLabel(card)}</option>
+                          ))}
+                        </select>
+                      ) : normalizePaymentMethodId(memberSettlementDraft.paymentMethod) !== 'cash' ? (
+                        <select
+                          value={memberSettlementDraft.accountId}
+                          onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { accountId: e.target.value })}
+                        >
+                          <option value="">Selecione a conta</option>
+                          {accounts.map((account) => (
+                            <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>
+                          ))}
+                        </select>
+                      ) : null}
                       <button
                         type="button"
                         className="member-inline-btn"
@@ -1802,6 +1958,43 @@ export default function Familia() {
                                         onChange={(e) => updateQuickSettlementDraft(debt.id, { notes: e.target.value })}
                                         placeholder="Observacao opcional"
                                       />
+                                      <select
+                                        value={quickSettlementDrafts[debt.id]?.paymentMethod || 'pix'}
+                                        onChange={(e) => updateQuickSettlementDraft(debt.id, {
+                                          paymentMethod: e.target.value,
+                                          accountId: normalizePaymentMethodId(e.target.value) === 'credit_card'
+                                            ? ''
+                                            : (quickSettlementDrafts[debt.id]?.accountId || ''),
+                                          cardId: normalizePaymentMethodId(e.target.value) === 'credit_card'
+                                            ? (quickSettlementDrafts[debt.id]?.cardId || '')
+                                            : '',
+                                        })}
+                                      >
+                                        {TRANSACTION_PAYMENT_METHODS.map((method) => (
+                                          <option key={method.id} value={method.id}>{method.label}</option>
+                                        ))}
+                                      </select>
+                                      {normalizePaymentMethodId(quickSettlementDrafts[debt.id]?.paymentMethod || 'pix') === 'credit_card' ? (
+                                        <select
+                                          value={quickSettlementDrafts[debt.id]?.cardId || ''}
+                                          onChange={(e) => updateQuickSettlementDraft(debt.id, { cardId: e.target.value })}
+                                        >
+                                          <option value="">Selecione o cartao</option>
+                                          {cards.map((card) => (
+                                            <option key={card.id} value={card.id}>{cardOptionLabel(card)}</option>
+                                          ))}
+                                        </select>
+                                      ) : normalizePaymentMethodId(quickSettlementDrafts[debt.id]?.paymentMethod || 'pix') !== 'cash' ? (
+                                        <select
+                                          value={quickSettlementDrafts[debt.id]?.accountId || ''}
+                                          onChange={(e) => updateQuickSettlementDraft(debt.id, { accountId: e.target.value })}
+                                        >
+                                          <option value="">Selecione a conta</option>
+                                          {accounts.map((account) => (
+                                            <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>
+                                          ))}
+                                        </select>
+                                      ) : null}
                                       <button
                                         type="button"
                                         className="member-inline-btn"
@@ -1993,8 +2186,12 @@ export default function Familia() {
             <span className="familia-stat-value blue">{pendingSettlementCount}</span>
           </div>
           <div className="familia-stat">
-            <span className="familia-stat-label">Dividas externas</span>
-            <span className="familia-stat-value red">{formatCurrency(externalDebtSummary.remaining)}</span>
+            <span className="familia-stat-label">Fora da familia para pagar</span>
+            <span className="familia-stat-value red">{formatCurrency(externalDebtSummary.payable)}</span>
+          </div>
+          <div className="familia-stat">
+            <span className="familia-stat-label">Fora da familia para receber</span>
+            <span className="familia-stat-value green">{formatCurrency(externalDebtSummary.receivable)}</span>
           </div>
           <div className="familia-stat">
             <span className="familia-stat-label">Minha divida total</span>
@@ -2007,7 +2204,7 @@ export default function Familia() {
             className="member-inline-btn"
             onClick={() => setExternalDebtOpen(true)}
           >
-            + Divida externa
+            + Pendencia externa
           </button>
           {(familyDebtLedger.length > 0 || legacyContactLedger.length > 0) && (
             <button
@@ -2019,25 +2216,24 @@ export default function Familia() {
             </button>
           )}
         </div>
-        {externalDebts.length > 0 && (
+        {(openExternalPayableDebts.length > 0 || openExternalReceivableDebts.length > 0) && (
           <div className="family-debt-block">
-            <strong className="family-debt-block-title">Dividas externas em aberto</strong>
-            <ul className="family-debt-list">
-              {externalDebts
-                .filter((debt) => Number(debt.remainingAmount || 0) > 0)
-                .slice(0, 4)
-                .map((debt) => (
+            <strong className="family-debt-block-title">Pendencias externas em aberto</strong>
+            {openExternalPayableDebts.length > 0 && (
+              <ul className="family-debt-list">
+                {openExternalPayableDebts.slice(0, 4).map((debt) => (
                   <li key={debt.id} className="family-debt-item">
                     <div className="family-debt-top">
                       <div>
                         <strong>{debt.name}</strong>
-                        <p>{EXTERNAL_DEBT_TYPE_OPTIONS.find((option) => option.value === debt.type)?.label || debt.type}</p>
+                        <p>{externalDebtRelationLabel(debt)}</p>
                       </div>
                       <span className="family-debt-remaining">{formatCurrency(debt.remainingAmount)}</span>
                     </div>
                     <div className="family-debt-meta">
+                      <span>{EXTERNAL_DEBT_TYPE_OPTIONS.find((option) => option.value === debt.type)?.label || debt.type}</span>
                       <span>Total {formatCurrency(debt.totalAmount)}</span>
-                      <span>Pago {formatCurrency(debt.paidAmount)}</span>
+                      <span>Compensado {formatCurrency(debt.paidAmount)}</span>
                       {Number(debt.installmentPlan?.monthlyAmount || 0) > 0 && (
                         <span>Plano mensal {formatCurrency(debt.installmentPlan.monthlyAmount)}</span>
                       )}
@@ -2050,17 +2246,57 @@ export default function Familia() {
                         disabled={saving}
                         onClick={() => handleDeleteDebt(debt)}
                       >
-                        Excluir divida
+                        Excluir pendencia
                       </button>
                     </div>
                   </li>
                 ))}
-            </ul>
+              </ul>
+            )}
+            {openExternalReceivableDebts.length > 0 && (
+              <ul className="family-debt-list" style={{ marginTop: openExternalPayableDebts.length > 0 ? '0.75rem' : 0 }}>
+                {openExternalReceivableDebts.slice(0, 4).map((debt) => (
+                  <li key={debt.id} className="family-debt-item">
+                    <div className="family-debt-top">
+                      <div>
+                        <strong>{debt.name}</strong>
+                        <p>{externalDebtRelationLabel(debt)}</p>
+                      </div>
+                      <span className="family-debt-remaining" style={{ color: '#15803d' }}>
+                        {formatCurrency(debt.remainingAmount)}
+                      </span>
+                    </div>
+                    <div className="family-debt-meta">
+                      <span>{EXTERNAL_DEBT_TYPE_OPTIONS.find((option) => option.value === debt.type)?.label || debt.type}</span>
+                      <span>Total {formatCurrency(debt.totalAmount)}</span>
+                      <span>Compensado {formatCurrency(debt.paidAmount)}</span>
+                      {Number(debt.installmentPlan?.monthlyAmount || 0) > 0 && (
+                        <span>Meta de recebimento {formatCurrency(debt.installmentPlan.monthlyAmount)}</span>
+                      )}
+                    </div>
+                    {debt.notes && <p className="family-debt-notes">{debt.notes}</p>}
+                    <div className="member-debt-entry-actions">
+                      <button
+                        type="button"
+                        className="member-inline-btn member-inline-btn--ghost"
+                        disabled={saving}
+                        onClick={() => handleDeleteDebt(debt)}
+                      >
+                        Excluir pendencia
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="ledger-empty" style={{ marginTop: '0.75rem' }}>
+              Para refletir no fluxo geral, registre o pagamento ou recebimento em Lancamentos usando essa mesma pessoa.
+            </p>
           </div>
         )}
         {externalDebts.length === 0 && (
           <p className="ledger-empty" style={{ marginTop: '0.75rem' }}>
-            Use "Divida externa" para registrar emprestimos de banco ou de parentes que nao usam o aplicativo.
+            Use "Pendencia externa" para registrar emprestimos, valores a receber e relacoes com pessoas que nao usam o aplicativo.
           </p>
         )}
         {familyDebtLedger.length === 0 && legacyContactLedger.length === 0 ? (
@@ -2426,13 +2662,14 @@ export default function Familia() {
       {externalDebtOpen && (
         <div className="modal-overlay" onClick={handleExternalDebtModalClose}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">Nova divida externa</h3>
+            <h3 className="modal-title">Nova pendencia externa</h3>
             <p className="modal-hint">
-              Use para emprestimos de banco, parentes ou qualquer pessoa que nao participa do app. Esse valor entra no total geral das suas dividas.
+              Use para banco, parentes, amigos ou qualquer pessoa que nao participa do app. Esse cadastro organiza o saldo da relacao.
+              Para mexer no caixa geral, registre depois o pagamento ou recebimento em Lancamentos.
             </p>
             <form onSubmit={handleCreateExternalDebt} className="invite-form">
               <div className="form-group">
-                <label>De quem e a divida</label>
+                <label>Pessoa ou instituicao</label>
                 <input
                   type="text"
                   value={externalDebtForm.name}
@@ -2455,6 +2692,17 @@ export default function Familia() {
                 </select>
               </div>
               <div className="form-group">
+                <label>Como essa relacao funciona</label>
+                <select
+                  value={externalDebtForm.direction}
+                  onChange={(e) => setExternalDebtForm((current) => ({ ...current, direction: e.target.value }))}
+                >
+                  {EXTERNAL_DEBT_DIRECTION_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
                 <label>Valor total</label>
                 <input
                   type="number"
@@ -2467,7 +2715,7 @@ export default function Familia() {
                 />
               </div>
               <div className="form-group">
-                <label>Valor ja pago</label>
+                <label>Valor ja compensado</label>
                 <input
                   type="number"
                   min="0"
@@ -2478,7 +2726,7 @@ export default function Familia() {
                 />
               </div>
               <div className="form-group">
-                <label>Meta mensal de pagamento (opcional)</label>
+                <label>Meta mensal (opcional)</label>
                 <input
                   type="number"
                   min="0"
@@ -2503,7 +2751,7 @@ export default function Familia() {
                   Cancelar
                 </button>
                 <button type="submit" className="btn-send" disabled={saving}>
-                  {saving ? 'Salvando...' : 'Registrar divida'}
+                  {saving ? 'Salvando...' : 'Registrar pendencia'}
                 </button>
               </div>
             </form>
@@ -2565,6 +2813,49 @@ export default function Familia() {
                   maxLength={240}
                 />
               </div>
+              <div className="form-group">
+                <label>Como foi enviado</label>
+                <select
+                  value={settlementForm.paymentMethod}
+                  onChange={(e) => setSettlementForm((current) => ({
+                    ...current,
+                    paymentMethod: e.target.value,
+                    accountId: normalizePaymentMethodId(e.target.value) === 'credit_card' ? '' : current.accountId,
+                    cardId: normalizePaymentMethodId(e.target.value) === 'credit_card' ? current.cardId : '',
+                  }))}
+                >
+                  {TRANSACTION_PAYMENT_METHODS.map((method) => (
+                    <option key={method.id} value={method.id}>{method.label}</option>
+                  ))}
+                </select>
+              </div>
+              {settlementRequiresCard ? (
+                <div className="form-group">
+                  <label>Cartao usado</label>
+                  <select
+                    value={settlementForm.cardId}
+                    onChange={(e) => setSettlementForm((current) => ({ ...current, cardId: e.target.value }))}
+                  >
+                    <option value="">Selecione o cartao</option>
+                    {cards.map((card) => (
+                      <option key={card.id} value={card.id}>{cardOptionLabel(card)}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : settlementRequiresAccount ? (
+                <div className="form-group">
+                  <label>Conta usada</label>
+                  <select
+                    value={settlementForm.accountId}
+                    onChange={(e) => setSettlementForm((current) => ({ ...current, accountId: e.target.value }))}
+                  >
+                    <option value="">Selecione a conta</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
               <div className="invite-form-actions">
                 <button type="button" className="btn-cancel" onClick={handleSettlementModalClose}>
                   Cancelar

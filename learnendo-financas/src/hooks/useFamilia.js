@@ -1,19 +1,17 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useWorkspace } from '../context/WorkspaceContext'
 import { IS_MOCK_MODE } from '../firebase/mockMode'
 import {
-  fetchUserFamily,
-  createFamily,
-  updateFamily,
-  deleteFamily as deleteFamilyDoc,
-  fetchMembers,
-  updateMemberRole,
-  removeMember,
-  fetchInvitations,
-  addInvitation,
-  addMember,
-  cancelInvitation,
-} from '../services/familyService'
+  archiveWorkspace,
+  cancelWorkspaceInvite,
+  createWorkspaceMember,
+  fetchWorkspaceInvites,
+  fetchWorkspaceMembers,
+  removeWorkspaceMember,
+  updateWorkspaceDetails,
+  updateWorkspaceMemberRole,
+} from '../services/workspaceService'
 import {
   MOCK_FAMILY,
   MOCK_FAMILY_MEMBERS,
@@ -32,6 +30,19 @@ function normaliseRole(role) {
 
 export function useFamilia() {
   const { user } = useAuth()
+  const {
+    workspaces,
+    activeWorkspace,
+    activeWorkspaceId,
+    createNewWorkspace,
+    myRole: workspaceRole,
+    reload: reloadWorkspaces,
+  } = useWorkspace()
+
+  const familyWorkspace = useMemo(() => {
+    if (activeWorkspace?.type === 'family') return activeWorkspace
+    return (workspaces || []).find((workspace) => workspace.type === 'family') || null
+  }, [activeWorkspace, workspaces])
 
   const [families, setFamilies] = useState([])
   const [family, setFamily] = useState(null)
@@ -73,22 +84,22 @@ export function useFamilia() {
         return
       }
 
-      const fam = await fetchUserFamily(user.uid)
-      setFamilies(fam ? [fam] : [])
-      setFamily(fam)
-
-      if (!fam?.id) {
+      if (!familyWorkspace?.id) {
+        setFamilies([])
+        setFamily(null)
         setMembers([])
         setInvitations([])
         return
       }
 
       const [rawMembers, rawInvites] = await Promise.all([
-        fetchMembers(user.uid, fam.id),
-        fetchInvitations(user.uid, fam.id),
+        fetchWorkspaceMembers(familyWorkspace.id),
+        fetchWorkspaceInvites(familyWorkspace.id),
       ])
 
-      setMembers(rawMembers.map((m) => ({ ...m, role: normaliseRole(m.role) })))
+      setFamilies([familyWorkspace])
+      setFamily(familyWorkspace)
+      setMembers(rawMembers.map((member) => ({ ...member, role: normaliseRole(member.role) })))
       setInvitations(rawInvites)
     } catch (err) {
       console.error('[useFamilia] Load error:', err.message)
@@ -96,15 +107,16 @@ export function useFamilia() {
     } finally {
       setLoading(false)
     }
-  }, [user?.uid])
+  }, [familyWorkspace, user?.uid])
 
   useEffect(() => {
     loadAll()
   }, [loadAll])
 
   const myMember = members.find((m) => m.uid === user?.uid || m.id === user?.uid) ?? null
-  const myRole = myMember?.role ?? (family?.ownerUid === user?.uid ? 'gestor' : 'planejador')
+  const myRole = myMember?.role ?? workspaceRole ?? (family?.ownerUid === user?.uid ? 'gestor' : 'planejador')
   const canManage = myRole === 'gestor' || myRole === 'co-gestor'
+  const actor = { uid: user?.uid || null, role: myRole }
 
   async function create(name) {
     if (!user?.uid) throw new Error('Nao autenticado')
@@ -123,17 +135,9 @@ export function useFamilia() {
       return
     }
 
-    const famId = await createFamily(user.uid, { name })
-    await addMember(user.uid, famId, {
-      uid: user.uid,
-      displayName: user.displayName || user.email || 'Voce',
-      email: user.email || '',
-      role: 'gestor',
-      status: 'active',
-      avatarInitial: (user.displayName || user.email || 'V').trim().charAt(0).toUpperCase(),
-    })
+    const familyId = await createNewWorkspace(name, 'family')
     await loadAll()
-    return famId
+    return familyId
   }
 
   async function editName(name) {
@@ -142,8 +146,9 @@ export function useFamilia() {
       setFamily((f) => ({ ...f, name }))
       return
     }
-    await updateFamily(user.uid, family.id, { name })
-    setFamily((f) => ({ ...f, name }))
+    await updateWorkspaceDetails(family.id, { name })
+    await reloadWorkspaces()
+    await loadAll()
   }
 
   async function deleteFamily() {
@@ -154,7 +159,8 @@ export function useFamilia() {
       setInvitations([])
       return
     }
-    await deleteFamilyDoc(user.uid, family.id)
+    await archiveWorkspace(family.id, user.uid)
+    await reloadWorkspaces()
     setFamily(null)
     setMembers([])
     setInvitations([])
@@ -166,8 +172,8 @@ export function useFamilia() {
       setMembers((ms) => ms.filter((m) => m.id !== memberId && m.uid !== memberId))
       return
     }
-    await removeMember(user.uid, family.id, memberId)
-    setMembers((ms) => ms.filter((m) => m.id !== memberId && m.uid !== memberId))
+    await removeWorkspaceMember(family.id, actor, memberId)
+    await loadAll()
   }
 
   async function changeRole(memberId, role) {
@@ -178,27 +184,29 @@ export function useFamilia() {
       )
       return
     }
-    await updateMemberRole(user.uid, family.id, memberId, role)
-    setMembers((ms) =>
-      ms.map((m) => (m.id === memberId || m.uid === memberId ? { ...m, role } : m)),
-    )
+    await updateWorkspaceMemberRole(family.id, actor, memberId, role)
+    await loadAll()
   }
 
-  async function inviteMember(data) {
+  async function addMember(data) {
     if (!user?.uid || !family?.id) throw new Error('Familia nao encontrada')
     if (IS_MOCK_MODE) {
-      const newInv = {
-        id: Date.now().toString(),
-        ...data,
-        status: 'pending',
-        sentAt: new Date().toISOString(),
-        sentBy: user.uid,
-      }
-      setInvitations((inv) => [...inv, newInv])
+      setMembers((current) => [
+        ...current,
+        {
+          id: Date.now().toString(),
+          ...data,
+          role: normaliseRole(data.role),
+        },
+      ])
       return
     }
-    await addInvitation(user.uid, family.id, data)
+    await createWorkspaceMember(family.id, actor, data)
     await loadAll()
+  }
+
+  async function inviteMember() {
+    throw new Error('Use o fluxo de convite do workspace para adicionar membros')
   }
 
   async function cancelInvite(inviteId) {
@@ -209,7 +217,7 @@ export function useFamilia() {
       )))
       return
     }
-    await cancelInvitation(user.uid, family.id, inviteId)
+    await cancelWorkspaceInvite(family.id, inviteId)
     await loadAll()
   }
 
@@ -228,6 +236,7 @@ export function useFamilia() {
     deleteFamily,
     removeMember: removeMemberById,
     changeRole,
+    addMember,
     inviteMember,
     cancelInvite,
     setFamily,
