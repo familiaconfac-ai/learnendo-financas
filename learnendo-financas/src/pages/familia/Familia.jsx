@@ -1715,6 +1715,10 @@ export default function Familia() {
                               const originalAmount = Number(debt.originalAmount || debt.totalAmount || 0)
                               const accruedInterestAmount = Number(debt.accruedInterestAmount || 0)
                               const debtPayments = paymentsByDebtId[debt.id] || []
+                              const totalConfirmedAmount = debtPayments.reduce(
+                                (sum, payment) => sum + Number(payment.amount || 0),
+                                0,
+                              )
                               const settlements = Array.isArray(debt.settlements) ? debt.settlements : []
                               const isDebtor = debt.debtorMemberId === user?.uid
                               const isCreditor = debt.creditorMemberId === user?.uid
@@ -1745,9 +1749,10 @@ export default function Familia() {
                                     <span>Status {debtStatusLabel}</span>
                                     {debt.loanConfirmedAt && <span>Confirmado em {formatDateBR(debt.loanConfirmedAt)}</span>}
                                     {!isPendingReceiptConfirmation && !!debt.interestRate && <span>Juros {String(debt.interestRate).replace('.', ',')}% a.m.</span>}
-                                    {!isPendingReceiptConfirmation && <span>Saldo restante {formatCurrency(remainingAmount)}</span>}
-                                    {!isPendingReceiptConfirmation && accruedInterestAmount > 0 && <span>Juros acumulados {formatCurrency(accruedInterestAmount)}</span>}
-                                    {!isPendingReceiptConfirmation && <span>Ja abatido {formatCurrency(paidAmount)}</span>}
+                                    {!isPendingReceiptConfirmation && <span>Saldo total restante {formatCurrency(remainingAmount)}</span>}
+                                    {!isPendingReceiptConfirmation && accruedInterestAmount > 0 && <span>Juros em aberto {formatCurrency(accruedInterestAmount)}</span>}
+                                    {!isPendingReceiptConfirmation && <span>Principal abatido {formatCurrency(paidAmount)}</span>}
+                                    {!isPendingReceiptConfirmation && totalConfirmedAmount > 0 && <span>Total confirmado {formatCurrency(totalConfirmedAmount)}</span>}
                                     {!isPendingReceiptConfirmation && <span>{debtPayments.length} confirmacao(oes)</span>}
                                   </div>
                                   {debt.notes && <p className="family-debt-notes">{debt.notes}</p>}

@@ -7,16 +7,40 @@ function parseIsoAsLocalDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
+function resolveDateLike(value) {
+  if (!value) return null
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value
+  }
+
+  if (typeof value?.toDate === 'function') {
+    const parsed = value.toDate()
+    return parsed instanceof Date && !Number.isNaN(parsed.getTime()) ? parsed : null
+  }
+
+  if (typeof value?.seconds === 'number') {
+    const millis = (value.seconds * 1000) + Math.round(Number(value.nanoseconds || 0) / 1000000)
+    const parsed = new Date(millis)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+  }
+
+  if (typeof value === 'string') {
+    const parsed = parseIsoAsLocalDate(value) || new Date(value)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+  }
+
+  return null
+}
+
 /**
  * Formata uma string ISO ou Date para dd/mm/yyyy.
  * @param {string|Date} value
  * @returns {string}
  */
 export function formatDateBR(value) {
-  if (!value) return '—'
-  const date = typeof value === 'string'
-    ? (parseIsoAsLocalDate(value) || new Date(value))
-    : value
+  const date = resolveDateLike(value)
+  if (!date) return '—'
   return date.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
 }
 
@@ -27,8 +51,10 @@ export function formatDateBR(value) {
  * @returns {string}
  */
 export function formatFriendlyDate(value) {
-  if (!value) return '—'
-  const str = typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10)
+  const date = resolveDateLike(value)
+  if (!date) return '—'
+
+  const str = date.toISOString().slice(0, 10)
   const [y, m, d] = str.split('-').map(Number)
 
   const now = new Date()
