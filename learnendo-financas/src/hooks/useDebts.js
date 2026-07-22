@@ -101,21 +101,21 @@ export function useDebts() {
     await reload()
   }
 
-  async function removeDebt(debtId) {
+  async function removeDebt(debtId, reason) {
     if (!user?.uid) throw new Error('Usuario nao autenticado')
     if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
     if (!permissions.canLaunch) throw new Error('Seu papel nao permite excluir dividas neste workspace')
 
-    await deleteDebt(activeWorkspaceId, debtId)
+    await deleteDebt(activeWorkspaceId, debtId, user.uid, reason)
     await reload()
   }
 
-  async function removeSettlement(debtId, settlementId) {
+  async function removeSettlement(debtId, settlementId, reason) {
     if (!user?.uid) throw new Error('Usuario nao autenticado')
     if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
     if (!permissions.canLaunch) throw new Error('Seu papel nao permite excluir restituicoes neste workspace')
 
-    await deleteDebtSettlement(activeWorkspaceId, debtId, settlementId)
+    await deleteDebtSettlement(activeWorkspaceId, debtId, settlementId, user.uid, reason)
     await reload()
   }
 

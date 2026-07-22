@@ -96,3 +96,196 @@
 
 .text-success { color: var(--color-success); }
 .text-danger  { color: var(--color-danger); }
+
+.admin-audit-controls,
+.admin-audit-restore {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.admin-audit-controls select,
+.admin-audit-restore input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0.6rem;
+}
+
+.admin-audit-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 1rem 0;
+}
+
+.admin-audit-summary > div {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.admin-audit-summary span,
+.admin-audit-movement span,
+.admin-audit-report p {
+  font-size: 0.74rem;
+  color: var(--color-text-muted);
+}
+
+.admin-audit-report {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.admin-audit-timeline {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 420px;
+  overflow: auto;
+  margin: 0.75rem 0;
+}
+
+.admin-audit-movement {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.6rem;
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-bg-subtle);
+}
+
+.admin-audit-warning { color: var(--color-danger) !important; font-size: 0.78rem; }
+.admin-audit-success { color: var(--color-success); font-size: 0.82rem; margin-top: 0.7rem; }
+.admin-audit-restore { margin-top: 1rem; padding: 0.75rem; background: var(--color-bg-subtle); border-radius: 8px; }
+.admin-audit-confirm { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.78rem; }
+.admin-audit-confirm input { width: auto; min-height: auto; }
+
+.admin-audit-identities {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.admin-audit-identity,
+.admin-audit-manual {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.admin-audit-identity {
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.admin-audit-identity select,
+.admin-audit-identity input,
+.admin-audit-filters select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.admin-audit-member-view,
+.admin-audit-registration {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.admin-audit-formula {
+  padding: 0.65rem;
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+  font-size: 0.8rem;
+}
+
+.admin-audit-pending,
+.admin-audit-invite-checks {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.75rem 0;
+  padding: 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+  font-size: 0.78rem;
+}
+
+.admin-audit-registration input[readonly] {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.admin-audit-registration dl {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1.3fr);
+  gap: 0.45rem 0.75rem;
+  font-size: 0.78rem;
+}
+
+.admin-audit-registration dt { font-weight: 700; }
+.admin-audit-registration dd { margin: 0; overflow-wrap: anywhere; }
+
+.admin-audit-identity-details {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.65rem 0;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-audit-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0.8rem 0;
+}
+
+.admin-audit-table-wrap {
+  overflow: auto;
+  max-height: 620px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.admin-audit-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.7rem;
+}
+
+.admin-audit-table th,
+.admin-audit-table td {
+  max-width: 220px;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.admin-audit-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-subtle);
+}
+
+@media (min-width: 720px) {
+  .admin-audit-identities { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

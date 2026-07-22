@@ -1,7 +1,5 @@
 import {
-  addDoc,
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -10,6 +8,7 @@ import {
   serverTimestamp,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
 import { normalizePaymentMethodId } from '../constants/transactionPaymentMethods'
@@ -24,6 +23,32 @@ function debtDoc(workspaceId, debtId) {
 
 function txCol(workspaceId) {
   return collection(db, 'workspaces', workspaceId, 'transactions')
+}
+
+function auditLogCol(workspaceId) {
+  return collection(db, 'workspaces', workspaceId, 'financialAuditLogs')
+}
+
+function financialAuditLog(workspaceId, action, recordId, actorUid, previousValue, newValue, extra = {}) {
+  return {
+    action,
+    affectedDocumentId: recordId,
+    collection: 'debts',
+    previousValue: previousValue || null,
+    newValue: newValue || null,
+    actorUid: actorUid || null,
+    memberId: extra.memberId || newValue?.counterpartyMemberId || previousValue?.counterpartyMemberId || null,
+    relatedMemberId: newValue?.counterpartyMemberId || previousValue?.counterpartyMemberId || null,
+    creditorMemberId: newValue?.creditorMemberId || previousValue?.creditorMemberId || null,
+    debtorMemberId: newValue?.debtorMemberId || previousValue?.debtorMemberId || null,
+    familyId: workspaceId,
+    workspaceId,
+    reason: extra.reason || null,
+    source: extra.source || 'debt_service',
+    originalDocumentRef: `workspaces/${workspaceId}/debts/${recordId}`,
+    sessionId: extra.sessionId || null,
+    createdAt: serverTimestamp(),
+  }
 }
 
 function toAmount(value) {
@@ -138,6 +163,10 @@ function buildDebtBalanceSnapshot(debt, payments = [], nowMs = Date.now()) {
 
   const sortedPayments = [...payments]
     .filter((payment) => toAmount(payment?.amount) > 0)
+    .filter((payment) => {
+      const paymentMs = toMillis(payment?.date || payment?.confirmedAt || payment?.createdAt)
+      return !paymentMs || paymentMs <= nowMs
+    })
     .sort((a, b) => {
       const diff = toMillis(a?.date || a?.confirmedAt || a?.createdAt) - toMillis(b?.date || b?.confirmedAt || b?.createdAt)
       if (diff !== 0) return diff
@@ -194,12 +223,12 @@ function buildDebtBalanceSnapshot(debt, payments = [], nowMs = Date.now()) {
   }
 }
 
-function buildDebtInterestSnapshot(debt, nowMs = Date.now()) {
+export function getDebtBalanceSnapshot(debt, nowMs = Date.now()) {
   return buildDebtBalanceSnapshot(debt, buildConfirmedPaymentReplayEntries(debt, []), nowMs)
 }
 
 function decorateDebtWithInterest(debt, nowMs = Date.now()) {
-  const interestSnapshot = buildDebtBalanceSnapshot(debt, buildConfirmedPaymentReplayEntries(debt, []), nowMs)
+  const interestSnapshot = getDebtBalanceSnapshot(debt, nowMs)
   return {
     ...debt,
     status: interestSnapshot.status,
@@ -232,6 +261,7 @@ function createSettlementId() {
 function normalizeSettlementStatus(value) {
   if (value === 'confirmed') return 'confirmed'
   if (value === 'cancelled') return 'cancelled'
+  if (value === 'deleted') return 'deleted'
   return 'pending'
 }
 
@@ -258,6 +288,9 @@ export function normalizeDebtSettlements(value = []) {
         confirmedByUid: normalizeOptionalString(entry?.confirmedByUid),
         cancelledAt: entry?.cancelledAt || null,
         cancelledByUid: normalizeOptionalString(entry?.cancelledByUid),
+        deletedAt: entry?.deletedAt || null,
+        deletedByUid: normalizeOptionalString(entry?.deletedByUid),
+        deletionReason: normalizeOptionalString(entry?.deletionReason),
         paymentMethod: normalizePaymentMethodId(entry?.paymentMethod) || 'pix',
         accountId: normalizeOptionalString(entry?.accountId),
         cardId: normalizeOptionalString(entry?.cardId),
@@ -508,6 +541,7 @@ export async function fetchDebts(workspaceId) {
   const nowMs = Date.now()
   const snap = await getDocs(debtsCol(workspaceId))
   return snap.docs
+    .filter((d) => d.data()?.status !== 'deleted' && !d.data()?.deletedAt)
     .map((d) => decorateDebtWithInterest({
       id: d.id,
       ...d.data(),
@@ -518,6 +552,17 @@ export async function fetchDebts(workspaceId) {
       const bDate = b.createdAt?.toDate?.()?.getTime?.() || 0
       return bDate - aDate
     })
+}
+
+export async function fetchDebtsForStatement(workspaceId) {
+  if (!workspaceId) return []
+  const snap = await getDocs(debtsCol(workspaceId))
+  return snap.docs.map((item) => ({
+    id: item.id,
+    ...item.data(),
+    settlements: normalizeDebtSettlements(item.data()?.settlements),
+    _collection: `workspaces/${workspaceId}/debts`,
+  }))
 }
 
 export async function createDebt(workspaceId, payload = {}, actorUid = null) {
@@ -540,7 +585,8 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
     && normalizeOptionalString(payload.creditorMemberId) !== normalizeOptionalString(payload.debtorMemberId)
   const confirmedAt = requiresReceiptConfirmation ? null : new Date().toISOString()
 
-  const ref = await addDoc(debtsCol(workspaceId), {
+  const ref = doc(debtsCol(workspaceId))
+  const debtRecord = {
     name: payload.name?.trim() || 'Divida sem nome',
     type: payload.type || 'pessoa',
     originalAmount: totalAmount,
@@ -577,7 +623,17 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
     interestLastAccruedAt: confirmedAt,
     dueDate: payload.dueDate || null,
     installmentPlan: payload.installmentPlan || null,
-  })
+  }
+
+  const batch = writeBatch(db)
+  batch.set(ref, debtRecord)
+  batch.set(
+    doc(auditLogCol(workspaceId)),
+    financialAuditLog(workspaceId, 'debt_created', ref.id, actorUid, null, debtRecord, {
+      reason: payload.auditReason || payload.notes || 'Criacao de saldo',
+    }),
+  )
+  await batch.commit()
 
   return ref.id
 }
@@ -675,6 +731,7 @@ export async function recalculateDebtBalance(workspaceId, debtId) {
     ...debtSnap.data(),
     settlements: normalizeDebtSettlements(debtSnap.data()?.settlements),
   }
+  if (rawDebt.status === 'deleted' || rawDebt.deletedAt) return
 
   const replayEntries = buildConfirmedPaymentReplayEntries(
     rawDebt,
@@ -730,7 +787,7 @@ export async function confirmDebtReceipt(workspaceId, debtId, actorUid = null) {
     const confirmedAt = new Date().toISOString()
     const remainingAmount = roundCurrency(Math.max(0, toAmount(debt.totalAmount) - toAmount(debt.initialPaidAmount || 0)))
 
-    transaction.update(ref, {
+    const patch = {
       status: remainingAmount > 0 ? 'open' : 'settled',
       loanConfirmedAt: confirmedAt,
       receiptConfirmedAt: confirmedAt,
@@ -739,7 +796,12 @@ export async function confirmDebtReceipt(workspaceId, debtId, actorUid = null) {
       accruedInterestStoredAmount: 0,
       remainingAmount,
       updatedAt: serverTimestamp(),
-    })
+    }
+    transaction.update(ref, patch)
+    transaction.set(doc(auditLogCol(workspaceId)), financialAuditLog(
+      workspaceId, 'debt_receipt_confirmed', debtId, actorUid, debt, { ...debt, ...patch },
+      { reason: 'Confirmacao de recebimento do emprestimo' },
+    ))
   })
 }
 
@@ -785,10 +847,15 @@ export async function requestDebtSettlement(workspaceId, debtId, payload = {}, a
       cancelledByUid: null,
     }
 
-    transaction.update(ref, {
+    const patch = {
       settlements: [...debt.settlements, nextSettlement],
       updatedAt: serverTimestamp(),
-    })
+    }
+    transaction.update(ref, patch)
+    transaction.set(doc(auditLogCol(workspaceId)), financialAuditLog(
+      workspaceId, 'settlement_requested', debtId, actorUid, debt, { ...debt, ...patch },
+      { reason: nextSettlement.note || 'Restituicao informada' },
+    ))
   })
 }
 
@@ -855,7 +922,7 @@ export async function confirmDebtSettlement(workspaceId, debtId, settlementId, a
     const exists = nextSettlements.some((settlement) => settlement.id === settlementId)
     if (!exists || !confirmedSettlement) throw new Error('Restituicao nao encontrada')
 
-    transaction.update(ref, {
+    const patch = {
       originalAmount: roundCurrency(debtWithInterest.originalAmount),
       totalAmount: roundCurrency(debtWithInterest.originalAmount),
       paidAmount: roundCurrency(debtWithInterest.paidAmount),
@@ -867,7 +934,12 @@ export async function confirmDebtSettlement(workspaceId, debtId, settlementId, a
       interestLastAccruedAt: debtWithInterest.interestAccruedThrough || new Date().toISOString(),
       settlements: nextSettlements,
       updatedAt: serverTimestamp(),
-    })
+    }
+    transaction.update(ref, patch)
+    transaction.set(doc(auditLogCol(workspaceId)), financialAuditLog(
+      workspaceId, 'settlement_confirmed', debtId, actorUid, debt, { ...debt, ...patch },
+      { reason: confirmedSettlement.note || 'Restituicao confirmada' },
+    ))
 
     const overflowAmount = Math.max(0, toAmount(confirmedSettlement.amount) - remainingAmount)
     if (overflowAmount > 0) {
@@ -914,30 +986,46 @@ export async function cancelDebtSettlement(workspaceId, debtId, settlementId, ac
         : settlement
     ))
 
-    transaction.update(ref, {
+    const patch = {
       settlements: nextSettlements,
       updatedAt: serverTimestamp(),
-    })
+    }
+    transaction.update(ref, patch)
+    transaction.set(doc(auditLogCol(workspaceId)), financialAuditLog(
+      workspaceId, 'settlement_cancelled', debtId, actorUid, debt, { ...debt, ...patch },
+      { reason: target.note || 'Restituicao cancelada' },
+    ))
   })
 }
 
-export async function deleteDebt(workspaceId, debtId) {
+export async function deleteDebt(workspaceId, debtId, actorUid = null, reason = '') {
   if (!workspaceId || !debtId) throw new Error('Divida nao encontrada')
+  if (!String(reason || '').trim()) throw new Error('Informe o motivo da exclusao logica.')
 
-  const linkedPaymentsSnap = await getDocs(query(txCol(workspaceId), where('debtId', '==', debtId)))
-  const hasLinkedTransactions = linkedPaymentsSnap.docs.some((docSnapshot) => (
-    isDebtLinkedTransaction(docSnapshot.data())
-  ))
-
-  if (hasLinkedTransactions) {
-    throw new Error('Esta divida possui pagamentos lancados em movimentacoes. Remova os lancamentos vinculados antes de excluir a divida.')
-  }
-
-  await deleteDoc(debtDoc(workspaceId, debtId))
+  await runTransaction(db, async (transaction) => {
+    const ref = debtDoc(workspaceId, debtId)
+    const snap = await transaction.get(ref)
+    if (!snap.exists()) throw new Error('Divida nao encontrada')
+    const debt = { id: snap.id, ...snap.data() }
+    if (debt.status === 'deleted' || debt.deletedAt) throw new Error('Esta divida ja foi excluida logicamente.')
+    const patch = {
+      status: 'deleted',
+      deletedAt: serverTimestamp(),
+      deletedBy: actorUid || null,
+      deletionReason: String(reason).trim(),
+      updatedAt: serverTimestamp(),
+    }
+    transaction.update(ref, patch)
+    transaction.set(doc(auditLogCol(workspaceId)), financialAuditLog(
+      workspaceId, 'debt_soft_deleted', debtId, actorUid, debt, { ...debt, ...patch },
+      { reason: String(reason).trim() },
+    ))
+  })
 }
 
-export async function deleteDebtSettlement(workspaceId, debtId, settlementId) {
+export async function deleteDebtSettlement(workspaceId, debtId, settlementId, actorUid = null, reason = '') {
   if (!workspaceId || !debtId || !settlementId) throw new Error('Restituicao nao encontrada')
+  if (!String(reason || '').trim()) throw new Error('Informe o motivo da exclusao logica.')
 
   await runTransaction(db, async (transaction) => {
     const ref = debtDoc(workspaceId, debtId)
@@ -960,12 +1048,27 @@ export async function deleteDebtSettlement(workspaceId, debtId, settlementId) {
       }
     }
 
-    const nextSettlements = debt.settlements.filter((settlement) => settlement.id !== settlementId)
+    const nextSettlements = debt.settlements.map((settlement) => (
+      settlement.id === settlementId
+        ? {
+            ...settlement,
+            status: 'deleted',
+            deletedAt: new Date().toISOString(),
+            deletedByUid: actorUid || null,
+            deletionReason: String(reason).trim(),
+          }
+        : settlement
+    ))
 
-    transaction.update(ref, {
+    const patch = {
       settlements: nextSettlements,
       updatedAt: serverTimestamp(),
-    })
+    }
+    transaction.update(ref, patch)
+    transaction.set(doc(auditLogCol(workspaceId)), financialAuditLog(
+      workspaceId, 'settlement_soft_deleted', debtId, actorUid, debt, { ...debt, ...patch },
+      { reason: String(reason).trim() },
+    ))
   })
 
   await recalculateDebtBalance(workspaceId, debtId)

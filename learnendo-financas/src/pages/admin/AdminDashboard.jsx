@@ -8,6 +8,7 @@ import {
   fetchAdminUsers,
 } from '../../services/adminService'
 import './AdminDashboard.css'
+import FinancialAuditPanel from './FinancialAuditPanel'
 
 function toMillis(value) {
   if (!value) return 0
@@ -176,6 +177,8 @@ export default function AdminDashboard() {
             ))
           )}
         </Card>
+
+        <FinancialAuditPanel users={nonAdminUsers} />
 
         <Button
           variant="secondary"

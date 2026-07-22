@@ -109,10 +109,12 @@ export default function Dividas() {
   async function handleDeleteDebt(debt) {
     const confirmed = window.confirm(`Excluir a divida "${debt.name}"?`)
     if (!confirmed) return
+    const reason = window.prompt('Informe o motivo da exclusao logica:')
+    if (!reason?.trim()) return
 
     setSaving(true)
     try {
-      await removeDebt(debt.id)
+      await removeDebt(debt.id, reason.trim())
     } catch (err) {
       alert('Erro ao excluir divida: ' + err.message)
     } finally {

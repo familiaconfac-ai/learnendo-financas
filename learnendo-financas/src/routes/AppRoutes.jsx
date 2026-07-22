@@ -19,6 +19,7 @@ import Contas from '../pages/contas/Contas'
 import Importacao from '../pages/importacao/Importacao'
 import Reconciliacao from '../pages/reconciliacao/Reconciliacao'
 import Dividas from '../pages/dividas/Dividas'
+import Extrato from '../pages/extrato/Extrato'
 
 // Admin pages
 import AdminDashboard from '../pages/admin/AdminDashboard'
@@ -46,6 +47,7 @@ export default function AppRoutes() {
           <Route path="/dividas"       element={<Dividas />} />
           <Route path="/importacao"    element={<Importacao />} />
           <Route path="/reconciliacao" element={<Reconciliacao />} />
+          <Route path="/extrato"       element={<Extrato />} />
         </Route>
       </Route>
 

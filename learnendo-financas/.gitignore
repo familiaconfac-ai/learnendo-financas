@@ -5,3 +5,6 @@ dist/
 .DS_Store
 Thumbs.db
 .vercel
+
+# Evidencias financeiras locais; nunca enviar dados familiares ao repositorio.
+auditorias/

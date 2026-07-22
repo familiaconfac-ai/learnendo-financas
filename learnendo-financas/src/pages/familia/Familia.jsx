@@ -14,6 +14,12 @@ import { fetchAllTransactionsForWorkspace } from '../../services/transactionServ
 import { calculateMonthlySummary } from '../../utils/financeCalculations'
 import { getPermissionsByRole, getWorkspaceInviteByToken } from '../../services/workspaceService'
 import { TRANSACTION_PAYMENT_METHODS, normalizePaymentMethodId } from '../../constants/transactionPaymentMethods'
+import {
+  memberDisplayName,
+  memberStableId,
+  mergeActiveFamilyMembers,
+  selectableFamilyMembers,
+} from '../../utils/familyMembers'
 import './Familia.css'
 
 const PENDING_WORKSPACE_INVITE_KEY = 'lf:pending-workspace-invite-token'
@@ -102,9 +108,6 @@ const EXTERNAL_DEBT_DIRECTION_OPTIONS = [
   { value: 'contact_owes_me', label: 'Essa pessoa me deve' },
 ]
 
-function memberStableId(member) {
-  return member?.uid || member?.id || ''
-}
 function debtReasonLabel(reasonType) {
   return INTERNAL_DEBT_REASON_OPTIONS.find((option) => option.value === reasonType)?.label || 'Emprestimo'
 }
@@ -270,6 +273,8 @@ export default function Familia() {
     contacts,
     projects,
     members: workspaceMembers,
+    loading: workspaceLoading,
+    error: workspaceError,
     invitations: workspaceInvitations,
     myRole: workspaceRole,
     addExternalContact,
@@ -443,7 +448,16 @@ export default function Familia() {
   const familyWorkspaceReady = activeWorkspace?.type === 'family' && activeWorkspace?.id === familyWorkspace?.id
   const myMember   = members.find((m) => m.uid === user?.uid || m.id === user?.uid)
   const familyName = familyWorkspace?.name || family?.name || 'Familia'
-  const familyMembers = workspaceMembers?.length > 0 ? workspaceMembers : members
+  const familyMembers = useMemo(
+    () => mergeActiveFamilyMembers(workspaceMembers || [], members || []),
+    [members, workspaceMembers],
+  )
+  const relatedMemberOptions = useMemo(
+    () => selectableFamilyMembers([workspaceMembers || [], members || []], user?.uid),
+    [members, user?.uid, workspaceMembers],
+  )
+  const membersLoading = Boolean(workspaceLoading || loading)
+  const membersError = workspaceError || error || ''
   const currentMemberLabel = myMember?.displayName || user?.displayName || user?.email || 'Voce'
   const canInviteMembers = Boolean((familyWorkspaceReady && permissions?.canInvite) || (!activeWorkspace && canManage))
   const canChangeMemberRoles = Boolean(permissions?.canChangeRoles || (!activeWorkspace && canManage))
@@ -875,7 +889,7 @@ export default function Familia() {
 
   async function handleCreateMemberDebt(e) {
     e.preventDefault()
-    const selectedMember = familyMembers.find((member) => memberStableId(member) === memberDebtForm.memberId)
+    const selectedMember = relatedMemberOptions.find((member) => memberStableId(member) === memberDebtForm.memberId)
     const totalAmount = Number(memberDebtForm.totalAmount || 0)
     const paidAmount = Number(memberDebtForm.paidAmount || 0)
 
@@ -893,7 +907,7 @@ export default function Familia() {
     }
 
     const selectedMemberId = memberStableId(selectedMember)
-    const selectedMemberName = selectedMember.displayName || selectedMember.name || selectedMember.email || 'Membro'
+    const selectedMemberName = memberDisplayName(selectedMember)
     const memberOwesMe = memberDebtForm.direction === 'member_owes_me'
 
     setSaving(true)
@@ -1224,11 +1238,13 @@ export default function Familia() {
     if (!debt?.id) return
     const confirmDelete = window.confirm(`Excluir a pendencia "${debt.name}"?`)
     if (!confirmDelete) return
+    const reason = window.prompt('Informe o motivo da exclusao logica:')
+    if (!reason?.trim()) return
 
     setSaving(true)
     try {
-      await removeDebt(debt.id)
-      showToast('Pendencia excluida com sucesso.')
+      await removeDebt(debt.id, reason.trim())
+      showToast('Pendencia excluida logicamente e preservada para auditoria.')
     } catch (err) {
       showToast('Erro ao excluir pendencia: ' + err.message, 'err')
     } finally {
@@ -1240,11 +1256,13 @@ export default function Familia() {
     if (!debt?.id || !settlement?.id) return
     const confirmDelete = window.confirm(`Excluir o registro de ${formatCurrency(settlement.amount)}?`)
     if (!confirmDelete) return
+    const reason = window.prompt('Informe o motivo da exclusao logica:')
+    if (!reason?.trim()) return
 
     setSaving(true)
     try {
-      await removeSettlement(debt.id, settlement.id)
-      showToast('Registro removido com sucesso.')
+      await removeSettlement(debt.id, settlement.id, reason.trim())
+      showToast('Registro excluido logicamente e preservado para auditoria.')
     } catch (err) {
       showToast('Erro ao excluir registro: ' + err.message, 'err')
     } finally {
@@ -2561,16 +2579,24 @@ export default function Familia() {
                 <select
                   value={memberDebtForm.memberId}
                   onChange={(e) => setMemberDebtForm((current) => ({ ...current, memberId: e.target.value }))}
+                  disabled={membersLoading || Boolean(membersError) || relatedMemberOptions.length === 0}
+                  required
                 >
-                  <option value="">Selecione um membro</option>
-                  {familyMembers
-                    .filter((member) => memberStableId(member) && memberStableId(member) !== user?.uid)
-                    .map((member) => (
+                  <option value="">
+                    {membersLoading ? 'Carregando membros...' : 'Selecione um membro'}
+                  </option>
+                  {relatedMemberOptions.map((member) => (
                       <option key={memberStableId(member)} value={memberStableId(member)}>
-                        {member.displayName}
+                        {memberDisplayName(member)}
                       </option>
                     ))}
                 </select>
+                {!membersLoading && membersError && (
+                  <span className="form-hint form-hint-error">Erro ao carregar membros: {membersError}</span>
+                )}
+                {!membersLoading && !membersError && relatedMemberOptions.length === 0 && (
+                  <span className="form-hint">Nao ha outros membros ativos cadastrados nesta familia.</span>
+                )}
               </div>
               <div className="form-group">
                 <label>Direção do saldo</label>
@@ -2650,7 +2676,11 @@ export default function Familia() {
                 <button type="button" className="btn-cancel" onClick={handleMemberDebtModalClose}>
                   Cancelar
                 </button>
-                <button type="submit" className="btn-send" disabled={saving}>
+                <button
+                  type="submit"
+                  className="btn-send"
+                  disabled={saving || membersLoading || Boolean(membersError) || relatedMemberOptions.length === 0 || !memberDebtForm.memberId}
+                >
                   {saving ? 'Salvando...' : 'Registrar saldo'}
                 </button>
               </div>

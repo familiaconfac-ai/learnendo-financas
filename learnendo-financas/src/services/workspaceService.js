@@ -406,9 +406,31 @@ export async function setActiveWorkspaceId(uid, workspaceId) {
 
 export async function fetchWorkspaceMembers(workspaceId) {
   const snap = await getDocs(workspaceMembersCol(workspaceId))
+  let legacyDocs = []
+  try {
+    const legacySnap = await getDocs(collection(db, 'families', workspaceId, 'members'))
+    legacyDocs = legacySnap.docs
+  } catch (error) {
+    console.warn('[workspaceService] Legacy family members fallback skipped:', error?.message || error)
+  }
+
+  const byMemberId = new Map()
+  legacyDocs.forEach((d) => {
+    const data = d.data() || {}
+    const memberId = data.uid || data.memberId || data.userId || data.familyMemberId || d.id
+    if (memberId) byMemberId.set(String(memberId), d)
+  })
+  snap.docs.forEach((d) => {
+    const data = d.data() || {}
+    const memberId = data.uid || data.memberId || data.userId || data.familyMemberId || d.id
+    if (memberId) byMemberId.set(String(memberId), d)
+  })
+
   const members = await Promise.all(
-    snap.docs.map(async (d) => {
-      const raw = { id: d.id, ...d.data() }
+    [...byMemberId.values()].map(async (d) => {
+      const data = d.data() || {}
+      const stableId = data.uid || data.memberId || data.userId || data.familyMemberId || d.id
+      const raw = { id: stableId, ...data }
       if (raw.displayName || !raw.uid) return raw
       const profile = await getUserProfileData(raw.uid)
       if (!profile) return raw
@@ -909,6 +931,78 @@ export async function createWorkspaceInvite(workspaceId, inviterUid, role = 'mem
     link: `${window.location.origin}/convite/${token}`,
     expiresAt,
   }
+}
+
+export async function inspectWorkspaceMemberInvitation({ workspaceId, targetUid, targetEmail, actorUid }) {
+  const expectedWorkspaceId = String(workspaceId || '').trim()
+  const expectedUid = String(targetUid || '').trim()
+  const expectedEmail = normalizeEmail(targetEmail)
+  const expectedActorUid = String(actorUid || '').trim()
+  if (!expectedWorkspaceId || !expectedUid || !expectedEmail || !expectedActorUid) {
+    throw new Error('Workspace, UID, e-mail e administrador sao obrigatorios para verificar o convite.')
+  }
+
+  const [workspaceSnap, profileSnap, memberSnap, actorMemberSnap, invitationsSnap] = await Promise.all([
+    getDoc(workspaceDoc(expectedWorkspaceId)),
+    getDoc(userProfileDoc(expectedUid)),
+    getDoc(workspaceMemberDoc(expectedWorkspaceId, expectedUid)),
+    getDoc(workspaceMemberDoc(expectedWorkspaceId, expectedActorUid)),
+    getDocs(workspaceInvitesCol(expectedWorkspaceId)),
+  ])
+  const profile = profileSnap.exists() ? profileSnap.data() : null
+  const actorMember = actorMemberSnap.exists() ? actorMemberSnap.data() : null
+  const profileEmail = normalizeEmail(profile?.email)
+  const profileUid = String(profile?.uid || profileSnap.id || '').trim()
+  const pendingInvitations = invitationsSnap.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .filter((invite) => ['pending', 'awaiting_confirmation'].includes(String(invite.status || '').trim()))
+    .filter((invite) => (
+      normalizeEmail(invite.email || invite.inviteeEmail) === expectedEmail
+      || String(invite.acceptedBy || invite.uid || invite.userId || '').trim() === expectedUid
+    ))
+  const actorRole = normalizeWorkspaceRole(actorMember?.role)
+  const actorCanInvite = actorMember?.status === 'active' && getPermissionsByRole(actorRole, actorMember.status).canInvite
+  const checks = {
+    workspaceExists: workspaceSnap.exists(),
+    userDocumentExists: profileSnap.exists(),
+    uidMatches: profileUid === expectedUid,
+    emailMatches: profileEmail === expectedEmail,
+    memberAbsent: !memberSnap.exists(),
+    pendingInviteAbsent: pendingInvitations.length === 0,
+    actorCanInvite,
+  }
+
+  return {
+    workspaceId: expectedWorkspaceId,
+    targetUid: expectedUid,
+    targetEmail: expectedEmail,
+    profileEmail,
+    existingMemberStatus: memberSnap.exists() ? memberSnap.data()?.status || 'sem status' : null,
+    pendingInvitations: pendingInvitations.map((invite) => ({ id: invite.id, status: invite.status || '' })),
+    actorUid: expectedActorUid,
+    actorRole,
+    checks,
+    eligible: Object.values(checks).every(Boolean),
+  }
+}
+
+export async function createVerifiedWorkspaceMemberInvite(params) {
+  const inspection = await inspectWorkspaceMemberInvitation(params)
+  if (!inspection.eligible) {
+    const failedChecks = Object.entries(inspection.checks)
+      .filter(([, passed]) => !passed)
+      .map(([check]) => check)
+      .join(', ')
+    throw new Error(`Convite bloqueado pela verificacao de seguranca: ${failedChecks || 'condicao nao atendida'}.`)
+  }
+
+  const invite = await createWorkspaceInvite(
+    inspection.workspaceId,
+    inspection.actorUid,
+    'membro',
+    { email: inspection.targetEmail, method: 'email' },
+  )
+  return { ...invite, inspection }
 }
 
 export async function getWorkspaceInviteByToken(token) {

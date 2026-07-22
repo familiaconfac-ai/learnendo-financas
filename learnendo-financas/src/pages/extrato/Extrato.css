@@ -1,0 +1,74 @@
+.statement-page { display: grid; gap: 18px; padding-bottom: 28px; }
+.statement-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.statement-heading h1 { margin: 3px 0 4px; font-size: clamp(1.7rem, 4vw, 2.35rem); color: #17233c; }
+.statement-heading p { margin: 0; color: #667085; }
+.statement-eyebrow { color: #175b9c; font-size: .76rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.statement-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.statement-filter-card, .statement-summary-card, .statement-ledger-card, .statement-pending-card { overflow: hidden; }
+.statement-periods { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+.statement-periods button { border: 1px solid #d5deea; background: #fff; color: #43506a; padding: 8px 13px; border-radius: 999px; font: inherit; font-size: .87rem; font-weight: 700; cursor: pointer; }
+.statement-periods button:hover, .statement-periods button.active { border-color: #175b9c; background: #eaf3fc; color: #124b82; }
+.statement-custom-range, .statement-secondary-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.statement-field { display: grid; gap: 6px; min-width: 190px; color: #475467; font-size: .82rem; font-weight: 700; }
+.statement-field select, .statement-field input { min-height: 42px; border: 1px solid #d5deea; border-radius: 10px; background: #fff; color: #17233c; padding: 8px 10px; font: inherit; }
+.statement-field small { color: #7a869a; font-weight: 500; }
+.admin-member-field { max-width: 480px; margin-top: 12px; }
+.statement-interest-toggle { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 12px; border: 1px solid #d5deea; border-radius: 10px; color: #354052; font-size: .88rem; font-weight: 700; }
+.statement-interest-toggle input { width: 18px; height: 18px; accent-color: #175b9c; }
+.statement-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(145px, 1fr)); gap: 10px; margin-top: 14px; }
+.statement-summary-item { display: grid; gap: 6px; padding: 13px; border: 1px solid #e1e7ef; border-radius: 12px; background: #f9fbfd; }
+.statement-summary-item span { color: #667085; font-size: .77rem; }
+.statement-summary-item strong { color: #27344c; font-size: 1.03rem; }
+.positive { color: #147a4d !important; }
+.negative { color: #b23a48 !important; }
+.statement-equation { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; margin-top: 14px; padding: 12px; border-radius: 12px; background: #edf5fc; color: #3e4b61; }
+.statement-equation span { display: grid; gap: 2px; }
+.statement-equation span strong { color: #17233c; }
+.statement-equation b { align-self: center; color: #175b9c; }
+.statement-table-wrap { overflow: auto; margin: 12px -20px -20px; }
+.statement-table { width: 100%; min-width: 1420px; border-collapse: collapse; font-size: .78rem; }
+.statement-table th { position: sticky; top: 0; z-index: 1; background: #173f68; color: #fff; padding: 11px 9px; text-align: left; white-space: nowrap; }
+.statement-table td { padding: 10px 9px; border-bottom: 1px solid #e6ebf1; color: #354052; vertical-align: top; }
+.statement-table tbody tr { cursor: pointer; background: #fff; }
+.statement-table tbody tr:nth-child(even) { background: #f8fafc; }
+.statement-table tbody tr:hover, .statement-table tbody tr:focus { outline: none; background: #edf5fc; }
+.statement-table td:nth-last-child(-n+5) { white-space: nowrap; }
+.statement-status { display: inline-flex; padding: 4px 8px; border-radius: 999px; font-size: .7rem; font-weight: 800; }
+.statement-status.confirmed { color: #11643e; background: #dcf5e8; }
+.statement-status.settled { color: #19548a; background: #dfedfb; }
+.statement-status.pending { color: #8a550e; background: #fff0ce; }
+.statement-status.cancelled { color: #8e3440; background: #fbe3e6; }
+.statement-empty { margin-top: 12px; padding: 22px; border: 1px dashed #ccd6e2; border-radius: 12px; color: #667085; text-align: center; }
+.statement-pending-list { display: grid; gap: 10px; margin-top: 12px; }
+.statement-pending-list button { display: flex; justify-content: space-between; gap: 16px; width: 100%; padding: 14px; border: 1px solid #ecd8aa; border-radius: 12px; background: #fffaf0; color: #3d4657; text-align: left; cursor: pointer; }
+.statement-pending-list button:hover { border-color: #d69b35; }
+.statement-pending-list button > div { display: grid; gap: 4px; }
+.statement-pending-list span { color: #7b6a4b; font-size: .78rem; }
+.statement-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.statement-detail-grid > div { display: grid; gap: 5px; padding: 11px; border-radius: 10px; background: #f5f8fb; overflow-wrap: anywhere; }
+.statement-detail-grid .wide { grid-column: 1 / -1; }
+.statement-detail-grid span { color: #667085; font-size: .75rem; }
+.statement-detail-grid strong { color: #27344c; font-size: .9rem; }
+.statement-history { margin-top: 18px; }
+.statement-history h3 { margin: 0 0 10px; color: #27344c; font-size: 1rem; }
+.statement-history ol { display: grid; gap: 10px; margin: 0; padding-left: 22px; }
+.statement-history li { padding-left: 5px; color: #475467; }
+.statement-history li strong, .statement-history li span { display: block; }
+.statement-history li span { margin-top: 2px; color: #667085; font-size: .78rem; }
+.statement-error { padding: 12px 14px; border: 1px solid #efbec5; border-radius: 10px; background: #fff0f2; color: #9d3340; }
+
+@media (max-width: 900px) {
+  .statement-summary-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+  .statement-heading { display: grid; }
+}
+
+@media (max-width: 560px) {
+  .statement-summary-grid { grid-template-columns: 1fr 1fr; }
+  .statement-summary-item { padding: 10px; }
+  .statement-secondary-filters, .statement-custom-range { display: grid; grid-template-columns: 1fr; }
+  .statement-field { min-width: 0; }
+  .statement-interest-toggle { width: 100%; }
+  .statement-detail-grid { grid-template-columns: 1fr; }
+  .statement-detail-grid .wide { grid-column: auto; }
+  .statement-pending-list button { display: grid; }
+}

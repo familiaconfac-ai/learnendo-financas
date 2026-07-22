@@ -5,15 +5,13 @@
  */
 import {
   collection,
-  addDoc,
-  updateDoc,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
   query,
   where,
   serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore'
 import { db } from '../firebase/config'
 import { NATURE_DEFAULT_BY_TYPE } from '../constants/transactionNatures'
@@ -77,6 +75,30 @@ function txCol(uid, workspaceId = null) {
 function txDoc(uid, txId, workspaceId = null) {
   if (workspaceId) return doc(db, 'workspaces', workspaceId, 'transactions', txId)
   return doc(db, 'users', uid, 'transactions', txId)
+}
+
+function transactionAuditCol(workspaceId) {
+  return collection(db, 'workspaces', workspaceId, 'financialAuditLogs')
+}
+
+function transactionAuditLog(workspaceId, action, txId, actorUid, previousValue, newValue, reason) {
+  return {
+    action,
+    affectedDocumentId: txId,
+    collection: 'transactions',
+    previousValue: previousValue || null,
+    newValue: newValue || null,
+    actorUid: actorUid || null,
+    memberId: newValue?.userId || previousValue?.userId || actorUid || null,
+    relatedMemberId: newValue?.relatedMemberId || previousValue?.relatedMemberId || null,
+    familyId: workspaceId,
+    workspaceId,
+    reason: reason || null,
+    source: 'transaction_service',
+    originalDocumentRef: `workspaces/${workspaceId}/transactions/${txId}`,
+    sessionId: newValue?.financialSessionId || previousValue?.financialSessionId || null,
+    createdAt: serverTimestamp(),
+  }
 }
 
 async function resolveTransactionDocForMutation(uid, txId, preferredWorkspaceId = null) {
@@ -366,6 +388,7 @@ export async function getResolvedTransactions(uid, options = {}) {
     })
 
     let docs = dedupeResolvedTransactions(rawDocs)
+    docs = docs.filter((tx) => !tx.deletedAt)
     docs = applyViewerScope(docs, options)
 
     if (options.includeRecurringAuto === false) {
@@ -394,7 +417,8 @@ export async function addTransaction(uid, data, options = {}) {
     const natureId = normalizeNatureId(data.type, data.transactionNatureId)
     const natureKey = normalizeNatureKey(data.transactionNatureKey, natureId)
 
-    const ref = await addDoc(txCol(uid, workspaceId), {
+    const ref = doc(txCol(uid, workspaceId))
+    const transactionRecord = {
       type: data.type,
       description: data.description,
       amount: Number(data.amount),
@@ -456,7 +480,7 @@ export async function addTransaction(uid, data, options = {}) {
       ...(data.classificationConfidence ? { classificationConfidence: data.classificationConfidence } : {}),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    })
+    }
 
     const createdTx = {
       ...data,
@@ -466,6 +490,20 @@ export async function addTransaction(uid, data, options = {}) {
       transactionNatureId: natureId,
       status: normalizedStatus,
     }
+    const batch = writeBatch(db)
+    batch.set(ref, transactionRecord)
+    if (workspaceId) {
+      batch.set(doc(transactionAuditCol(workspaceId)), transactionAuditLog(
+        workspaceId,
+        'transaction_created',
+        ref.id,
+        data.createdBy || uid,
+        null,
+        createdTx,
+        data.auditReason || data.notes || 'Criacao de movimentacao',
+      ))
+    }
+    await batch.commit()
     await syncDebtBalancesForTransactionChange(workspaceId, null, createdTx)
     return ref.id
   } catch (err) {
@@ -559,8 +597,6 @@ export async function updateTransaction(uid, txId, data, options = {}) {
       payload.balanceImpact = false
     }
 
-    await updateDoc(resolvedTarget.ref, payload)
-
     const afterTx = {
       ...previousData,
       ...data,
@@ -570,6 +606,20 @@ export async function updateTransaction(uid, txId, data, options = {}) {
       transactionNatureId: payload.transactionNatureId || data.transactionNatureId || previousData?.transactionNatureId,
       status: payload.status || data.status || previousData?.status,
     }
+    const batch = writeBatch(db)
+    batch.update(resolvedTarget.ref, payload)
+    if (resolvedTarget.workspaceId) {
+      batch.set(doc(transactionAuditCol(resolvedTarget.workspaceId)), transactionAuditLog(
+        resolvedTarget.workspaceId,
+        'transaction_updated',
+        txId,
+        options.actorUid || uid,
+        previousData,
+        afterTx,
+        options.reason || data.auditReason || 'Edicao de movimentacao',
+      ))
+    }
+    await batch.commit()
     await syncDebtBalancesForTransactionChange(resolvedTarget.workspaceId, previousData, afterTx)
   } catch (err) {
     console.error('[TransactionService] Update failed:', err.code, err.message)
@@ -584,7 +634,36 @@ export async function deleteTransaction(uid, txId, options = {}) {
     const resolvedTarget = await resolveTransactionDocForMutation(uid, txId, workspaceId)
     const previousSnap = resolvedTarget.snap
     const previousData = previousSnap?.exists() ? { id: previousSnap.id, ...previousSnap.data() } : null
-    await deleteDoc(resolvedTarget.ref)
+    const reason = String(options.reason || 'Exclusao solicitada pela interface').trim()
+    const deletedAt = new Date().toISOString()
+    const deletedData = {
+      ...previousData,
+      status: 'deleted',
+      deletedAt,
+      deletedBy: options.actorUid || uid,
+      deletionReason: reason,
+    }
+    const patch = {
+      status: 'deleted',
+      deletedAt: serverTimestamp(),
+      deletedBy: options.actorUid || uid,
+      deletionReason: reason,
+      updatedAt: serverTimestamp(),
+    }
+    const batch = writeBatch(db)
+    batch.update(resolvedTarget.ref, patch)
+    if (resolvedTarget.workspaceId) {
+      batch.set(doc(transactionAuditCol(resolvedTarget.workspaceId)), transactionAuditLog(
+        resolvedTarget.workspaceId,
+        'transaction_soft_deleted',
+        txId,
+        options.actorUid || uid,
+        previousData,
+        deletedData,
+        reason,
+      ))
+    }
+    await batch.commit()
     await syncDebtBalancesForTransactionChange(resolvedTarget.workspaceId, previousData, null)
   } catch (err) {
     console.error('[TransactionService] Delete failed:', err.code, err.message)

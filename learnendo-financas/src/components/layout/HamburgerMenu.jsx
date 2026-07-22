@@ -10,6 +10,7 @@ const MENU_LINKS = [
   { to: '/lancar', label: 'Lan\u00e7ar', icon: '\u2795' },
   { to: '/lancamentos', label: 'Lan\u00e7amentos', icon: '\u{1F4DD}' },
   { to: '/dividas', label: 'D\u00edvidas', icon: '\u{1F4C9}' },
+  { to: '/extrato', label: 'Extrato', icon: '\u{1F4C4}' },
   { to: '/reconciliacao', label: 'Reconcilia\u00e7\u00e3o', icon: '\u{1F50D}' },
   { to: '/orcamento', label: 'Or\u00e7amento', icon: '\u{1F4B0}' },
   { to: '/mensal', label: 'Vis\u00e3o Mensal', icon: '\u{1F4C6}' },

@@ -49,6 +49,21 @@ service cloud.firestore {
         && !(workspaceRole(workspaceId) in ['planejador']);
     }
 
+    function validFamilyDebtMembers(workspaceId, data) {
+      return !('relationshipKind' in data)
+        || data.relationshipKind != 'family_member'
+        || (
+          (data.workspaceId == workspaceId || !('workspaceId' in data))
+          && data.creditorMemberId is string
+          && data.debtorMemberId is string
+          && data.creditorMemberId != data.debtorMemberId
+          && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(data.creditorMemberId))
+          && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(data.debtorMemberId))
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(data.creditorMemberId)).data.status == 'active'
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(data.debtorMemberId)).data.status == 'active'
+        );
+    }
+
     function financialSessionDoc(workspaceId, sessionId) {
       return get(/databases/$(database)/documents/workspaces/$(workspaceId)/financialSessions/$(sessionId));
     }
@@ -102,11 +117,13 @@ service cloud.firestore {
       }
 
       match /workspaceMemberships/{workspaceId} {
-        allow read, create, update, delete: if isOwner(uid);
+        allow read: if isOwner(uid) || isAdminUser();
+        allow create, update, delete: if isOwner(uid);
       }
 
       match /{document=**} {
-        allow read, create, update, delete: if isOwner(uid);
+        allow read: if isOwner(uid) || isAdminUser();
+        allow create, update, delete: if isOwner(uid);
       }
     }
 
@@ -153,7 +170,7 @@ service cloud.firestore {
       allow delete: if false;
 
       match /members/{uid} {
-        allow read: if isWorkspaceMember(workspaceId);
+        allow read: if isWorkspaceMember(workspaceId) || isAdminUser();
         allow create: if signedIn()
           && (
             isWorkspaceManager(workspaceId)
@@ -166,7 +183,7 @@ service cloud.firestore {
       }
 
       match /invitations/{inviteId} {
-        allow read: if isWorkspaceMember(workspaceId);
+        allow read: if isWorkspaceMember(workspaceId) || isAdminUser();
         allow create: if isWorkspaceManager(workspaceId)
           && request.resource.data.inviterUid == request.auth.uid;
         allow update: if isWorkspaceManager(workspaceId)
@@ -220,13 +237,44 @@ service cloud.firestore {
       }
 
       match /transactions/{docId} {
-        allow read: if isWorkspaceMember(workspaceId);
-        allow create, update, delete: if canContributeWorkspace(workspaceId);
+        allow read: if isWorkspaceMember(workspaceId) || isAdminUser();
+        allow create: if canContributeWorkspace(workspaceId)
+          && request.resource.data.workspaceId == workspaceId;
+        allow update: if canContributeWorkspace(workspaceId)
+          && (resource.data.workspaceId == workspaceId || !('workspaceId' in resource.data))
+          && (request.resource.data.workspaceId == workspaceId || !('workspaceId' in request.resource.data));
+        allow delete: if false;
       }
 
       match /debts/{docId} {
-        allow read: if isWorkspaceMember(workspaceId);
-        allow create, update, delete: if canContributeWorkspace(workspaceId);
+        allow read: if isWorkspaceMember(workspaceId) || isAdminUser();
+        allow create: if canContributeWorkspace(workspaceId)
+          && request.resource.data.workspaceId == workspaceId
+          && request.resource.data.createdBy == request.auth.uid
+          && validFamilyDebtMembers(workspaceId, request.resource.data);
+        allow update: if canContributeWorkspace(workspaceId)
+          && (resource.data.workspaceId == workspaceId || !('workspaceId' in resource.data))
+          && (request.resource.data.workspaceId == workspaceId || !('workspaceId' in request.resource.data))
+          && validFamilyDebtMembers(workspaceId, request.resource.data);
+        allow delete: if false;
+      }
+
+      match /financialAuditLogs/{logId} {
+        allow read: if isWorkspaceManager(workspaceId) || isAdminUser();
+        allow create: if (
+          canContributeWorkspace(workspaceId)
+          && request.resource.data.actorUid == request.auth.uid
+          && request.resource.data.workspaceId == workspaceId
+        ) || isAdminUser();
+        allow update, delete: if false;
+      }
+
+      match /auditAdjustments/{auditId} {
+        allow read: if isAdminUser();
+        allow create: if isAdminUser()
+          && request.resource.data.workspaceId == workspaceId
+          && request.resource.data.auditId == auditId;
+        allow update, delete: if false;
       }
 
       match /financialSessions/{sessionId} {
@@ -327,21 +375,29 @@ service cloud.firestore {
     }
 
     match /families/{familyId} {
-      allow read, write: if signedIn() && (
+      allow read: if isAdminUser() || (signedIn() && (
+        resource.data.ownerUid == request.auth.uid ||
+        isFamilyMember(familyId)
+      ));
+      allow write: if signedIn() && (
         resource.data.ownerUid == request.auth.uid ||
         isFamilyMember(familyId)
       );
 
       match /members/{userId} {
-        allow read, write: if isFamilyOwner(familyId) || isFamilyMember(familyId);
+        allow read: if isAdminUser() || isFamilyOwner(familyId) || isFamilyMember(familyId);
+        allow write: if isFamilyOwner(familyId) || isFamilyMember(familyId);
       }
 
       match /transactions/{docId} {
-        allow read, write: if isFamilyOwner(familyId) || isFamilyMember(familyId);
+        allow read: if isAdminUser() || isFamilyOwner(familyId) || isFamilyMember(familyId);
+        allow create, update: if isFamilyOwner(familyId) || isFamilyMember(familyId);
+        allow delete: if false;
       }
 
       match /invitations/{inviteId} {
-        allow read, write: if isFamilyOwner(familyId) || isFamilyMember(familyId);
+        allow read: if isAdminUser() || isFamilyOwner(familyId) || isFamilyMember(familyId);
+        allow write: if isFamilyOwner(familyId) || isFamilyMember(familyId);
       }
     }
 
