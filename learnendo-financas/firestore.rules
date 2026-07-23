@@ -145,7 +145,17 @@ service cloud.firestore {
     }
 
     match /workspaceInviteTokens/{token} {
-      allow read: if signedIn();
+      allow read: if signedIn() && (
+        resource.data.inviterUid == request.auth.uid
+        || resource.data.acceptedBy == request.auth.uid
+        || (
+          resource.data.email is string
+          && request.auth.token.email is string
+          && resource.data.email == request.auth.token.email
+        )
+        || !('email' in resource.data)
+        || resource.data.email == null
+      );
       allow create: if signedIn() && request.resource.data.inviterUid == request.auth.uid;
       allow update: if signedIn() && (
         resource.data.inviterUid == request.auth.uid

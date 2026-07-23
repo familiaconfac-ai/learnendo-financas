@@ -12,7 +12,7 @@ import { useWorkspace } from '../../context/WorkspaceContext'
 import { buildFamilyDebtLedger, getExternalDebtDirection, isFamilyInternalDebt } from '../../services/debtService'
 import { fetchAllTransactionsForWorkspace } from '../../services/transactionService'
 import { calculateMonthlySummary } from '../../utils/financeCalculations'
-import { getPermissionsByRole, getWorkspaceInviteByToken } from '../../services/workspaceService'
+import { fetchPendingWorkspaceInvitesForEmail, getPermissionsByRole, getWorkspaceInviteByToken } from '../../services/workspaceService'
 import { TRANSACTION_PAYMENT_METHODS, normalizePaymentMethodId } from '../../constants/transactionPaymentMethods'
 import {
   memberDisplayName,
@@ -142,6 +142,7 @@ function defaultSettlementForm() {
 function defaultMemberSettlementDraft(debts = []) {
   return {
     open: false,
+    mode: 'sent',
     debtId: debts[0]?.id || '',
     amount: '',
     notes: '',
@@ -288,6 +289,7 @@ export default function Familia() {
     addSettlement,
     confirmReceipt,
     confirmSettlement,
+    recordReceivedSettlement,
     cancelSettlement,
     removeDebt,
     removeSettlement,
@@ -312,6 +314,7 @@ export default function Familia() {
   const [invitePhone,        setInvitePhone]         = useState('')
   const [inviteEmail,        setInviteEmail]         = useState('')
   const [inviteRole,         setInviteRole]          = useState('membro')
+  const [lastFamilyInvite,   setLastFamilyInvite]    = useState(null)
   const [createFamilyOpen,   setCreateFamilyOpen]    = useState(false)
   const [createName,         setCreateName]          = useState('')
   const [saving,             setSaving]              = useState(false)
@@ -385,18 +388,18 @@ export default function Familia() {
     }
 
     const storedToken = readPendingWorkspaceInviteToken()
-    if (!storedToken) {
-      setPendingInviteResume(null)
-      setPendingInviteLoading(false)
-      return
-    }
-
     let cancelled = false
     setPendingInviteLoading(true)
 
     ;(async () => {
       try {
-        const invite = await getWorkspaceInviteByToken(storedToken)
+        let token = storedToken
+        let invite = token ? await getWorkspaceInviteByToken(token) : null
+        if (!invite && user?.email) {
+          const invitationsByEmail = await fetchPendingWorkspaceInvitesForEmail(user.email, user.uid)
+          invite = invitationsByEmail[0] || null
+          token = invite?.token || invite?.id || ''
+        }
         if (cancelled) return
 
         const isStillUseful = invite
@@ -407,31 +410,32 @@ export default function Familia() {
           )
 
         if (!isStillUseful) {
-          clearPendingWorkspaceInviteToken(storedToken)
+          if (storedToken) clearPendingWorkspaceInviteToken(storedToken)
           setPendingInviteResume(null)
           return
         }
 
-        setPendingInviteResume({ token: storedToken, invite, error: '' })
+        setPendingInviteResume({ token, invite, error: '' })
       } catch (err) {
         if (cancelled) return
-        setPendingInviteResume({
+        setPendingInviteResume(storedToken ? {
           token: storedToken,
           invite: null,
           error: err?.message || 'Nao foi possivel validar o convite salvo.',
-        })
+        } : null)
       } finally {
         if (!cancelled) setPendingInviteLoading(false)
       }
     })()
 
     return () => { cancelled = true }
-  }, [user?.uid])
+  }, [user?.email, user?.uid])
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
   const familyWorkspace = useMemo(() => {
-    if (activeWorkspace?.type === 'family') return activeWorkspace
+    // Workspaces familiares antigos podem nao ter o campo `type` persistido.
+    if (activeWorkspace && (activeWorkspace.type === 'family' || !activeWorkspace.type)) return activeWorkspace
     if (family?.id) {
       const matchingFamily = (workspaces || []).find((workspace) => workspace.id === family.id)
       if (matchingFamily) return matchingFamily
@@ -439,13 +443,15 @@ export default function Familia() {
     return (workspaces || []).find((workspace) => workspace.type === 'family') || null
   }, [activeWorkspace, family?.id, workspaces])
 
+  const familyWorkspaceId = familyWorkspace?.id || family?.workspaceId || family?.id || ''
+
   useEffect(() => {
     if (!familyWorkspace?.id) return
     if (activeWorkspace?.id === familyWorkspace.id) return
     void changeWorkspace(familyWorkspace.id)
   }, [activeWorkspace?.id, changeWorkspace, familyWorkspace?.id])
 
-  const familyWorkspaceReady = activeWorkspace?.type === 'family' && activeWorkspace?.id === familyWorkspace?.id
+  const familyWorkspaceReady = Boolean(activeWorkspace?.id && activeWorkspace?.id === familyWorkspaceId)
   const myMember   = members.find((m) => m.uid === user?.uid || m.id === user?.uid)
   const familyName = familyWorkspace?.name || family?.name || 'Familia'
   const familyMembers = useMemo(
@@ -459,7 +465,7 @@ export default function Familia() {
   const membersLoading = Boolean(workspaceLoading || loading)
   const membersError = workspaceError || error || ''
   const currentMemberLabel = myMember?.displayName || user?.displayName || user?.email || 'Voce'
-  const canInviteMembers = Boolean((familyWorkspaceReady && permissions?.canInvite) || (!activeWorkspace && canManage))
+  const canInviteMembers = Boolean(permissions?.canInvite || canManage)
   const canChangeMemberRoles = Boolean(permissions?.canChangeRoles || (!activeWorkspace && canManage))
   const canRemoveMembers = Boolean(permissions?.canRemoveMember || (!activeWorkspace && canManage))
   const canManageProjects = Boolean(permissions?.canEditBudget || (!activeWorkspace && canManage))
@@ -633,7 +639,8 @@ export default function Familia() {
   const totalSaldo = Number(summarySnapshot?.saldo || 0)
   const selectedSettlementPaymentMethod = normalizePaymentMethodId(settlementForm.paymentMethod) || 'pix'
   const settlementRequiresCard = selectedSettlementPaymentMethod === 'credit_card'
-  const settlementRequiresAccount = !settlementRequiresCard && selectedSettlementPaymentMethod !== 'cash'
+  const settlementRequiresAccount = !settlementRequiresCard
+    && !['cash', 'compensation'].includes(selectedSettlementPaymentMethod)
   const summarySubtitle = summaryLoading
     ? 'Carregando…'
     : summaryMode === 'year'
@@ -700,13 +707,13 @@ export default function Familia() {
   }
 
   async function ensureFamilyWorkspaceSelected() {
-    if (familyWorkspaceReady) return familyWorkspace?.id || activeWorkspaceId
-    if (!familyWorkspace?.id) {
+    if (familyWorkspaceReady) return familyWorkspaceId || activeWorkspaceId
+    if (!familyWorkspaceId) {
       showToast('Nenhuma familia ativa foi encontrada para este convite.', 'err')
       return ''
     }
-    await changeWorkspace(familyWorkspace.id)
-    return familyWorkspace.id
+    await changeWorkspace(familyWorkspaceId)
+    return familyWorkspaceId
   }
 
   async function handleInviteWhatsApp(e) {
@@ -724,6 +731,7 @@ export default function Familia() {
       const workspaceId = await ensureFamilyWorkspaceSelected()
       if (!workspaceId) return
       const invite = await createInviteLink(inviteRole || 'membro', { phone, method: 'whatsapp' }, workspaceId)
+      setLastFamilyInvite(invite)
       const message = 'Ola! Voce foi convidado(a) para entrar na familia "' + famName + '" no Learnendo Financas.\n\nSe ainda nao tiver conta, instale o app e crie seu cadastro. Depois, toque neste link para entrar na familia:\n' + invite.link
       const waUrl = 'https://wa.me/' + phone + '?text=' + encodeURIComponent(message)
 
@@ -755,14 +763,14 @@ export default function Familia() {
         email: inviteEmail.trim(),
         method: 'email',
       }, workspaceId)
+      setLastFamilyInvite(invite)
       const subject = encodeURIComponent(`Convite para ${familyName}`)
       const body = encodeURIComponent(
         `Ola!\n\nVoce foi convidado(a) para entrar na familia "${familyName}" no Learnendo Financas.\n\nSe ainda nao tiver conta, instale o app e crie seu cadastro. Depois, toque neste link para entrar na familia:\n${invite.link}`,
       )
       window.open(`mailto:${inviteEmail.trim()}?subject=${subject}&body=${body}`, '_blank', 'noopener,noreferrer')
-      setInviteOpen(false)
       setInviteEmail('')
-      showToast('Convite preparado ✅')
+      showToast('Convite especifico da familia criado. Envie ou copie o link.')
     } catch (err) {
       showToast('Erro ao convidar: ' + err.message, 'err')
     } finally {
@@ -968,13 +976,17 @@ export default function Familia() {
     }))
   }
 
-  function toggleMemberSettlementDraft(memberId, debts = []) {
+  function toggleMemberSettlementDraft(memberId, debts = [], mode = 'sent') {
     setMemberSettlementDrafts((current) => {
       const existing = current[memberId] || defaultMemberSettlementDraft(debts)
       return {
         ...current,
         [memberId]: {
           ...existing,
+          mode,
+          paymentMethod: existing.mode === mode
+            ? existing.paymentMethod
+            : (mode === 'received' ? 'compensation' : 'pix'),
           debtId: existing.debtId || debts[0]?.id || '',
           open: !existing.open,
         },
@@ -997,7 +1009,7 @@ export default function Familia() {
     if (paymentMethod === 'credit_card' && !draft.cardId) {
       throw new Error('Selecione o cartao usado neste envio.')
     }
-    if (paymentMethod !== 'credit_card' && paymentMethod !== 'cash' && !draft.accountId) {
+    if (paymentMethod !== 'credit_card' && paymentMethod !== 'cash' && paymentMethod !== 'compensation' && !draft.accountId) {
       throw new Error('Selecione a conta usada neste envio.')
     }
     return paymentMethod
@@ -1008,7 +1020,6 @@ export default function Familia() {
       (Array.isArray(orderedDebts) ? orderedDebts : []).filter((debt) => Number(debt.remainingAmount || 0) > 0),
     )
     const anchorDebt = activeDebts[0] || null
-    let lastAllocatedDebt = anchorDebt
     let remainingToAllocate = Number(amount || 0)
     const normalizedPaymentMethod = normalizePaymentMethodId(paymentMeta.paymentMethod) || 'pix'
     const selectedCard = normalizedPaymentMethod === 'credit_card'
@@ -1017,6 +1028,10 @@ export default function Familia() {
 
     if (!anchorDebt?.id) {
       throw new Error('Nenhuma conta em aberto foi encontrada para este membro.')
+    }
+    const totalOpen = activeDebts.reduce((sum, debt) => sum + Number(debt.remainingAmount || 0), 0)
+    if (Number(amount || 0) > totalOpen + 0.005) {
+      throw new Error(`O valor nao pode ultrapassar o saldo em aberto de ${formatCurrency(totalOpen)}.`)
     }
 
     for (const debt of activeDebts) {
@@ -1029,34 +1044,51 @@ export default function Familia() {
         note,
         createdByName: currentMemberLabel,
         paymentMethod: normalizedPaymentMethod,
-        accountId: normalizedPaymentMethod === 'credit_card' || normalizedPaymentMethod === 'cash'
+        accountId: ['credit_card', 'cash', 'compensation'].includes(normalizedPaymentMethod)
           ? null
           : (paymentMeta.accountId || null),
         cardId: normalizedPaymentMethod === 'credit_card' ? (paymentMeta.cardId || null) : null,
         cardName: normalizedPaymentMethod === 'credit_card' ? (selectedCard?.name || null) : null,
       })
-      lastAllocatedDebt = debt
       remainingToAllocate = Number((remainingToAllocate - amountForDebt).toFixed(2))
-    }
-
-    if (remainingToAllocate > 0) {
-      await addSettlement((lastAllocatedDebt || anchorDebt).id, {
-        amount: remainingToAllocate,
-        note,
-        createdByName: currentMemberLabel,
-        paymentMethod: normalizedPaymentMethod,
-        accountId: normalizedPaymentMethod === 'credit_card' || normalizedPaymentMethod === 'cash'
-          ? null
-          : (paymentMeta.accountId || null),
-        cardId: normalizedPaymentMethod === 'credit_card' ? (paymentMeta.cardId || null) : null,
-        cardName: normalizedPaymentMethod === 'credit_card' ? (selectedCard?.name || null) : null,
-      })
     }
 
     return anchorDebt
   }
 
-  async function handleMemberSettlementSubmit(memberId, debts = []) {
+  async function recordMemberReceivedPayments(orderedDebts = [], amount, note = '', paymentMeta = {}) {
+    const activeDebts = sortDebtsByOldestFirst(
+      (Array.isArray(orderedDebts) ? orderedDebts : []).filter((debt) => Number(debt.remainingAmount || 0) > 0),
+    )
+    const totalOpen = activeDebts.reduce((sum, debt) => sum + Number(debt.remainingAmount || 0), 0)
+    if (!activeDebts[0]?.id) throw new Error('Nenhuma conta em aberto foi encontrada para este membro.')
+    if (Number(amount || 0) > totalOpen + 0.005) {
+      throw new Error(`O abatimento nao pode ultrapassar o saldo em aberto de ${formatCurrency(totalOpen)}.`)
+    }
+
+    let remainingToAllocate = Number(amount || 0)
+    const normalizedPaymentMethod = normalizePaymentMethodId(paymentMeta.paymentMethod) || 'compensation'
+    const selectedCard = normalizedPaymentMethod === 'credit_card'
+      ? (Array.isArray(cards) ? cards.find((card) => card.id === paymentMeta.cardId) : null)
+      : null
+    for (const debt of activeDebts) {
+      if (remainingToAllocate <= 0) break
+      const amountForDebt = Math.min(Number(debt.remainingAmount || 0), remainingToAllocate)
+      await recordReceivedSettlement(debt.id, {
+        amount: amountForDebt,
+        note,
+        createdByName: currentMemberLabel,
+        paymentMethod: normalizedPaymentMethod,
+        accountId: ['credit_card', 'cash', 'compensation'].includes(normalizedPaymentMethod) ? null : (paymentMeta.accountId || null),
+        cardId: normalizedPaymentMethod === 'credit_card' ? (paymentMeta.cardId || null) : null,
+        cardName: normalizedPaymentMethod === 'credit_card' ? (selectedCard?.name || null) : null,
+      })
+      remainingToAllocate = Number((remainingToAllocate - amountForDebt).toFixed(2))
+    }
+    return activeDebts[0]
+  }
+
+  async function handleMemberSettlementSubmit(memberId, debts = [], mode = 'sent') {
     const draft = memberSettlementDrafts[memberId] || defaultMemberSettlementDraft(debts)
     const orderedDebts = sortDebtsByOldestFirst((Array.isArray(debts) ? debts : []))
     const targetDebt = orderedDebts[0] || null
@@ -1066,12 +1098,20 @@ export default function Familia() {
       showToast('Nenhuma conta em aberto foi encontrada para este membro.', 'err')
       return
     }
-    if (targetDebt.debtorMemberId !== user?.uid) {
+    if (mode === 'sent' && targetDebt.debtorMemberId !== user?.uid) {
       showToast('Somente quem deve pode marcar um envio.', 'err')
       return
     }
+    if (mode === 'received' && targetDebt.creditorMemberId !== user?.uid) {
+      showToast('Somente quem vai receber pode confirmar um abatimento direto.', 'err')
+      return
+    }
     if (!amount || amount <= 0) {
-      showToast('Informe o novo valor enviado.', 'err')
+      showToast(mode === 'received' ? 'Informe o valor recebido.' : 'Informe o valor enviado.', 'err')
+      return
+    }
+    if (mode === 'received' && !String(draft.notes || '').trim()) {
+      showToast('Descreva como o valor foi devolvido.', 'err')
       return
     }
     try {
@@ -1083,12 +1123,15 @@ export default function Familia() {
 
     setSaving(true)
     try {
-      const anchorDebt = await createMemberPaymentRequests(orderedDebts, amount, String(draft.notes || '').trim(), draft)
+      const anchorDebt = mode === 'received'
+        ? await recordMemberReceivedPayments(orderedDebts, amount, String(draft.notes || '').trim(), draft)
+        : await createMemberPaymentRequests(orderedDebts, amount, String(draft.notes || '').trim(), draft)
       setMemberSettlementDrafts((current) => ({
         ...current,
         [memberId]: {
           ...(current[memberId] || defaultMemberSettlementDraft(debts)),
           open: false,
+          mode,
           debtId: anchorDebt.id,
           amount: '',
           notes: '',
@@ -1097,9 +1140,11 @@ export default function Familia() {
           cardId: draft.cardId || '',
         },
       }))
-      showToast('Envio registrado. Ele vai abater primeiro as contas mais antigas, depois o outro membro confirma o recebimento.')
+      showToast(mode === 'received'
+        ? 'Saldo abatido. O pagamento foi registrado nas contas mais antigas, sem criar uma nova divida.'
+        : 'Envio registrado. Ele vai abater primeiro as contas mais antigas, depois o outro membro confirma o recebimento.')
     } catch (err) {
-      showToast('Erro ao registrar envio: ' + err.message, 'err')
+      showToast((mode === 'received' ? 'Erro ao abater saldo: ' : 'Erro ao registrar envio: ') + err.message, 'err')
     } finally {
       setSaving(false)
     }
@@ -1359,24 +1404,18 @@ export default function Familia() {
     setProjectOpen(true)
   }
 
-  async function handleShareApp() {
-    const appUrl = `${window.location.origin}/cadastro`
-    const shareData = {
-      title: 'Learnendo Financas',
-      text:  'Use o Learnendo Financas para organizar sua propria vida financeira ou criar a sua familia dentro do app.',
-      url:   appUrl,
-    }
-    if (navigator.share) {
-      try {
-        await navigator.share(shareData)
-      } catch (_) { /* user cancelled */ }
-    } else {
-      try {
-        await navigator.clipboard.writeText(appUrl)
-        showToast('Link do app copiado.')
-      } catch (_) {
-        showToast('Link: ' + appUrl)
-      }
+  function handleFamilyInviteOpen() {
+    setLastFamilyInvite(null)
+    setInviteOpen(true)
+  }
+
+  async function handleCopyFamilyInvite() {
+    if (!lastFamilyInvite?.link) return
+    try {
+      await navigator.clipboard.writeText(lastFamilyInvite.link)
+      showToast('Link especifico da familia copiado.')
+    } catch (_) {
+      showToast('Link do convite: ' + lastFamilyInvite.link)
     }
   }
 
@@ -1653,7 +1692,7 @@ export default function Familia() {
               <button className="btn-add-member" onClick={() => setAddMemberOpen(true)}>
                 + Adicionar
               </button>
-              <button className="btn-invite" onClick={() => setInviteOpen(true)}>
+              <button className="btn-invite" onClick={handleFamilyInviteOpen}>
                 + Convidar
               </button>
             </div>
@@ -1685,6 +1724,9 @@ export default function Familia() {
             const debtorMemberDebts = sortDebtsByOldestFirst(
               memberDebts.filter((debt) => debt.debtorMemberId === user?.uid && Number(debt.remainingAmount || 0) > 0),
             )
+            const creditorMemberDebts = sortDebtsByOldestFirst(
+              memberDebts.filter((debt) => debt.creditorMemberId === user?.uid && Number(debt.remainingAmount || 0) > 0),
+            )
             const pendingIncomingSettlementAmount = memberDebts.reduce((sum, debt) => {
               if (debt.creditorMemberId !== user?.uid) return sum
               const pendingTotal = Array.isArray(debt.settlements)
@@ -1706,8 +1748,10 @@ export default function Familia() {
             const isLedgerOpen = activeMemberLedgerId === memberId
             const memberNetBalance = Number(memberDebtSummary?.netBalance || 0)
             const memberNetTone = memberNetBalance > 0 ? 'green' : (memberNetBalance < 0 ? 'red' : 'neutral')
-            const memberSettlementDraft = memberSettlementDrafts[memberId] || defaultMemberSettlementDraft(debtorMemberDebts)
-            const selectedMemberSettlementDebt = debtorMemberDebts[0] || null
+            const settlementMode = memberNetBalance > 0 ? 'received' : 'sent'
+            const settlementDebts = settlementMode === 'received' ? creditorMemberDebts : debtorMemberDebts
+            const memberSettlementDraft = memberSettlementDrafts[memberId] || defaultMemberSettlementDraft(settlementDebts)
+            const selectedMemberSettlementDebt = settlementDebts[0] || null
             return (
               <li key={memberId} className="member-item">
                 <div className="member-avatar" data-role={m.role}>
@@ -1748,14 +1792,16 @@ export default function Familia() {
                         {memberNetBalance < 0 && formatCurrency(Math.abs(memberNetBalance))}
                         {memberNetBalance === 0 && 'Saldo zerado'}
                       </span>
-                      {memberNetBalance < 0 && debtorMemberDebts.length > 0 && (
+                      {memberNetBalance !== 0 && settlementDebts.length > 0 && (
                         <button
                           type="button"
                           className="member-inline-btn"
                           disabled={saving}
-                          onClick={() => toggleMemberSettlementDraft(memberId, debtorMemberDebts)}
+                          onClick={() => toggleMemberSettlementDraft(memberId, settlementDebts, settlementMode)}
                         >
-                          {memberSettlementDraft.open ? 'Fechar alteracao' : 'Alterar valor'}
+                          {memberSettlementDraft.open
+                            ? 'Fechar'
+                            : settlementMode === 'received' ? 'Abater saldo' : 'Registrar pagamento'}
                         </button>
                       )}
                       {pendingIncomingSettlementAmount > 0 && (
@@ -1770,11 +1816,13 @@ export default function Familia() {
                       )}
                     </div>
                   )}
-                  {!isMe && memberNetBalance < 0 && debtorMemberDebts.length > 0 && memberSettlementDraft.open && (
+                  {!isMe && memberNetBalance !== 0 && settlementDebts.length > 0 && memberSettlementDraft.open && (
                     <div className="member-ledger-adjust">
                       <div className="member-ledger-adjust-title">
-                        <strong>Registrar valor enviado</strong>
-                        <span>O saldo vermelho so muda depois que o outro membro confirmar o recebimento.</span>
+                        <strong>{settlementMode === 'received' ? 'Abater valor que voce recebeu' : 'Registrar valor que voce enviou'}</strong>
+                        <span>{settlementMode === 'received'
+                          ? 'A baixa entra imediatamente porque voce e quem confirma o recebimento. Nenhuma nova divida sera criada.'
+                          : 'O saldo muda depois que o outro membro confirmar o recebimento.'}</span>
                       </div>
                       {selectedMemberSettlementDebt && (
                         <div className="member-ledger-adjust-summary">
@@ -1787,18 +1835,18 @@ export default function Familia() {
                         step="0.01"
                         inputMode="decimal"
                         value={memberSettlementDraft.amount}
-                        onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { amount: e.target.value })}
-                        placeholder="Novo valor enviado"
+                        onChange={(e) => updateMemberSettlementDraft(memberId, settlementDebts, { amount: e.target.value })}
+                        placeholder={settlementMode === 'received' ? 'Valor recebido' : 'Valor enviado'}
                       />
                       <input
                         type="text"
                         value={memberSettlementDraft.notes}
-                        onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { notes: e.target.value })}
-                        placeholder="Observacao opcional"
+                        onChange={(e) => updateMemberSettlementDraft(memberId, settlementDebts, { notes: e.target.value })}
+                        placeholder={settlementMode === 'received' ? 'Ex.: Pagou R$ 500 da minha fatura do cartao' : 'Observacao opcional'}
                       />
                       <select
                         value={memberSettlementDraft.paymentMethod}
-                        onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, {
+                        onChange={(e) => updateMemberSettlementDraft(memberId, settlementDebts, {
                           paymentMethod: e.target.value,
                           accountId: normalizePaymentMethodId(e.target.value) === 'credit_card' ? '' : memberSettlementDraft.accountId,
                           cardId: normalizePaymentMethodId(e.target.value) === 'credit_card' ? memberSettlementDraft.cardId : '',
@@ -1811,17 +1859,17 @@ export default function Familia() {
                       {normalizePaymentMethodId(memberSettlementDraft.paymentMethod) === 'credit_card' ? (
                         <select
                           value={memberSettlementDraft.cardId}
-                          onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { cardId: e.target.value })}
+                          onChange={(e) => updateMemberSettlementDraft(memberId, settlementDebts, { cardId: e.target.value })}
                         >
                           <option value="">Selecione o cartao</option>
                           {cards.map((card) => (
                             <option key={card.id} value={card.id}>{cardOptionLabel(card)}</option>
                           ))}
                         </select>
-                      ) : normalizePaymentMethodId(memberSettlementDraft.paymentMethod) !== 'cash' ? (
+                      ) : !['cash', 'compensation'].includes(normalizePaymentMethodId(memberSettlementDraft.paymentMethod)) ? (
                         <select
                           value={memberSettlementDraft.accountId}
-                          onChange={(e) => updateMemberSettlementDraft(memberId, debtorMemberDebts, { accountId: e.target.value })}
+                          onChange={(e) => updateMemberSettlementDraft(memberId, settlementDebts, { accountId: e.target.value })}
                         >
                           <option value="">Selecione a conta</option>
                           {accounts.map((account) => (
@@ -1833,12 +1881,14 @@ export default function Familia() {
                         type="button"
                         className="member-inline-btn"
                         disabled={saving}
-                        onClick={() => handleMemberSettlementSubmit(memberId, debtorMemberDebts)}
+                        onClick={() => handleMemberSettlementSubmit(memberId, settlementDebts, settlementMode)}
                       >
-                        Enviar para confirmar
+                        {settlementMode === 'received' ? 'Confirmar abatimento' : 'Enviar para confirmar'}
                       </button>
                       <span className="member-ledger-adjust-hint">
-                        O outro membro confirma o recebimento e o saldo vermelho baixa automaticamente.
+                        {settlementMode === 'received'
+                          ? 'O extrato mostrara esta baixa como pagamento ou compensacao da divida existente.'
+                          : 'O outro membro confirma o recebimento e o saldo baixa automaticamente.'}
                       </span>
                     </div>
                   )}
@@ -2002,7 +2052,9 @@ export default function Familia() {
                                             <option key={card.id} value={card.id}>{cardOptionLabel(card)}</option>
                                           ))}
                                         </select>
-                                      ) : normalizePaymentMethodId(quickSettlementDrafts[debt.id]?.paymentMethod || 'pix') !== 'cash' ? (
+                                      ) : !['cash', 'compensation'].includes(
+                                        normalizePaymentMethodId(quickSettlementDrafts[debt.id]?.paymentMethod || 'pix'),
+                                      ) ? (
                                         <select
                                           value={quickSettlementDrafts[debt.id]?.accountId || ''}
                                           onChange={(e) => updateQuickSettlementDraft(debt.id, { accountId: e.target.value })}
@@ -2399,18 +2451,18 @@ export default function Familia() {
         ) : null}
       </Card>
 
-      {/* Compartilhar app */}
-      <Card>
+      {/* Convite especifico da familia */}
+      {canInviteMembers && <Card>
         <div className="share-app-row">
           <div className="share-app-info">
-            <strong>Compartilhar o app</strong>
-            <p>Este link e geral do aplicativo. Cada pessoa cria a propria conta e a propria familia.</p>
+            <strong>Convidar para esta família</strong>
+            <p>Crie um convite vinculado a {familyName}. A pessoa aceita após entrar ou se cadastrar; depois você confirma a entrada.</p>
           </div>
-          <button className="btn-share-app" onClick={handleShareApp}>
-            🔗 Compartilhar
+          <button className="btn-share-app" onClick={handleFamilyInviteOpen}>
+            🔗 Criar convite
           </button>
         </div>
-      </Card>
+      </Card>}
 
       {/* ── Modals ─────────────────────────────────────────────────────────── */}
 
@@ -2930,6 +2982,19 @@ export default function Familia() {
                 ))}
               </select>
             </div>
+
+            {lastFamilyInvite?.link && (
+              <div className="member-ledger-adjust" style={{ marginTop: '0.75rem' }}>
+                <div className="member-ledger-adjust-title">
+                  <strong>Convite específico criado</strong>
+                  <span>Este link entra diretamente em {familyName}; ele não cria outra família.</span>
+                </div>
+                <input type="text" value={lastFamilyInvite.link} readOnly aria-label="Link específico da família" />
+                <button type="button" className="member-inline-btn" onClick={handleCopyFamilyInvite}>
+                  Copiar link da família
+                </button>
+              </div>
+            )}
 
             {/* WhatsApp tab */}
             {inviteTab === 'whatsapp' && (

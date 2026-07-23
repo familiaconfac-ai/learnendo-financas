@@ -1,0 +1,32 @@
+.workspace-invite-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 14px 16px 0;
+  padding: 12px 14px;
+  border: 1px solid #b9d7f2;
+  border-radius: 12px;
+  background: #eaf5ff;
+  color: #173f68;
+}
+
+.workspace-invite-banner > div { display: grid; gap: 3px; }
+.workspace-invite-banner span { font-size: .8rem; color: #4d6680; }
+.workspace-invite-banner button {
+  border: 0;
+  border-radius: 9px;
+  background: #175b9c;
+  color: #fff;
+  padding: 9px 13px;
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+@media (max-width: 540px) {
+  .workspace-invite-banner { align-items: stretch; flex-direction: column; }
+  .workspace-invite-banner button { width: 100%; }
+}

@@ -72,12 +72,6 @@ function normalizeExternalDebtDirection(value) {
   return 'i_owe_contact'
 }
 
-function invertExternalDebtDirection(value) {
-  return normalizeExternalDebtDirection(value) === 'contact_owes_me'
-    ? 'i_owe_contact'
-    : 'contact_owes_me'
-}
-
 const DEFAULT_LOAN_INTEREST_RATE = 1.5
 const DAY_IN_MS = 24 * 60 * 60 * 1000
 
@@ -437,7 +431,7 @@ function buildDebtSettlementTransactionPayload(workspaceId, debt, settlement, ac
     transactionNatureKey,
     transactionNatureLabel,
     paymentMethod,
-    accountId: paymentMethod === 'credit_card' || paymentMethod === 'cash'
+    accountId: paymentMethod === 'credit_card' || paymentMethod === 'cash' || paymentMethod === 'compensation'
       ? null
       : normalizeOptionalString(settlement?.accountId),
     cardId: paymentMethod === 'credit_card'
@@ -638,55 +632,6 @@ export async function createDebt(workspaceId, payload = {}, actorUid = null) {
   return ref.id
 }
 
-function buildOverflowDebtNote(debt, settlement, overflowAmount) {
-  const parts = []
-  if (debt?.notes) parts.push(String(debt.notes).trim())
-  parts.push(
-    `Saldo invertido automaticamente apos confirmacao de envio maior que o devido (${overflowAmount.toFixed(2)}).`,
-  )
-  if (settlement?.note) {
-    parts.push(`Observacao do envio original: ${settlement.note}`)
-  }
-  return parts.join('\n\n').trim() || null
-}
-
-function buildOverflowDebtRecord(workspaceId, debt, settlement, overflowAmount, actorUid = null) {
-  return {
-    name: debt?.name?.trim() || 'Saldo invertido',
-    type: debt?.type || 'pessoa',
-    originalAmount: overflowAmount,
-    totalAmount: overflowAmount,
-    paidAmount: 0,
-    initialPaidAmount: 0,
-    remainingAmount: overflowAmount,
-    status: 'open',
-    workspaceId,
-    createdBy: actorUid || settlement?.confirmedByUid || null,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    relationshipKind: normalizeOptionalString(debt?.relationshipKind),
-    reasonType: normalizeFamilyReasonType(debt?.reasonType),
-    reasonLabel: normalizeOptionalString(debt?.reasonLabel),
-    creditorMemberId: normalizeOptionalString(debt?.debtorMemberId),
-    creditorMemberName: normalizeOptionalString(debt?.debtorMemberName),
-    debtorMemberId: normalizeOptionalString(debt?.creditorMemberId),
-    debtorMemberName: normalizeOptionalString(debt?.creditorMemberName),
-    counterpartyMemberId: normalizeOptionalString(debt?.creditorMemberId),
-    counterpartyMemberName: normalizeOptionalString(debt?.creditorMemberName),
-    contactId: normalizeOptionalString(debt?.contactId),
-    contactName: normalizeOptionalString(debt?.contactName),
-    externalDirection: normalizeOptionalString(debt?.relationshipKind) === 'external_contact'
-      ? invertExternalDebtDirection(debt?.externalDirection)
-      : null,
-    notes: buildOverflowDebtNote(debt, settlement, overflowAmount),
-    settlements: [],
-    interestRate: debt?.interestRate || null,
-    interestLastAccruedAt: settlement?.confirmedAt || new Date().toISOString(),
-    dueDate: null,
-    installmentPlan: null,
-  }
-}
-
 export async function fetchDebtById(workspaceId, debtId) {
   if (!workspaceId || !debtId) return null
   const snap = await getDoc(debtDoc(workspaceId, debtId))
@@ -829,6 +774,17 @@ export async function requestDebtSettlement(workspaceId, debtId, payload = {}, a
       throw new Error('Somente quem deve pode informar uma restituição')
     }
 
+    const currentSnapshot = buildDebtBalanceSnapshot(
+      debt,
+      buildConfirmedPaymentReplayEntries(debt, []),
+    )
+    const pendingAmount = debt.settlements
+      .filter((settlement) => settlement.status === 'pending')
+      .reduce((sum, settlement) => sum + toAmount(settlement.amount), 0)
+    if (roundCurrency(pendingAmount + amount) > roundCurrency(currentSnapshot.remainingAmount)) {
+      throw new Error('O valor informado ultrapassa o saldo disponivel para abatimento.')
+    }
+
     const nextSettlement = {
       id: createSettlementId(),
       amount,
@@ -857,6 +813,88 @@ export async function requestDebtSettlement(workspaceId, debtId, payload = {}, a
       { reason: nextSettlement.note || 'Restituicao informada' },
     ))
   })
+}
+
+export async function recordReceivedDebtSettlement(workspaceId, debtId, payload = {}, actorUid = null) {
+  if (!workspaceId || !debtId) throw new Error('Divida nao encontrada')
+  const requestedAmount = toAmount(payload.amount)
+  if (!requestedAmount) throw new Error('Informe o valor recebido')
+
+  await runTransaction(db, async (transaction) => {
+    const ref = debtDoc(workspaceId, debtId)
+    const snap = await transaction.get(ref)
+    if (!snap.exists()) throw new Error('Divida nao encontrada')
+
+    const debt = {
+      id: snap.id,
+      ...snap.data(),
+      settlements: normalizeDebtSettlements(snap.data()?.settlements),
+    }
+    if (isPendingDebtConfirmation(debt)) {
+      throw new Error('Este emprestimo ainda precisa ser confirmado por quem recebeu.')
+    }
+    if (debt.creditorMemberId && actorUid && debt.creditorMemberId !== actorUid) {
+      throw new Error('Somente quem vai receber pode abater diretamente este saldo')
+    }
+
+    const interestSnapshot = buildDebtBalanceSnapshot(
+      debt,
+      buildConfirmedPaymentReplayEntries(debt, []),
+    )
+    const remainingAmount = toAmount(interestSnapshot.remainingAmount)
+    if (!remainingAmount) throw new Error('Esta conta ja esta quitada')
+    if (requestedAmount > remainingAmount + 0.005) {
+      throw new Error(`O abatimento nao pode ultrapassar o saldo atual de ${remainingAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`)
+    }
+
+    const confirmedAt = new Date().toISOString()
+    const linkedTransactionRef = doc(txCol(workspaceId))
+    const confirmedSettlement = {
+      id: createSettlementId(),
+      amount: roundCurrency(requestedAmount),
+      status: 'confirmed',
+      createdAt: confirmedAt,
+      createdByUid: actorUid || null,
+      createdByName: normalizeOptionalString(payload.createdByName),
+      paymentMethod: normalizePaymentMethodId(payload.paymentMethod) || 'compensation',
+      accountId: normalizeOptionalString(payload.accountId),
+      cardId: normalizeOptionalString(payload.cardId),
+      cardName: normalizeOptionalString(payload.cardName),
+      note: normalizeOptionalString(payload.note) || 'Abatimento confirmado por quem recebeu.',
+      confirmedAt,
+      confirmedByUid: actorUid || null,
+      confirmationSource: 'creditor_direct',
+      linkedTransactionId: linkedTransactionRef.id,
+      linkedTransactionCreatedAt: confirmedAt,
+      cancelledAt: null,
+      cancelledByUid: null,
+    }
+    const patch = {
+      originalAmount: roundCurrency(interestSnapshot.originalAmount),
+      totalAmount: roundCurrency(interestSnapshot.originalAmount),
+      paidAmount: roundCurrency(interestSnapshot.paidPrincipalAmount),
+      remainingAmount,
+      accruedInterestStoredAmount: roundCurrency(interestSnapshot.accruedInterestAmount),
+      interestRate: interestSnapshot.interestRate || null,
+      loanConfirmedAt: debt.loanConfirmedAt || interestSnapshot.confirmedAt || null,
+      receiptConfirmedAt: debt.receiptConfirmedAt || interestSnapshot.confirmedAt || null,
+      interestLastAccruedAt: interestSnapshot.interestAccruedThrough || confirmedAt,
+      settlements: [...debt.settlements, confirmedSettlement],
+      updatedAt: serverTimestamp(),
+    }
+
+    transaction.set(
+      linkedTransactionRef,
+      buildDebtSettlementTransactionPayload(workspaceId, { ...debt, ...interestSnapshot }, confirmedSettlement, actorUid),
+    )
+    transaction.update(ref, patch)
+    transaction.set(doc(auditLogCol(workspaceId)), financialAuditLog(
+      workspaceId, 'settlement_recorded_by_creditor', debtId, actorUid, debt, { ...debt, ...patch },
+      { reason: confirmedSettlement.note },
+    ))
+  })
+
+  await recalculateDebtBalance(workspaceId, debtId)
 }
 
 export async function confirmDebtSettlement(workspaceId, debtId, settlementId, actorUid = null) {
@@ -897,6 +935,10 @@ export async function confirmDebtSettlement(workspaceId, debtId, settlementId, a
     }
 
     const remainingAmount = toAmount(debtWithInterest.remainingAmount)
+    const targetSettlement = debtWithInterest.settlements.find((settlement) => settlement.id === settlementId)
+    if (toAmount(targetSettlement?.amount) > remainingAmount + 0.005) {
+      throw new Error('O saldo mudou e este pagamento ficou maior que o valor em aberto. Cancele este envio e registre apenas o saldo restante.')
+    }
     let confirmedSettlement = null
     const nextSettlements = debtWithInterest.settlements.map((settlement) => {
       if (settlement.id !== settlementId) return settlement
@@ -941,14 +983,6 @@ export async function confirmDebtSettlement(workspaceId, debtId, settlementId, a
       { reason: confirmedSettlement.note || 'Restituicao confirmada' },
     ))
 
-    const overflowAmount = Math.max(0, toAmount(confirmedSettlement.amount) - remainingAmount)
-    if (overflowAmount > 0) {
-      const overflowRef = doc(debtsCol(workspaceId))
-      transaction.set(
-        overflowRef,
-        buildOverflowDebtRecord(workspaceId, debtWithInterest, confirmedSettlement, overflowAmount, actorUid),
-      )
-    }
   })
 
   await recalculateDebtBalance(workspaceId, debtId)

@@ -11,6 +11,7 @@ import {
   fetchDebtPayments,
   fetchDebts,
   requestDebtSettlement,
+  recordReceivedDebtSettlement,
 } from '../services/debtService'
 
 export function useDebts() {
@@ -83,6 +84,15 @@ export function useDebts() {
     await reload()
   }
 
+  async function recordReceivedSettlement(debtId, data) {
+    if (!user?.uid) throw new Error('Usuario nao autenticado')
+    if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
+    if (!permissions.canConfirm) throw new Error('Seu papel nao permite abater saldos neste workspace')
+
+    await recordReceivedDebtSettlement(activeWorkspaceId, debtId, data, user.uid)
+    await reload()
+  }
+
   async function confirmReceipt(debtId) {
     if (!user?.uid) throw new Error('Usuario nao autenticado')
     if (!activeWorkspaceId) throw new Error('Workspace nao selecionado')
@@ -129,6 +139,7 @@ export function useDebts() {
     addSettlement,
     confirmReceipt,
     confirmSettlement,
+    recordReceivedSettlement,
     cancelSettlement,
     removeDebt,
     removeSettlement,

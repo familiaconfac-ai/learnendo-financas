@@ -147,10 +147,18 @@ export default function InviteAccept() {
         {status === 'ready' && (
           <>
             <p className="auth-link">
-              Papel sugerido: <strong>{invite?.role || 'membro'}</strong>
+              Convite para entrar em <strong>{invite?.workspaceName || 'esta familia'}</strong>.
+            </p>
+            {invite?.email && (
+              <p className="auth-link">
+                Enviado para <strong>{invite.email}</strong>.
+              </p>
+            )}
+            <p className="auth-link">
+              Depois que voce aceitar, o responsavel pela familia confirmara sua entrada.
             </p>
             <button className="invite-link-btn" onClick={handleAccept}>
-              Solicitar entrada
+              Aceitar convite e pedir entrada
             </button>
           </>
         )}

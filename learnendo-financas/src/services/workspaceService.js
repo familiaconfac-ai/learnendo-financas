@@ -198,7 +198,9 @@ export function normalizeWorkspaceRole(role) {
     .replace(/[_\s]+/g, '-')
 
   if (normalized === 'owner') return 'gestor'
-  if (normalized === 'admin') return 'co-gestor'
+  // Papel legado usado pelos criadores/administradores dos primeiros workspaces.
+  // Precisa conservar as permissoes de gestor, inclusive convidar membros.
+  if (normalized === 'admin') return 'gestor'
   if (normalized === 'co-gestor' || normalized === 'cogestor') return 'co-gestor'
   if (normalized === 'editor' || normalized === 'member' || normalized === 'membro') return 'membro'
   if (normalized === 'viewer' || normalized === 'read-only' || normalized === 'readonly') return 'planejador'
@@ -229,7 +231,7 @@ export function getPermissionsByRole(role, memberStatus = 'active') {
   const isReadonlyPlanner = normalizedRole === 'planejador'
   const canViewAmounts = normalizedRole !== 'planejador-blind'
   const basePermissions = {
-    canInvite: isFullManager,
+    canInvite: isFullManager || isCoManager,
     canRemoveMember: isFullManager,
     canChangeRoles: isFullManager,
     canEditBudget: isFullManager || isCoManager,
@@ -903,9 +905,13 @@ export async function createWorkspaceInvite(workspaceId, inviterUid, role = 'mem
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
   const normalizedEmail = normalizeEmail(target.email)
   const normalizedPhone = String(target.phone || '').replace(/\D/g, '')
+  const workspaceSnap = await getDoc(workspaceDoc(workspaceId))
+  if (!workspaceSnap.exists()) throw new Error('Familia nao encontrada')
+  const workspaceName = String(workspaceSnap.data()?.name || 'Familia').trim()
 
   const invitePayload = {
     workspaceId,
+    workspaceName,
     role,
     inviterUid,
     status: 'pending',
@@ -931,6 +937,22 @@ export async function createWorkspaceInvite(workspaceId, inviterUid, role = 'mem
     link: `${window.location.origin}/convite/${token}`,
     expiresAt,
   }
+}
+
+export async function fetchPendingWorkspaceInvitesForEmail(email, uid = '') {
+  const normalizedEmail = normalizeEmail(email)
+  if (!normalizedEmail) return []
+  const snapshot = await getDocs(query(
+    collection(db, 'workspaceInviteTokens'),
+    where('email', '==', normalizedEmail),
+  ))
+  const now = Date.now()
+  return snapshot.docs
+    .map((item) => ({ id: item.id, token: item.id, ...item.data() }))
+    .filter((invite) => ['pending', 'awaiting_confirmation'].includes(String(invite.status || '')))
+    .filter((invite) => !invite.expiresAt || new Date(invite.expiresAt).getTime() >= now)
+    .filter((invite) => invite.status !== 'awaiting_confirmation' || !invite.acceptedBy || invite.acceptedBy === uid)
+    .sort((a, b) => String(b.createdAt?.toDate?.()?.toISOString?.() || b.createdAt || '').localeCompare(String(a.createdAt?.toDate?.()?.toISOString?.() || a.createdAt || '')))
 }
 
 export async function inspectWorkspaceMemberInvitation({ workspaceId, targetUid, targetEmail, actorUid }) {

@@ -5,6 +5,7 @@ export const TRANSACTION_PAYMENT_METHODS = [
   { id: 'credit_card', label: 'Cartão de crédito' },
   { id: 'boleto', label: 'Boleto' },
   { id: 'transfer', label: 'Transferência' },
+  { id: 'compensation', label: 'Compensação (pagou uma conta por mim)' },
 ]
 
 export function normalizePaymentMethodId(paymentMethod) {
